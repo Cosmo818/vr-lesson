@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1020">
+<title>VR-урок: учителю</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0b1020;--card:#111a33;--line:#2b3a63;--text:#e8efff;--muted:#9fb0d6;--acc:#3b82f6;--good:#22c55e;--mid:#eab308;--bad:#ef4444}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:16px}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{margin:8px 0;font-size:26px}h2{margin:22px 0 10px;font-size:20px}
+a{color:#93c5fd}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.tab{padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:#16213f;color:var(--text);cursor:pointer;font-size:16px}
+.tab.on{background:var(--acc);border-color:var(--acc)}
+.btn{padding:10px 16px;border:0;border-radius:10px;background:var(--acc);color:#fff;font-size:15px;cursor:pointer}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+.btn.red{background:#b91c1c}
+input,select,textarea{padding:10px;border-radius:10px;border:1px solid var(--line);background:#0e1730;color:var(--text);font-size:15px}
+textarea{width:100%;min-height:90px;font-family:monospace;font-size:12px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:640px}
+th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:13px}
+tr.click{cursor:pointer}tr.click:hover{background:#16213f}
+.sc{display:inline-block;min-width:44px;padding:3px 8px;border-radius:8px;text-align:center;font-weight:700;color:#0b1020}
+.s-good{background:var(--good)}.s-mid{background:var(--mid)}.s-bad{background:var(--bad);color:#fff}.s-none{background:#334155;color:#9fb0d6}
+.muted{color:var(--muted)}.small{font-size:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.medal{font-size:18px}
+.bar{height:10px;border-radius:5px;background:#1e293b;overflow:hidden;min-width:80px}.bar>i{display:block;height:100%}
+.note{border-left:4px solid var(--mid);padding:10px 14px;background:#1a1f33;border-radius:8px}
+#lock{max-width:420px;margin:12vh auto}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="lock" class="card">
+    <h1>Страница учителя</h1>
+    <p class="muted">Введи PIN. По умолчанию 1234, его можно сменить в разделе «Данные».</p>
+    <form id="pinForm" class="row"><input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN"><button class="btn">Войти</button></form>
+    <p id="pinErr" class="muted"></p>
+    <p><a href="index.html">← К выбору ученика</a></p>
+  </div>
+
+  <div id="app" hidden>
+    <header><h1>VR-урок: прогресс учеников</h1><a href="index.html">← К выбору ученика</a></header>
+    <div class="tabs" id="tabs">
+      <button class="tab on" data-t="rating">Рейтинг</button>
+      <button class="tab" data-t="students">Ученики</button>
+      <button class="tab" data-t="questions">Сложные вопросы</button>
+      <button class="tab" data-t="data">Данные и настройки</button>
+    </div>
+
+    <section id="t-rating">
+      <div class="row"><label>Класс: <select id="fClass"></select></label><span class="muted small" id="rInfo"></span></div>
+      <div class="scroll card" style="padding:0"><table id="rTable"></table></div>
+      <p class="muted small">Баллы: лучший результат каждого теста × 10 + 2 за каждое открытие в комнатах. Тест сдан, если верно 3 из 5 и больше. Нажми на ученика, чтобы увидеть все попытки.</p>
+      <div id="detail"></div>
+    </section>
+
+    <section id="t-students" hidden>
+      <div class="card">
+        <h2 style="margin-top:0">Добавить ученика</h2>
+        <form id="addForm" class="row"><input id="aName" maxlength="40" placeholder="Имя и фамилия"><select id="aGrade"></select><button class="btn">Добавить</button></form>
+      </div>
+      <div class="scroll card" style="padding:0"><table id="sTable"></table></div>
+    </section>
+
+    <section id="t-questions" hidden>
+      <p class="muted">Вопросы, на которые чаще всего отвечают неверно. Это темы, которые стоит повторить на уроке.</p>
+      <div class="row"><label>Предмет: <select id="fSubj"></select></label></div>
+      <div class="scroll card" style="padding:0"><table id="qTable"></table></div>
+    </section>
+
+    <section id="t-data" hidden>
+      <div class="note">Все данные хранятся <b>только в этом браузере</b>. Ученики проходят уроки в шлеме, поэтому их результаты лежат в браузере шлема: открой эту страницу в шлеме. Чтобы посмотреть результаты на компьютере, нажми «Скачать данные» в шлеме и загрузи файл здесь через «Загрузить».</div>
+      <div class="card">
+        <h2 style="margin-top:0">Настройки</h2>
+        <div class="row"><label>Минут на одного ученика: <input id="minutes" type="number" min="1" max="45" style="width:90px"></label></div>
+        <div class="row"><label>Новый PIN: <input id="newPin" type="password" inputmode="numeric" maxlength="12" style="width:140px"></label></div>
+        <div class="row"><button class="btn" id="saveSet">Сохранить настройки</button><span id="setMsg" class="muted"></span></div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Перенос и резервная копия</h2>
+        <div class="row">
+          <button class="btn" id="dlJson">Скачать данные (JSON)</button>
+          <button class="btn ghost" id="dlCsv">Скачать рейтинг (CSV для Excel)</button>
+          <button class="btn ghost" id="copyJson">Скопировать данные</button>
+        </div>
+        <div class="row"><input type="file" id="upFile" accept=".json,application/json"><button class="btn" id="upBtn">Загрузить файл</button></div>
+        <p class="muted small">Загрузка добавляет учеников и результаты из файла к уже имеющимся. Повторы пропускаются.</p>
+        <textarea id="paste" placeholder="…или вставь сюда скопированные данные"></textarea>
+        <div class="row"><button class="btn ghost" id="pasteBtn">Загрузить из текста</button><span id="ioMsg" class="muted"></span></div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Очистка</h2>
+        <p class="muted small">Удаляет все результаты тестов и открытия. Список учеников останется. Сначала скачай резервную копию.</p>
+        <button class="btn red" id="clearRes">Очистить результаты</button>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/store.js"></script>
+<script>
+(function(){
+'use strict';
+const D=VR.DATA,S=VR.Store,SUBJ=S.SUBJ;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dt=ts=>ts?new Date(ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const cls=(b,t)=>b===null?'s-none':b/t>=.8?'s-good':b/t>=.6?'s-mid':'s-bad';
+let sel=null;
+
+/* ---- вход по PIN ---- */
+function unlocked(){try{return sessionStorage.getItem('vrl.teacher')==='1';}catch(e){return false;}}
+function unlock(){try{sessionStorage.setItem('vrl.teacher','1');}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();}
+$('pinForm').onsubmit=e=>{e.preventDefault();if($('pin').value===String(S.settings().pin))unlock();else{$('pinErr').textContent='Неверный PIN.';$('pin').value='';}};
+if(unlocked())unlock();
+
+/* ---- вкладки ---- */
+$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','questions','data'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
+
+/* ---- рейтинг ---- */
+function rows(){
+  const f=$('fClass').value;
+  return S.students().filter(s=>f==='all'||String(s.grade)===f).map(s=>({s,b:S.best(s.id),p:S.points(s.id),last:S.lastActive(s.id)}))
+    .sort((a,b)=>b.p.total-a.p.total||a.s.name.localeCompare(b.s.name,'ru'));
+}
+function renderRating(){
+  const grades=[...new Set(S.students().map(s=>s.grade))].sort((a,b)=>a-b),cur=$('fClass').value||'all';
+  $('fClass').innerHTML='<option value="all">Все</option>'+grades.map(g=>`<option value="${g}">${g} класс</option>`).join('');
+  $('fClass').value=grades.map(String).includes(cur)?cur:'all';
+  const R=rows();
+  $('rInfo').textContent=R.length?`Учеников: ${R.length}. Попыток тестов: ${R.reduce((a,r)=>a+SUBJ.reduce((x,k)=>x+r.b[k].attempts,0),0)}.`:'';
+  if(!R.length){$('rTable').innerHTML='<tr><td class="muted">Пока нет учеников. Добавь их во вкладке «Ученики» или на стартовом экране.</td></tr>';$('detail').innerHTML='';return;}
+  const medal=['🥇','🥈','🥉'];
+  $('rTable').innerHTML='<tr><th>#</th><th>Ученик</th><th>Класс</th>'+SUBJ.map(k=>`<th>${D.subjects[k].title}</th>`).join('')+'<th>Открытия</th><th>Баллы</th><th>Был в VR</th></tr>'+
+    R.map((r,i)=>`<tr class="click" data-id="${r.s.id}"><td class="medal">${r.p.total>0&&i<3?medal[i]:i+1}</td><td><b>${esc(r.s.name)}</b></td><td>${r.s.grade}</td>`+
+      SUBJ.map(k=>{const x=r.b[k];return`<td><span class="sc ${cls(x.best,x.total)}">${x.best===null?'—':x.best+'/'+x.total}</span>${x.attempts?`<div class="muted small">${x.attempts} поп.</div>`:''}</td>`;}).join('')+
+      `<td>${r.p.discCount}</td><td><b>${r.p.total}</b></td><td class="small muted">${dt(r.last)}</td></tr>`).join('');
+  renderDetail();
+}
+$('fClass').onchange=renderRating;
+$('rTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(!tr)return;sel=sel===tr.dataset.id?null:tr.dataset.id;renderDetail();if(sel)$('detail').scrollIntoView({behavior:'smooth',block:'start'});};
+function renderDetail(){
+  const s=sel&&S.student(sel);if(!s){$('detail').innerHTML='';return;}
+  const res=S.results(s.id).sort((a,b)=>b.ts-a.ts),disc=S.discoveries(s.id);
+  $('detail').innerHTML=`<div class="card"><h2 style="margin-top:0">${esc(s.name)}, ${s.grade} класс</h2>
+   <p class="muted">Открытий: ${disc.length}. Попыток тестов: ${res.length}.</p>`+
+   (res.length?'<div class="scroll"><table><tr><th>Когда</th><th>Предмет</th><th>Задания</th><th>Результат</th><th>Время</th><th>Ошибки</th></tr>'+res.map(r=>{
+     const wrong=(r.ans||[]).filter(a=>!a[1]).map(a=>D.qById[a[0]]?esc(D.qById[a[0]].q):esc(a[0]));
+     return`<tr><td class="small">${dt(r.ts)}</td><td>${D.subjects[r.subj]?D.subjects[r.subj].title:esc(r.subj)}</td><td class="small">${D.bands[r.band]||''}</td><td><span class="sc ${cls(r.score,r.total)}">${r.score}/${r.total}</span></td><td class="small">${r.dur?Math.round(r.dur/6)/10+' мин':'—'}</td><td class="small">${wrong.length?wrong.join('<br>'):'<span class="muted">нет</span>'}</td></tr>`;}).join('')+'</table></div>':'<p class="muted">Тестов ещё не было.</p>')+'</div>';
+}
+
+/* ---- ученики ---- */
+function renderStudents(){
+  const L=S.students();
+  $('sTable').innerHTML=L.length?'<tr><th>Имя</th><th>Класс</th><th>Баллы</th><th></th></tr>'+L.map(s=>`<tr data-id="${s.id}"><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="gr">${grOpts(s.grade)}</select></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">Удалить</button></td></tr>`).join(''):'<tr><td class="muted">Учеников пока нет.</td></tr>';
+}
+const grOpts=g=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===g?' selected':''}>${i+1} класс</option>`).join('');
+$('aGrade').innerHTML=grOpts(5);
+$('addForm').onsubmit=e=>{e.preventDefault();if(S.addStudent($('aName').value,$('aGrade').value)){$('aName').value='';renderStudents();}};
+$('sTable').onclick=e=>{
+  const tr=e.target.closest('[data-id]');if(!tr)return;const id=tr.dataset.id,s=S.student(id);
+  if(e.target.classList.contains('sv')){S.updateStudent(id,{name:tr.querySelector('.nm').value,grade:tr.querySelector('.gr').value});renderStudents();}
+  if(e.target.classList.contains('del')&&s&&confirm(`Удалить ученика «${s.name}» вместе со всеми его результатами? Это нельзя отменить.`)){S.removeStudent(id);if(sel===id)sel=null;renderStudents();}
+};
+
+/* ---- сложные вопросы ---- */
+$('fSubj').innerHTML='<option value="all">Все</option>'+SUBJ.map(k=>`<option value="${k}">${D.subjects[k].title}</option>`).join('');
+$('fSubj').onchange=()=>renderQuestions();
+function renderQuestions(){
+  const f=$('fSubj').value,st={};
+  for(const r of S.results())for(const a of(r.ans||[])){const q=D.qById[a[0]];if(!q||(f!=='all'&&q.subj!==f))continue;const x=st[a[0]]=st[a[0]]||{q,n:0,ok:0};x.n++;x.ok+=a[1]?1:0;}
+  const L=Object.values(st).sort((a,b)=>a.ok/a.n-b.ok/b.n||b.n-a.n).slice(0,25);
+  $('qTable').innerHTML=L.length?'<tr><th>Вопрос</th><th>Предмет</th><th>Классы</th><th>Ответов</th><th>Верно</th></tr>'+L.map(x=>{const pc=Math.round(x.ok/x.n*100),c=pc>=80?'var(--good)':pc>=60?'var(--mid)':'var(--bad)';
+    return`<tr><td>${esc(x.q.q)}<div class="muted small">Верный ответ: ${esc(x.q.a[0])}</div></td><td>${D.subjects[x.q.subj].title}</td><td class="small">${D.bands[x.q.band]}</td><td>${x.n}</td><td><b>${pc}%</b><div class="bar"><i style="width:${pc}%;background:${c}"></i></div></td></tr>`;}).join(''):'<tr><td class="muted">Ответов пока нет.</td></tr>';
+}
+
+/* ---- данные ---- */
+function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';}
+$('saveSet').onclick=()=>{
+  const m=Math.max(1,Math.min(45,parseInt($('minutes').value,10)||8)),p=$('newPin').value.trim(),patch={minutes:m};
+  if(p){if(!/^\d{4,12}$/.test(p)){$('setMsg').textContent='PIN — от 4 до 12 цифр.';return;}patch.pin=p;}
+  S.setSettings(patch);$('setMsg').textContent='Сохранено.';renderData();
+};
+function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
+const stamp=()=>new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+$('dlJson').onclick=()=>download('vr-urok-'+stamp()+'.json',S.exportJSON(),'application/json');
+$('dlCsv').onclick=()=>{
+  const q=v=>'"'+String(v).replace(/"/g,'""')+'"';
+  const head=['Место','Ученик','Класс',...SUBJ.map(k=>D.subjects[k].title),'Открытия','Баллы'];
+  const R=S.students().map(s=>({s,b:S.best(s.id),p:S.points(s.id)})).sort((a,b)=>b.p.total-a.p.total);
+  const lines=[head.map(q).join(';'),...R.map((r,i)=>[i+1,r.s.name,r.s.grade,...SUBJ.map(k=>r.b[k].best===null?'':r.b[k].best+'/'+r.b[k].total),r.p.discCount,r.p.total].map(q).join(';'))];
+  download('vr-urok-reyting-'+stamp()+'.csv','﻿'+lines.join('\r\n'),'text/csv');
+};
+$('copyJson').onclick=async()=>{try{await navigator.clipboard.writeText(S.exportJSON());$('ioMsg').textContent='Скопировано.';}catch(e){$('paste').value=S.exportJSON();$('paste').select();$('ioMsg').textContent='Данные в поле ниже — скопируй их вручную.';}};
+function doImport(text){try{const r=S.importJSON(text);$('ioMsg').textContent=`Добавлено учеников: ${r.students}, результатов: ${r.results}.`;renderAll();}catch(e){$('ioMsg').textContent=e.message;}}
+$('upBtn').onclick=()=>{const f=$('upFile').files[0];if(!f){$('ioMsg').textContent='Выбери файл.';return;}const rd=new FileReader();rd.onload=()=>doImport(rd.result);rd.readAsText(f);};
+$('pasteBtn').onclick=()=>doImport($('paste').value);
+$('clearRes').onclick=()=>{if(confirm('Удалить ВСЕ результаты тестов и открытия? Список учеников останется.')&&confirm('Точно? Восстановить можно только из скачанной копии.')){S.clearResults();renderAll();}};
+
+function renderAll(){if($('app').hidden)return;renderRating();renderStudents();renderQuestions();renderData();}
+window.addEventListener('storage',()=>{S.reload();renderAll();});
+})();
+</script>
+</body>
+</html>

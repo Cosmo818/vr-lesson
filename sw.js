@@ -1,17 +1,19 @@
-const V='vr-lesson-v1';
-const FILES=['./','index.html','manifest.webmanifest','icon.svg'];
-self.addEventListener('install',e=>{
-  e.waitUntil(caches.open(V).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));
-});
-self.addEventListener('activate',e=>{
-  e.waitUntil(self.clients.claim());
-});
+/* Офлайн-кэш: при наличии сети берём свежие файлы, без сети — из кэша. */
+const V='vr-lesson-v2';
+const FILES=['./','index.html','teacher.html','css/style.css','js/data.js','js/store.js','js/engine.js','js/rooms.js','js/app.js','manifest.webmanifest','icon.svg'];
+self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
 self.addEventListener('fetch',e=>{
   const r=e.request;
-  if(r.method!=='GET')return;
-  e.respondWith(caches.open(V).then(async c=>{
-    const hit=await c.match(r,{ignoreSearch:true});
-    const net=fetch(r).then(res=>{if(res&&res.ok)c.put(r,res.clone());return res;}).catch(()=>null);
-    return hit||(await net)||(await c.match('index.html'))||Response.error();
-  }));
+  if(r.method!=='GET'||new URL(r.url).origin!==location.origin)return;
+  e.respondWith((async()=>{
+    const c=await caches.open(V);
+    try{
+      const res=await Promise.race([fetch(r),new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),4000))]);
+      if(res&&res.ok)c.put(r,res.clone());
+      return res;
+    }catch(err){
+      return (await c.match(r,{ignoreSearch:true}))||(r.mode==='navigate'?await c.match('index.html'):null)||Response.error();
+    }
+  })());
 });
