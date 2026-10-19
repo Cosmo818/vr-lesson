@@ -152,7 +152,10 @@ const Store=VR.Store={
   setServer(url,key){
     try{if(!url){localStorage.removeItem(SKEY);return;}
       url=String(url).trim().replace(/\/+$/,'');if(!/^https?:\/\//.test(url))url='https://'+url;
-      localStorage.setItem(SKEY,JSON.stringify({url,key:String(key||'').trim()}));}catch(e){}
+      key=String(key||'').replace(/[\u200B-\u200D\uFEFF\u00A0]/g,'').trim();
+      const m=/"(?:teacher|device)"\s*:\s*"([^"]+)"/.exec(key);if(m)key=m[1];
+      key=key.replace(/^[\s"'`,{}:]+|[\s"'`,{}]+$/g,'');
+      localStorage.setItem(SKEY,JSON.stringify({url,key}));}catch(e){}
   },
   status:{state:'off',at:0,role:null,msg:''},
   async sync(){
@@ -165,7 +168,7 @@ const Store=VR.Store={
         const tm=setTimeout(()=>ctl&&ctl.abort(),12000);
         const res=await fetch(sv.url+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json','X-Key':sv.key},body:JSON.stringify(load()),signal:ctl?ctl.signal:undefined});
         clearTimeout(tm);
-        if(res.status===401||res.status===403)throw new Error('Неверный ключ доступа');
+        if(res.status===401||res.status===403)throw new Error('Сервер не принял ключ. Скопируй только символы между кавычками, без самих кавычек');
         if(!res.ok)throw new Error('Сервер ответил '+res.status);
         const data=await res.json();
         db=merge(load(),data.state);save();

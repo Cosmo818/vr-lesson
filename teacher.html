@@ -101,7 +101,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <div class="card">
         <h2 style="margin-top:0">Сервер (Raspberry Pi)</h2>
         <p class="muted small">Адрес сервера и ключ. Здесь, на странице учителя, используй ключ учителя. В шлеме — ключ шлема (он даёт только сохранять результаты). Ключи лежат на Pi в файле /opt/vr-lesson-data/keys.json.</p>
-        <div class="row"><input id="srvUrl" placeholder="https://имя.tailXXXX.ts.net" style="flex:1 1 260px"><input id="srvKey" type="password" placeholder="Ключ" style="flex:1 1 200px" autocomplete="off"></div>
+        <div class="row"><input id="srvUrl" placeholder="https://имя.tailXXXX.ts.net" style="flex:1 1 260px"><input id="srvKey" type="password" placeholder="Ключ (без кавычек)" style="flex:1 1 200px" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><label class="small muted"><input type="checkbox" id="srvShow"> показать</label></div>
         <div class="row"><button class="btn" id="srvSave">Подключить и синхронизировать</button><button class="btn ghost" id="srvOff">Отключить</button><span id="srvMsg" class="muted"></span></div>
       </div>
       <div class="card">
@@ -166,7 +166,7 @@ function renderRating(){
   $('fClass').value=grades.map(String).includes(cur)?cur:'all';
   const R=rows();
   $('rInfo').textContent=R.length?`Учеников: ${R.length}. Попыток тестов: ${R.reduce((a,r)=>a+SUBJ.reduce((x,k)=>x+r.b[k].attempts,0),0)}.`:'';
-  if(!R.length){$('rTable').innerHTML='<tr><td class="muted">Пока нет учеников. Добавь их во вкладке «Ученики» или на стартовом экране.</td></tr>';$('detail').innerHTML='';return;}
+  if(!R.length){$('rTable').innerHTML='<tr><td class="muted">В этом браузере пока нет учеников. Данные хранятся там, где проходили занятия (в шлеме). Чтобы увидеть их здесь, подключи сервер во вкладке «Данные и настройки» или загрузи файл данных.</td></tr>';$('detail').innerHTML='';return;}
   const medal=['🥇','🥈','🥉'];
   $('rTable').innerHTML='<tr><th>#</th><th>Ученик</th><th>Класс</th>'+SUBJ.map(k=>`<th>${D.subjects[k].title}</th>`).join('')+'<th>Открытия</th><th>Баллы</th><th>Был в VR</th></tr>'+
     R.map((r,i)=>`<tr class="click" data-id="${r.s.id}"><td class="medal">${r.p.total>0&&i<3?medal[i]:i+1}</td><td><b>${esc(r.s.name)}</b></td><td>${r.s.grade}</td>`+
@@ -215,6 +215,7 @@ function renderQuestions(){
 function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';const sv=S.server();if(sv&&!$('srvUrl').value){$('srvUrl').value=sv.url;}showSrv(S.status);}
 function showSrv(st){const t=st.at?new Date(st.at).toLocaleTimeString('ru-RU'):'';$('srvMsg').textContent=!S.server()?'Сервер не подключён: данные только в этом браузере.':st.state==='ok'?'Синхронизировано в '+t+(st.role==='teacher'?' (ключ учителя)':' (ключ шлема: тесты и удаление отсюда не отправятся)'):st.state==='err'?'Ошибка: '+st.msg:'Связь…';}
 $('srvSave').onclick=async()=>{const u=$('srvUrl').value.trim(),k=$('srvKey').value.trim();if(!u||!k){$('srvMsg').textContent='Нужны адрес и ключ.';return;}S.setServer(u,k);$('srvKey').value='';$('srvMsg').textContent='Связь…';await S.sync();renderAll();};
+$('srvShow').onchange=e=>{$('srvKey').type=e.target.checked?'text':'password';};
 $('srvOff').onclick=()=>{S.setServer(null);S.status={state:'off'};renderAll();};
 S.onStatus(st=>{if(st.state==='ok')renderAll();else showSrv(st);});
 $('saveSet').onclick=()=>{
