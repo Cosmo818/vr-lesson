@@ -46,6 +46,20 @@
       <button id="back" class="btn ghost">← Другой ученик</button>
     </section>
 
+    <section id="fb" hidden>
+      <h2>Отзыв или идея</h2>
+      <div id="fbKind" class="chips">
+        <button class="chip on" data-k="idea">Идея</button><button class="chip" data-k="bug">Нашёл ошибку</button><button class="chip" data-k="like">Понравилось</button><button class="chip" data-k="dislike">Не понравилось</button>
+      </div>
+      <div class="row form"><select id="fbRoom"></select></div>
+      <div id="fbRate" class="chips" style="margin-top:10px"></div>
+      <textarea id="fbText" maxlength="1000" placeholder="Что улучшить, что добавить, что не работает?" style="width:100%;min-height:110px;margin-top:10px;padding:12px;border-radius:12px;border:1px solid var(--line);background:#0e1730;color:var(--text);font-size:17px"></textarea>
+      <label id="fbSignL" class="muted small" hidden><input type="checkbox" id="fbSign"> подписать моим именем</label>
+      <p class="muted small">Отзыв анонимный: сохраняются только текст, оценка и класс. Не пиши в отзыве фамилию, телефон или адрес.</p>
+      <div class="row"><button id="fbSend" class="btn">Отправить</button><button id="fbCancel" class="btn ghost">Отмена</button><span id="fbMsg" class="ok"></span></div>
+    </section>
+
+    <p class="row"><button id="fbOpen" class="btn ghost">Оставить отзыв или идею</button></p>
     <p id="mode" class="muted small"></p>
     <p id="sync" class="muted small"></p>
   </div>

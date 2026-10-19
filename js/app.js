@@ -4,9 +4,9 @@
 const VR=window.VR,D=VR.DATA,S=VR.Store;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let E=null,xrOk=false,chosen=null,filter='all',sess=null;
+let E=null,xrOk=false,chosen=null,filter='all',sess=null,lastStudent=null;
 
-function showSection(id){for(const s of['pick','ready'])$(s).hidden=s!==id;}
+function showSection(id){for(const s of['pick','ready','fb'])$(s).hidden=s!==id;$('fbOpen').hidden=id==='fb';}
 function renderList(){
   const list=S.students(),grades=[...new Set(list.map(s=>s.grade))].sort((a,b)=>a-b);
   if(filter!=='all'&&!grades.includes(filter))filter='all';
@@ -50,7 +50,7 @@ function endSession(){
   const st=E.student;let msg='';
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
-  sess=null;E.student=null;E.deskInput=false;E.toggleMenu(false);S.sync();
+  lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
   $('summary').textContent=msg;$('summary').hidden=false;
@@ -90,7 +90,13 @@ function hooks(){
     });
     p.button(36,670,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
     p.button(54+bw,670,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
-    p.text('Меню: кнопка A или X',W/2,800,{size:28,align:'center',color:'#94a3b8'});
+    if(E.roomId&&E.roomId!=='hall'){
+      p.text('Как тебе эта комната?',36,782,{size:32,color:'#b8c7ea'});
+      const vote=k=>{const st=E.student||{};S.addFeedback({kind:k,room:E.roomId,grade:st.grade||null});E.toast('Спасибо за отзыв!');E.chime();};
+      p.button(400,770,(W-436-18)/2,70,'Нравится',()=>vote('like'),{bg:'#15803d',size:32});
+      p.button(418+(W-436-18)/2,770,(W-436-18)/2,70,'Не нравится',()=>vote('dislike'),{bg:'#9a3412',size:32});
+    }
+    p.text('Меню: кнопка A или X',W/2,880,{size:28,align:'center',color:'#94a3b8'});
   };
   E.hooks.onRoom=()=>{E.hud.dirty=true;};
 }
@@ -110,6 +116,23 @@ function bind(){
   $('back').onclick=()=>{chosen=null;showSection('pick');};
   $('go').onclick=go;
   $('deskExit').onclick=endSession;
+  /* форма отзывов */
+  let fbKind='idea',fbRating=0,fbAfter='pick';
+  $('fbRoom').innerHTML='<option value="">Про всё приложение</option>'+['hall'].concat(VR.ORDER).map(k=>`<option value="${k}">${k==='hall'?'Холл':D.subjects[k].title}</option>`).join('');
+  const rateHtml=()=>{$('fbRate').innerHTML='<span class="muted" style="align-self:center">Оценка:</span>'+[1,2,3,4,5].map(n=>`<button class="chip${n<=fbRating?' on':''}" data-r="${n}">${'★'.repeat(n)}</button>`).join('');};
+  $('fbOpen').onclick=()=>{fbAfter=$('ready').hidden?'pick':'ready';fbKind='idea';fbRating=0;rateHtml();$('fbText').value='';$('fbMsg').textContent='';
+    for(const b of $('fbKind').children)b.classList.toggle('on',b.dataset.k==='idea');
+    $('fbSignL').hidden=!(lastStudent&&lastStudent.id);$('fbSign').checked=false;showSection('fb');};
+  $('fbKind').onclick=e=>{const b=e.target.closest('[data-k]');if(!b)return;fbKind=b.dataset.k;for(const x of $('fbKind').children)x.classList.toggle('on',x===b);};
+  $('fbRate').onclick=e=>{const b=e.target.closest('[data-r]');if(!b)return;fbRating=+b.dataset.r;rateHtml();};
+  $('fbCancel').onclick=()=>showSection(fbAfter);
+  $('fbSend').onclick=()=>{
+    const text=$('fbText').value.trim();
+    if(!text&&!fbRating){$('fbMsg').textContent='Напиши пару слов или поставь оценку.';return;}
+    const st=lastStudent;
+    S.addFeedback({kind:fbKind,room:$('fbRoom').value||null,text,rating:fbRating||null,grade:st?st.grade:null,sid:st&&st.id&&$('fbSign').checked?st.id:null});
+    $('fbMsg').textContent='Спасибо! Отзыв сохранён.';setTimeout(()=>showSection(fbAfter),1200);
+  };
   window.addEventListener('keydown',e=>{if(e.code==='Escape'&&!$('desk').hidden)endSession();});
 }
 

@@ -7,7 +7,7 @@
 const VR=window.VR=window.VR||{};
 const KEY='vrlesson.v1',SKEY='vrlesson.server';
 const SUBJ=['math','phys','chem','space','bio','soc','logic','hist','gen'];
-const blank=()=>({v:2,students:[],results:[],disc:{},tests:[],deleted:{},settings:{pin:'1234',minutes:8,resetAt:0,updated:0}});
+const blank=()=>({v:2,students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{pin:'1234',minutes:8,resetAt:0,updated:0}});
 let db=null;
 const now=()=>Date.now();
 const clampGrade=g=>{g=parseInt(g,10);return g>=1&&g<=11?g:5;};
@@ -20,6 +20,7 @@ function norm(x){
   o.students=Array.isArray(x.students)?x.students.filter(s=>s&&s.id&&s.name).map(s=>({id:String(s.id),name:String(s.name).slice(0,40),grade:clampGrade(s.grade),created:s.created||0,updated:s.updated||s.created||0})):[];
   o.results=Array.isArray(x.results)?x.results.filter(r=>r&&r.id&&r.sid&&r.subj):[];
   o.disc=x.disc&&typeof x.disc==='object'?x.disc:{};
+  o.feedback=Array.isArray(x.feedback)?x.feedback.filter(f=>f&&f.id&&(f.text||f.kind)):[];
   o.tests=Array.isArray(x.tests)?x.tests.filter(t=>t&&t.id&&Array.isArray(t.qs)):[];
   o.deleted=x.deleted&&typeof x.deleted==='object'?x.deleted:{};
   o.settings=Object.assign(b.settings,x.settings||{});
@@ -35,7 +36,8 @@ function merge(A,B){
   const rm=new Map();for(const r of A.results.concat(B.results))if(!rm.has(r.id)&&!del[r.sid]&&!del[r.id]&&(r.ts||0)>=reset)rm.set(r.id,r);
   const disc={};
   for(const src of[A.disc,B.disc])for(const sid in src){if(del[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
-  return{v:2,students,results:[...rm.values()],disc,tests,deleted:del,settings};
+  const fm=new Map();for(const f of A.feedback.concat(B.feedback))if(!fm.has(f.id)&&!del[f.id])fm.set(f.id,f);
+  return{v:2,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
 }
 function load(){
   if(db)return db;
@@ -122,6 +124,14 @@ const Store=VR.Store={
     const t=Store.test(m[1]);if(!t)return null;const q=t.qs.find(x=>x.id===m[2]);
     return q?{id,subj:t.subj,band:null,test:t.title,q:q.q,a:q.a,e:q.e}:null;
   },
+
+  /* предложения и отзывы: {id,ts,kind:'idea'|'bug'|'like'|'dislike',room,text,rating,grade,sid(если не анонимно)} */
+  addFeedback(f){
+    const x={id:uid(),ts:now(),kind:f.kind||'idea',room:f.room||null,text:String(f.text||'').trim().slice(0,1000),rating:f.rating?Math.max(1,Math.min(5,f.rating|0)):null,grade:f.grade||null,sid:f.sid||null};
+    load().feedback.push(x);save();Store.syncSoon();return x;
+  },
+  feedback(){return load().feedback.slice().sort((a,b)=>b.ts-a.ts);},
+  removeFeedback(id){const d=load();d.deleted[id]=now();d.feedback=d.feedback.filter(f=>f.id!==id);save();Store.syncSoon();},
 
   /* настройки */
   settings(){return Object.assign({},load().settings);},

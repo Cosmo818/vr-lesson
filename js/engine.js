@@ -630,21 +630,31 @@ void main(){
 
   /* ---------- режим экрана (ПК / телефон / проверка без шлема) ---------- */
   const keys={};let drag=null;
-  canvas.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,moved:false};try{canvas.setPointerCapture(e.pointerId);}catch(_){}});
+  /* сброс всех зажатых клавиш и кнопок: при потере фокуса, уходе со вкладки, отмене указателя */
+  const releaseAll=()=>{for(const k in keys)keys[k]=false;drag=null;deskGrab=false;};
+  E.releaseInput=releaseAll;
+  canvas.addEventListener('pointerdown',e=>{if(e.button!==0&&e.pointerType==='mouse')return;drag={id:e.pointerId,x:e.clientX,y:e.clientY,moved:false};try{canvas.setPointerCapture(e.pointerId);}catch(_){}});
   canvas.addEventListener('pointermove',e=>{
     if(!drag||!E.deskInput)return;
+    if(e.pointerType==='mouse'&&e.buttons===0){drag=null;return;}
     const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
     if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
     if(drag.moved){D.yaw-=dx*.005;D.pitch=Math.max(-1.3,Math.min(1.3,D.pitch-dy*.005));drag.x=e.clientX;drag.y=e.clientY;}
   });
-  canvas.addEventListener('pointerup',()=>{if(drag&&!drag.moved&&E.deskInput)deskClick=true;drag=null;});
+  const up=()=>{if(drag&&!drag.moved&&E.deskInput)deskClick=true;drag=null;};
+  canvas.addEventListener('pointerup',up);
+  window.addEventListener('pointerup',()=>{drag=null;});
+  for(const ev of['pointercancel','lostpointercapture'])canvas.addEventListener(ev,()=>{drag=null;});
+  window.addEventListener('blur',releaseAll);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseAll();});
   window.addEventListener('keydown',e=>{
+    if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))return;
     keys[e.code]=true;if(!E.deskInput)return;
     if(e.code==='KeyE')deskGrab=true;
     if(e.code==='KeyM'||e.code==='Tab'){deskMenu=true;e.preventDefault();}
     if(e.code==='Space'){deskClick=true;e.preventDefault();}
   });
-  window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyE')deskGrab=false;});
+  window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyE')deskGrab=false;if(e.key==='Meta'||e.key==='Alt')releaseAll();});
   E.startDesk=()=>{
     const id=++deskId;let lt=0;E.desk=true;
     const f=t=>{

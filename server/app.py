@@ -56,6 +56,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS results(id TEXT PRIMARY KEY, sid TEXT, subj TEXT, score INTEGER, total INTEGER, ts INTEGER, doc TEXT);
         CREATE TABLE IF NOT EXISTS disc(sid TEXT, k TEXT, ts INTEGER, PRIMARY KEY(sid, k));
         CREATE TABLE IF NOT EXISTS deleted(id TEXT PRIMARY KEY, ts INTEGER);
+        CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, ts INTEGER, kind TEXT, room TEXT, rating INTEGER, text TEXT, doc TEXT);
         CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id = 1), updated INTEGER, doc TEXT);
         CREATE INDEX IF NOT EXISTS results_sid ON results(sid);
         ''')
@@ -103,6 +104,11 @@ def merge_in(c, inc, role):
             continue
         c.execute('INSERT OR IGNORE INTO results(id, sid, subj, score, total, ts, doc) VALUES(?, ?, ?, ?, ?, ?, ?)',
                   (r['id'], r['sid'], str(r.get('subj', '')), num(r.get('score')), num(r.get('total')), num(r.get('ts')), json.dumps(r, ensure_ascii=False)))
+    for f in inc.get('feedback') or []:
+        if not isinstance(f, dict) or not f.get('id') or f['id'] in deleted:
+            continue
+        c.execute('INSERT OR IGNORE INTO feedback(id, ts, kind, room, rating, text, doc) VALUES(?, ?, ?, ?, ?, ?, ?)',
+                  (f['id'], num(f.get('ts')), str(f.get('kind', ''))[:20], str(f.get('room') or '')[:20], num(f.get('rating'), None), str(f.get('text', ''))[:1000], json.dumps(f, ensure_ascii=False)))
     for sid, m in (inc.get('disc') or {}).items():
         if sid in deleted or not isinstance(m, dict):
             continue
@@ -114,6 +120,7 @@ def merge_in(c, inc, role):
     c.execute('DELETE FROM tests WHERE id IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM deleted) OR id IN (SELECT id FROM deleted) OR ts < ?', (reset,))
     c.execute('DELETE FROM disc WHERE sid IN (SELECT id FROM deleted) OR ts < ?', (reset,))
+    c.execute('DELETE FROM feedback WHERE id IN (SELECT id FROM deleted)')
 
 
 def get_settings(c):
@@ -131,6 +138,7 @@ def state(c):
         'tests': [json.loads(r[0]) for r in c.execute('SELECT doc FROM tests')],
         'results': [json.loads(r[0]) for r in c.execute('SELECT doc FROM results ORDER BY ts')],
         'disc': disc,
+        'feedback': [json.loads(r[0]) for r in c.execute('SELECT doc FROM feedback ORDER BY ts')],
         'deleted': {k: ts for k, ts in c.execute('SELECT id, ts FROM deleted')},
         'settings': get_settings(c),
     }

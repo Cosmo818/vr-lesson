@@ -56,6 +56,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <button class="tab" data-t="students">Ученики</button>
       <button class="tab" data-t="tests">Конструктор тестов</button>
       <button class="tab" data-t="questions">Сложные вопросы</button>
+      <button class="tab" data-t="feedback">Отзывы</button>
       <button class="tab" data-t="data">Данные и настройки</button>
     </div>
 
@@ -86,6 +87,13 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <p class="muted">Вопросы, на которые чаще всего отвечают неверно. Это темы, которые стоит повторить на уроке.</p>
       <div class="row"><label>Предмет: <select id="fSubj"></select></label></div>
       <div class="scroll card" style="padding:0"><table id="qTable"></table></div>
+    </section>
+
+    <section id="t-feedback" hidden>
+      <p class="muted">Отзывы учеников: идеи, ошибки, оценки комнат. Анонимные, если ученик не поставил галочку «подписать».</p>
+      <div class="scroll card" style="padding:0"><table id="vTable"></table></div>
+      <div class="row"><label>Тип: <select id="fbF"><option value="all">Все</option><option value="idea">Идеи</option><option value="bug">Ошибки</option><option value="like">Понравилось</option><option value="dislike">Не понравилось</option></select></label><button class="btn ghost" id="fbCsv">Скачать CSV</button></div>
+      <div class="scroll card" style="padding:0"><table id="fTable"></table></div>
     </section>
 
     <section id="t-data" hidden>
@@ -144,7 +152,7 @@ $('pinForm').onsubmit=e=>{e.preventDefault();if($('pin').value===String(S.settin
 if(unlocked())unlock();
 
 /* ---- вкладки ---- */
-$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','tests','questions','data'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
+$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','tests','questions','feedback','data'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
 
 /* ---- рейтинг ---- */
 function rows(){
@@ -230,7 +238,20 @@ $('upBtn').onclick=()=>{const f=$('upFile').files[0];if(!f){$('ioMsg').textConte
 $('pasteBtn').onclick=()=>doImport($('paste').value);
 $('clearRes').onclick=()=>{if(confirm('Удалить ВСЕ результаты тестов и открытия? Список учеников останется.')&&confirm('Точно? Восстановить можно только из скачанной копии.')){S.clearResults();renderAll();}};
 
-function renderAll(){if($('app').hidden)return;renderRating();renderStudents();renderTests();renderQuestions();renderData();}
+const KIND={idea:'Идея',bug:'Ошибка',like:'Понравилось',dislike:'Не понравилось'};
+const roomName=k=>!k?'Всё приложение':k==='hall'?'Холл':D.subjects[k]?D.subjects[k].title:k;
+function renderFeedback(){
+  const L=S.feedback(),agg={};
+  for(const f of L){const k=f.room||'';const a=agg[k]=agg[k]||{like:0,dislike:0,n:0,sum:0,cnt:0};if(f.kind==='like')a.like++;if(f.kind==='dislike')a.dislike++;a.n++;if(f.rating){a.sum+=f.rating;a.cnt++;}}
+  const ks=Object.keys(agg).sort((a,b)=>agg[b].n-agg[a].n);
+  $('vTable').innerHTML=ks.length?'<tr><th>Комната</th><th>Нравится</th><th>Не нравится</th><th>Средняя оценка</th><th>Всего отзывов</th></tr>'+ks.map(k=>{const a=agg[k];return`<tr><td>${esc(roomName(k))}</td><td>${a.like}</td><td>${a.dislike}</td><td>${a.cnt?(a.sum/a.cnt).toFixed(1)+' ★':'—'}</td><td>${a.n}</td></tr>`;}).join(''):'<tr><td class="muted">Отзывов пока нет.</td></tr>';
+  const f=$('fbF').value,R=L.filter(x=>f==='all'||x.kind===f);
+  $('fTable').innerHTML=R.length?'<tr><th>Когда</th><th>Тип</th><th>Комната</th><th>Оценка</th><th>Текст</th><th>Кто</th><th></th></tr>'+R.map(x=>{const st=x.sid&&S.student(x.sid);return`<tr data-id="${x.id}"><td class="small">${dt(x.ts)}</td><td>${KIND[x.kind]||esc(x.kind)}</td><td>${esc(roomName(x.room))}</td><td>${x.rating?'★'.repeat(x.rating):''}</td><td>${esc(x.text||'')}</td><td class="small">${st?esc(st.name):(x.grade?x.grade+' кл., анонимно':'анонимно')}</td><td><button class="btn red del">Удалить</button></td></tr>`;}).join(''):'';
+}
+$('fbF').onchange=renderFeedback;
+$('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Удалить отзыв?')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
+$('fbCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';download('vr-urok-otzyvy-'+stamp()+'.csv','\ufeff'+[['Дата','Тип','Комната','Оценка','Текст','Класс'].map(q).join(';'),...S.feedback().map(x=>[new Date(x.ts).toLocaleString('ru-RU'),KIND[x.kind]||x.kind,roomName(x.room),x.rating||'',x.text||'',x.grade||''].map(q).join(';'))].join('\r\n'),'text/csv');};
+function renderAll(){if($('app').hidden)return;renderRating();renderStudents();renderTests();renderQuestions();renderFeedback();renderData();}
 /* ---- конструктор тестов ---- */
 let ed=null,edErr='';
 const gOpts=(v)=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===v?' selected':''}>${i+1}</option>`).join('');
