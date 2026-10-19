@@ -323,6 +323,8 @@ $('editor').onclick=e=>{
 };
 
 window.addEventListener('storage',()=>{S.reload();renderAll();});
+setInterval(()=>{if(!$('app').hidden&&S.server()&&!document.hidden)S.sync();},30000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('app').hidden&&S.server())S.sync();});
 })();
 </script>
 </body>
