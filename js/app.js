@@ -153,5 +153,7 @@ async function init(){
 }
 /* возврат кнопкой «Назад» из кэша браузера: WebGL и состояние могут быть уже неживыми — перезагружаем страницу */
 window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
+/* на экране учеников сессия учителя всегда закрыта */
+try{sessionStorage.removeItem('vrl.teacher');}catch(e){}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();

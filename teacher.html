@@ -50,7 +50,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
   </div>
 
   <div id="app" hidden>
-    <header><h1>VR-урок: прогресс учеников</h1><span style="display:flex;gap:18px"><a href="help-teacher.html">Справка</a><a href="index.html">К ученикам</a></span></header>
+    <header><h1>VR-урок: прогресс учеников</h1><span style="display:flex;gap:18px"><a href="help-teacher.html">Справка</a><a href="index.html" id="toStudents">Выйти к ученикам</a></span></header>
     <div class="tabs" id="tabs">
       <button class="tab on" data-t="rating">Рейтинг</button>
       <button class="tab" data-t="students">Ученики</button>
@@ -146,8 +146,15 @@ const cls=(b,t)=>b===null?'s-none':b/t>=.8?'s-good':b/t>=.6?'s-mid':'s-bad';
 let sel=null;
 
 /* ---- вход по PIN ---- */
-function unlocked(){try{return sessionStorage.getItem('vrl.teacher')==='1';}catch(e){return false;}}
-function unlock(){try{sessionStorage.setItem('vrl.teacher','1');}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();if(S.server())S.sync();}
+/* сессия учителя: живёт 15 минут без действий; закрывается при переходе к ученикам */
+const TKEY='vrl.teacher',TTL=15*60*1000;
+function unlocked(){try{const t=+sessionStorage.getItem(TKEY);return t>Date.now();}catch(e){return false;}}
+function touch(){try{if(unlocked())sessionStorage.setItem(TKEY,String(Date.now()+TTL));}catch(e){}}
+function lock(){try{sessionStorage.removeItem(TKEY);}catch(e){}$('app').hidden=true;$('lock').hidden=false;$('pin').value='';}
+function unlock(){try{sessionStorage.setItem(TKEY,String(Date.now()+TTL));}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();if(S.server())S.sync();}
+for(const ev of['click','keydown','input'])document.addEventListener(ev,touch,true);
+setInterval(()=>{if(!$('app').hidden&&!unlocked())lock();},20000);
+$('toStudents').onclick=()=>lock();
 /* пароль хранится только в виде хэша PBKDF2, сам пароль в коде страницы не записан */
 const DEF_SALT='vrl-default-2026',DEF_HASH='a4FaOGLuT8IuNSlVxh36kVQG0Xxf9N8W/dYK9f9Cbhw=';
 async function pinHash(pin,salt){const enc=new TextEncoder(),k=await crypto.subtle.importKey('raw',enc.encode(pin),'PBKDF2',false,['deriveBits']);const b=await crypto.subtle.deriveBits({name:'PBKDF2',salt:enc.encode(salt),iterations:100000,hash:'SHA-256'},k,256);return btoa(String.fromCharCode(...new Uint8Array(b)));}
