@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1020">
+<title>VR-урок</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+html,body{margin:0;height:100%;background:#0b1020;color:#e8efff;font-family:system-ui,sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#ui{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,90vw);padding:28px;border-radius:20px;background:rgba(16,26,51,.92);border:2px solid #3b82f6;text-align:center;z-index:2;box-sizing:border-box}
+h1{margin:0 0 10px;font-size:28px}
+p{margin:8px 0;line-height:1.4;font-size:17px}
+button{margin-top:14px;padding:16px 32px;font-size:22px;border:0;border-radius:14px;background:#3b82f6;color:#fff;cursor:pointer}
+button[hidden]{display:none}
+#msg{color:#ffd37a;font-size:15px}
+#hint{font-size:14px;opacity:.8}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <h1>VR-урок: первые шаги</h1>
+  <p>Демо возможностей виртуальной реальности для Meta Quest: движение, взятие предметов, кнопки и модель Солнечной системы.</p>
+  <button id="enter" hidden>Войти в VR</button>
+  <p id="msg">Проверяю поддержку VR…</p>
+  <p id="hint"></p>
+</div>
+<script>
+(()=>{
+'use strict';
+const $=id=>document.getElementById(id);
+const canvas=$('c'),ui=$('ui'),msg=$('msg'),enterBtn=$('enter'),hint=$('hint');
+let gl=null;
+try{gl=canvas.getContext('webgl2',{xrCompatible:true,antialias:true,alpha:false});}catch(e){}
+if(!gl){msg.textContent='В этом браузере нет WebGL2. Открой страницу в Meta Quest Browser.';return;}
+
+/* ---------- математика (матрицы по столбцам, как в WebGL) ---------- */
+const M={
+  id:()=>new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]),
+  mul(a,b){const o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k];o[c*4+r]=s;}return o;},
+  trans(x,y,z){const m=M.id();m[12]=x;m[13]=y;m[14]=z;return m;},
+  scale(x,y,z){const m=M.id();m[0]=x;m[5]=y;m[10]=z;return m;},
+  rotY(a){const c=Math.cos(a),s=Math.sin(a),m=M.id();m[0]=c;m[2]=-s;m[8]=s;m[10]=c;return m;},
+  rotX(a){const c=Math.cos(a),s=Math.sin(a),m=M.id();m[5]=c;m[6]=s;m[9]=-s;m[10]=c;return m;},
+  persp(fov,asp,n,f){const t=1/Math.tan(fov/2),m=new Float32Array(16);m[0]=t/asp;m[5]=t;m[10]=(f+n)/(n-f);m[11]=-1;m[14]=2*f*n/(n-f);return m;},
+  inv(m){const o=new Float32Array(16);
+    const a00=m[0],a01=m[1],a02=m[2],a03=m[3],a10=m[4],a11=m[5],a12=m[6],a13=m[7],a20=m[8],a21=m[9],a22=m[10],a23=m[11],a30=m[12],a31=m[13],a32=m[14],a33=m[15];
+    const b00=a00*a11-a01*a10,b01=a00*a12-a02*a10,b02=a00*a13-a03*a10,b03=a01*a12-a02*a11,b04=a01*a13-a03*a11,b05=a02*a13-a03*a12,b06=a20*a31-a21*a30,b07=a20*a32-a22*a30,b08=a20*a33-a23*a30,b09=a21*a32-a22*a31,b10=a21*a33-a23*a31,b11=a22*a33-a23*a32;
+    let d=b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;if(!d)return M.id();d=1/d;
+    o[0]=(a11*b11-a12*b10+a13*b09)*d;o[1]=(a02*b10-a01*b11-a03*b09)*d;o[2]=(a31*b05-a32*b04+a33*b03)*d;o[3]=(a22*b04-a21*b05-a23*b03)*d;
+    o[4]=(a12*b08-a10*b11-a13*b07)*d;o[5]=(a00*b11-a02*b08+a03*b07)*d;o[6]=(a32*b02-a30*b05-a33*b01)*d;o[7]=(a20*b05-a22*b02+a23*b01)*d;
+    o[8]=(a10*b10-a11*b08+a13*b06)*d;o[9]=(a01*b08-a00*b10-a03*b06)*d;o[10]=(a30*b04-a31*b02+a33*b00)*d;o[11]=(a21*b02-a20*b04-a23*b00)*d;
+    o[12]=(a11*b07-a10*b09-a12*b06)*d;o[13]=(a00*b09-a01*b07+a02*b06)*d;o[14]=(a31*b01-a30*b03-a32*b00)*d;o[15]=(a20*b03-a21*b01+a22*b00)*d;return o;}
+};
+const TRS=(x,y,z,sx,sy,sz,ry)=>M.mul(M.trans(x,y,z),M.mul(M.rotY(ry||0),M.scale(sx,sy,sz)));
+const norm3=v=>{const l=Math.hypot(v[0],v[1],v[2])||1;return[v[0]/l,v[1]/l,v[2]/l];};
+const dist3=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+
+/* ---------- шейдеры ---------- */
+const VS='#version 300 es\n'+
+'in vec3 aPos;in vec3 aNor;in vec2 aUV;\n'+
+'uniform mat4 uProj,uView,uModel;uniform float uPS;\n'+
+'out vec3 vN;out vec3 vW;out vec2 vUV;\n'+
+'void main(){vec4 w=uModel*vec4(aPos,1.);vW=w.xyz;vN=mat3(uModel)*aNor;vUV=aUV;gl_Position=uProj*uView*w;gl_PointSize=uPS;}';
+const FS='#version 300 es\nprecision highp float;\n'+
+'in vec3 vN;in vec3 vW;in vec2 vUV;\n'+
+'uniform vec3 uCol,uCam;uniform float uEm;uniform int uMode;uniform sampler2D uTex;\n'+
+'out vec4 o;\n'+
+'void main(){\n'+
+' if(uMode==1){vec4 t=texture(uTex,vUV);if(t.a<.05)discard;o=vec4(t.rgb,1.);return;}\n'+
+' if(uMode==3){o=vec4(uCol,1.);return;}\n'+
+' vec3 n=normalize(vN);float d=max(dot(n,normalize(vec3(.4,.9,.3))),0.)*.65+.35;\n'+
+' vec3 c=uCol;\n'+
+' if(uMode==2){vec2 g=abs(fract(vW.xz-.5)-.5)/fwidth(vW.xz);float l=1.-min(min(g.x,g.y),1.);c=mix(c,vec3(.25,.55,.9),l*.7);}\n'+
+' vec3 col=mix(c*d,c,uEm);\n'+
+' float f=clamp(length(vW-uCam)/40.,0.,1.);col=mix(col,vec3(.04,.06,.12),f*f);\n'+
+' o=vec4(col,1.);}';
+let prog,U={};
+try{
+  const sh=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;};
+  prog=gl.createProgram();
+  gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));
+  gl.bindAttribLocation(prog,0,'aPos');gl.bindAttribLocation(prog,1,'aNor');gl.bindAttribLocation(prog,2,'aUV');
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(prog));
+  for(const n of['uProj','uView','uModel','uCol','uEm','uMode','uPS','uTex','uCam'])U[n]=gl.getUniformLocation(prog,n);
+}catch(e){msg.textContent='Ошибка графики: '+(e&&e.message||e);return;}
+
+/* ---------- меши: позиция(3) нормаль(3) uv(2) ---------- */
+function mkMesh(data,mode){
+  const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,32,0);
+  gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,3,gl.FLOAT,false,32,12);
+  gl.enableVertexAttribArray(2);gl.vertexAttribPointer(2,2,gl.FLOAT,false,32,24);
+  gl.bindVertexArray(null);
+  return{vao,n:data.length/8,mode};
+}
+function cubeData(){
+  const d=[];
+  const F=[[[0,0,1],[1,0,0],[0,1,0]],[[0,0,-1],[-1,0,0],[0,1,0]],[[1,0,0],[0,0,-1],[0,1,0]],[[-1,0,0],[0,0,1],[0,1,0]],[[0,1,0],[1,0,0],[0,0,-1]],[[0,-1,0],[1,0,0],[0,0,1]]];
+  const uv=[[0,0],[1,0],[1,1],[0,1]];
+  for(const [n,u,v] of F){
+    const P=(a,b)=>[n[0]*.5+u[0]*a+v[0]*b,n[1]*.5+u[1]*a+v[1]*b,n[2]*.5+u[2]*a+v[2]*b];
+    const q=[P(-.5,-.5),P(.5,-.5),P(.5,.5),P(-.5,.5)];
+    for(const i of[0,1,2,0,2,3])d.push(...q[i],...n,...uv[i]);
+  }
+  return d;
+}
+function sphereData(){
+  const d=[],A=16,B=12;
+  const p=(i,j)=>{const th=j/B*Math.PI,ph=i/A*2*Math.PI;const x=Math.sin(th)*Math.cos(ph),y=Math.cos(th),z=Math.sin(th)*Math.sin(ph);return[x*.5,y*.5,z*.5,x,y,z,i/A,j/B];};
+  for(let j=0;j<B;j++)for(let i=0;i<A;i++){const a=p(i,j),b=p(i+1,j),c=p(i+1,j+1),e=p(i,j+1);d.push(...a,...c,...e,...a,...b,...c);}
+  return d;
+}
+function quadData(){
+  const n=[0,0,1];
+  return[-.5,-.5,0,...n,0,0, .5,-.5,0,...n,1,0, .5,.5,0,...n,1,1, -.5,-.5,0,...n,0,0, .5,.5,0,...n,1,1, -.5,.5,0,...n,0,1];
+}
+function discData(){
+  const d=[],N=28;
+  for(let i=0;i<N;i++){const a=i/N*Math.PI*2,b=(i+1)/N*Math.PI*2;d.push(0,0,0,0,1,0,.5,.5, Math.cos(a),0,Math.sin(a),0,1,0,0,0, Math.cos(b),0,Math.sin(b),0,1,0,0,0);}
+  return d;
+}
+function circleData(){
+  const d=[],N=64;
+  for(let i=0;i<=N;i++){const a=i/N*Math.PI*2;d.push(Math.cos(a),0,Math.sin(a),0,1,0,0,0);}
+  return d;
+}
+function starsData(){
+  let seed=12345;const rnd=()=>(seed=(seed*1664525+1013904223)>>>0)/4294967296;
+  const d=[];
+  for(let i=0;i<300;i++){const th=Math.acos(rnd()*.95+.05),ph=rnd()*6.2832,r=70;d.push(r*Math.sin(th)*Math.cos(ph),r*Math.cos(th),r*Math.sin(th)*Math.sin(ph),0,1,0,0,0);}
+  return d;
+}
+const mesh={cube:mkMesh(cubeData(),gl.TRIANGLES),sphere:mkMesh(sphereData(),gl.TRIANGLES),quad:mkMesh(quadData(),gl.TRIANGLES),
+  disc:mkMesh(discData(),gl.TRIANGLES),circle:mkMesh(circleData(),gl.LINE_STRIP),stars:mkMesh(starsData(),gl.POINTS)};
+
+/* ---------- текстовые панели (canvas -> текстура) ---------- */
+const panels=[];
+function mkPanel(w,h,pos,accent){
+  const cv=document.createElement('canvas');cv.width=1024;cv.height=512;
+  const p={cv,tex:gl.createTexture(),w,h,pos,accent,show:true};panels.push(p);return p;
+}
+function rrect(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
+function wrapText(c,text,maxW){
+  const words=String(text).split(' '),out=[];let line='';
+  for(const w of words){const t=line?line+' '+w:w;if(c.measureText(t).width>maxW&&line){out.push(line);line=w;}else line=t;}
+  if(line)out.push(line);return out;
+}
+function paint(p,title,text){
+  const c=p.cv.getContext('2d'),W=1024,H=512;
+  c.clearRect(0,0,W,H);
+  c.fillStyle='#101a33';rrect(c,0,0,W,H,40);c.fill();
+  c.lineWidth=10;c.strokeStyle=p.accent;rrect(c,5,5,W-10,H-10,36);c.stroke();
+  c.textBaseline='top';c.fillStyle='#ffffff';c.font='bold 62px sans-serif';c.fillText(title,48,40);
+  c.font='42px sans-serif';c.fillStyle='#dbe7ff';
+  let y=140;
+  for(const para of String(text).split('\n')){
+    for(const ln of wrapText(c,para,W-96)){c.fillText(ln,48,y);y+=56;}
+    y+=14;
+  }
+  gl.bindTexture(gl.TEXTURE_2D,p.tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,p.cv);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+}
+
+/* ---------- сцена ---------- */
+const TBL={x:-3.8,z:-3.5,hx:.7,hz:.35,top:.8};
+const PED={x:0,z:-4.5,hx:.25,hz:.25,top:.9};
+const BTN={x:0,y:.97,z:-4.5};
+const SUN={x:3.8,y:1.3,z:-3.8};
+const BOXES=[TBL,PED];
+const insideBoxes=(x,z,m)=>BOXES.some(b=>Math.abs(x-b.x)<b.hx+m&&Math.abs(z-b.z)<b.hz+m);
+
+const pIntro=mkPanel(1.6,.8,[0,1.6,-2.3],'#3b82f6');
+paint(pIntro,'Добро пожаловать в VR!','Стик вперёд и отпустить: телепорт.\nСтик влево или вправо: поворот.\nХват или курок рядом с предметом: взять. Луч и курок: выбрать.');
+const pA=mkPanel(1.6,.8,[TBL.x,1.75,TBL.z],'#22c55e');
+paint(pA,'1. Хватай и бросай','Поднеси руку к предмету и нажми боковую кнопку (хват) или курок. Отпусти кнопку: предмет полетит.');
+const pB=mkPanel(1.6,.8,[PED.x,2.5,PED.z],'#ef4444');
+let pressCount=0;
+const paintB=()=>paint(pB,'2. Красная кнопка','Нажми её рукой или наведи луч и нажми курок.\nНажато раз: '+pressCount);
+paintB();
+const pC=mkPanel(1.8,.9,[SUN.x,2.75,-4.6],'#f59e0b');
+paint(pC,'3. Солнечная система','Наведи луч на планету или Солнце и нажми курок. Размеры и расстояния показаны не в масштабе.');
+const pInfo=mkPanel(1.4,.7,[SUN.x,1.9,-2.6],'#a855f7');
+pInfo.show=false;
+
+const PL=[
+ {name:'Солнце',rad:.36,orbit:0,speed:0,col:[1,.8,.2],em:1,fact:'Звезда. В ней почти вся масса Солнечной системы (около 99,8%). Температура поверхности около 5500 °C.'},
+ {name:'Меркурий',rad:.06,orbit:.30,speed:.8,col:[.7,.7,.7],fact:'Ближайшая к Солнцу планета. Год на ней длится всего 88 земных суток.'},
+ {name:'Венера',rad:.09,orbit:.45,speed:.6,col:[.95,.8,.5],fact:'Самая горячая планета: у поверхности около 460 °C.'},
+ {name:'Земля',rad:.10,orbit:.60,speed:.5,col:[.2,.5,1],fact:'Наш дом. Единственная известная планета, где есть жизнь.'},
+ {name:'Марс',rad:.08,orbit:.75,speed:.4,col:[.9,.35,.2],fact:'Красная планета. Здесь находится гора Олимп высотой около 22 км.'},
+ {name:'Юпитер',rad:.22,orbit:.95,speed:.25,col:[.85,.65,.45],fact:'Самая большая планета. Большое Красное Пятно — вихрь, которому сотни лет.'},
+ {name:'Сатурн',rad:.19,orbit:1.12,speed:.2,col:[.9,.8,.55],ring:true,fact:'Известна кольцами из льда и камней.'},
+ {name:'Уран',rad:.13,orbit:1.25,speed:.15,col:[.5,.85,.9],fact:'Ледяной гигант. Вращается «лёжа на боку».'},
+ {name:'Нептун',rad:.13,orbit:1.38,speed:.12,col:[.25,.35,.9],fact:'Самая далёкая планета. Ветры на ней достигают 2000 км/ч.'}
+];
+PL.forEach((p,i)=>{p.ang=i*.9;p.pos=[SUN.x+p.orbit*Math.cos(p.ang),SUN.y,SUN.z+p.orbit*Math.sin(p.ang)];});
+let sel=-1;
+
+/* предметы, которые можно брать */
+const bodies=[];
+function addBody(shape,x,s,col){bodies.push({shape,p:[x,TBL.top+s/2,TBL.z],v:[0,0,0],s,col,m:M.id(),held:null,by:'',off:null});}
+addBody('cube',-4.3,.14,[.9,.25,.25]);
+addBody('cube',-4.05,.14,[.25,.8,.35]);
+addBody('cube',-3.8,.14,[.3,.5,.95]);
+addBody('ball',-3.55,.11,[.95,.8,.2]);
+addBody('ball',-3.3,.11,[.95,.95,.95]);
+const rigid=b=>M.mul(M.trans(b.p[0],b.p[1],b.p[2]),b.m);
+
+/* кнопка, лампа, конфетти */
+const LAMP=[[1,.3,.3],[.3,1,.4],[.3,.5,1],[1,.85,.2],[.9,.4,1]];
+let lampI=0,btnDip=0,btnCool=0;
+const conf=[];
+function pressButton(h){
+  if(btnCool>0)return;btnCool=.4;
+  pressCount++;lampI=(lampI+1)%LAMP.length;btnDip=.03;paintB();
+  for(let i=0;i<36;i++){
+    if(conf.length>=120)conf.shift();
+    const a=Math.random()*6.283,sp=1+Math.random()*1.6;
+    conf.push({p:[BTN.x,1.75,BTN.z],v:[Math.cos(a)*sp*.6,2+Math.random()*1.6,Math.sin(a)*sp*.6],col:LAMP[(Math.random()*LAMP.length)|0],life:1.8});
+  }
+  beep(440+60*lampI,.15,'triangle');if(h&&h.src)buzz(h.src,.6,50);
+}
+function selectPlanet(i){
+  if(sel===i){sel=-1;pInfo.show=false;beep(260,.08);return;}
+  sel=i;const p=PL[i];paint(pInfo,p.name,p.fact);pInfo.show=true;beep(700,.08,'sine');
+}
+
+/* ---------- звук и вибрация ---------- */
+let actx=null;
+function beep(f,d,type,v){
+  try{
+    if(!actx)return;
+    const o=actx.createOscillator(),g=actx.createGain(),t=actx.currentTime;
+    o.type=type||'sine';o.frequency.value=f;g.gain.value=v||.08;
+    o.connect(g);g.connect(actx.destination);o.start();
+    g.gain.exponentialRampToValueAtTime(.0001,t+(d||.1));o.stop(t+(d||.1)+.02);
+  }catch(e){}
+}
+function buzz(src,a,ms){try{const h=src.gamepad&&src.gamepad.hapticActuators&&src.gamepad.hapticActuators[0];if(h&&h.pulse)h.pulse(a||.5,ms||40);}catch(e){}}
+
+/* ---------- положение игрока: мир = R(yaw)*ref + t ---------- */
+let session=null,baseRef=null,refSpace=null,curFrame=null,moved=false,last=0,deskId=0;
+const P={yaw:0,tx:0,tz:0};
+const R2=(yaw,x,z)=>[x*Math.cos(yaw)+z*Math.sin(yaw),-x*Math.sin(yaw)+z*Math.cos(yaw)];
+function applyPlayer(){
+  const c=Math.cos(P.yaw),s=Math.sin(P.yaw);
+  const px=P.tx*c-P.tz*s,pz=P.tx*s+P.tz*c;
+  refSpace=baseRef.getOffsetReferenceSpace(new XRRigidTransform({x:-px,y:0,z:-pz,w:1},{x:0,y:-Math.sin(P.yaw/2),z:0,w:Math.cos(P.yaw/2)}));
+}
+function headBase(){const vp=curFrame&&baseRef&&curFrame.getViewerPose(baseRef);return vp?vp.transform.position:{x:0,z:0};}
+function headWorld(){const vp=curFrame&&refSpace&&curFrame.getViewerPose(refSpace);return vp?vp.transform.position:{x:0,z:0};}
+function teleportTo(x,z){const h=headBase(),r=R2(P.yaw,h.x,h.z);P.tx=x-r[0];P.tz=z-r[1];applyPlayer();moved=true;}
+function turnBy(d){const hw=headWorld(),h=headBase();P.yaw+=d;const r=R2(P.yaw,h.x,h.z);P.tx=hw.x-r[0];P.tz=hw.z-r[1];applyPlayer();moved=true;}
+
+/* ---------- руки ---------- */
+const H=[{},{}];
+function readPoses(frame,dt,withVel){
+  for(const h of H)h.has=false;
+  if(!session)return;
+  for(const src of session.inputSources){
+    if(!src.gripSpace||!src.targetRaySpace)continue;
+    const h=H[src.handedness==='left'?0:1];
+    const gp=frame.getPose(src.gripSpace,refSpace),rp=frame.getPose(src.targetRaySpace,refSpace);
+    if(!gp||!rp)continue;
+    h.src=src;h.has=true;h.g=gp.transform.matrix;h.r=rp.transform.matrix;
+    h.ro=[h.r[12],h.r[13],h.r[14]];h.rd=norm3([-h.r[8],-h.r[9],-h.r[10]]);
+    const pos=[h.g[12],h.g[13],h.g[14]];
+    if(withVel&&h.prev&&!h.skipVel&&dt>0){
+      const v=[(pos[0]-h.prev[0])/dt,(pos[1]-h.prev[1])/dt,(pos[2]-h.prev[2])/dt],o=h.vel||[0,0,0];
+      h.vel=[o[0]*.5+v[0]*.5,o[1]*.5+v[1]*.5,o[2]*.5+v[2]*.5];
+    }else if(!h.vel||h.skipVel)h.vel=[0,0,0];
+    h.prev=pos;h.skipVel=false;
+  }
+}
+const pressed=(gp,i)=>!!(gp&&gp.buttons&&gp.buttons[i]&&gp.buttons[i].pressed);
+function nearestBody(pos,maxD){
+  let best=null,bd=maxD;
+  for(const b of bodies){if(b.held!==null)continue;const d=dist3(pos,b.p);if(d<Math.max(bd,0)&&d<(best?bd:maxD)){best=b;bd=d;}}
+  return best;
+}
+function releaseBody(h){
+  const b=h.held;if(!b)return;
+  const v=h.vel||[0,0,0],sp=Math.hypot(v[0],v[1],v[2]),k=sp>10?10/sp:1;
+  b.v=[v[0]*k,v[1]*k,v[2]*k];b.held=null;h.held=null;beep(300,.05);
+}
+function raySphere(o,d,c,r){
+  const ox=o[0]-c[0],oy=o[1]-c[1],oz=o[2]-c[2];
+  const b=ox*d[0]+oy*d[1]+oz*d[2],cc=ox*ox+oy*oy+oz*oz-r*r,disc=b*b-cc;
+  if(disc<0)return null;const t=-b-Math.sqrt(disc);return t>0?t:null;
+}
+let T=[];
+function buildTargets(){
+  T=[{id:'btn',c:[BTN.x,BTN.y,BTN.z],r:.2,sel:h=>pressButton(h)}];
+  PL.forEach((p,i)=>T.push({id:i,c:p.pos,r:Math.max(p.rad,.06)*1.5,sel:()=>selectPlanet(i)}));
+}
+function bestHit(h){
+  let best=null,bt=1e9;
+  for(const t of T){const d=raySphere(h.ro,h.rd,t.c,t.r);if(d!==null&&d<bt){bt=d;best=t;}}
+  return best?{t:bt,tg:best}:null;
+}
+function aimTeleport(h){
+  h.tp=null;const o=h.ro,d=h.rd;
+  if(d[1]<-.05){const t=-o[1]/d[1];if(t>0&&t<12){const x=o[0]+d[0]*t,z=o[2]+d[2]*t;h.tp={x,z,valid:Math.abs(x)<5.4&&Math.abs(z)<5.4&&!insideBoxes(x,z,.45)};}}
+}
+function handleInput(){
+  for(let hi=0;hi<2;hi++){
+    const h=H[hi];
+    if(!h.has){if(h.held)releaseBody(h);h.aim=false;h.tp=null;continue;}
+    const gp=h.src.gamepad,ok=gp&&gp.axes&&gp.axes.length>=4;
+    const ax=ok?gp.axes[2]:0,ay=ok?gp.axes[3]:0;
+    const trig=pressed(gp,0),sq=pressed(gp,1);
+    const trigDown=trig&&!h.trigPrev,sqDown=sq&&!h.sqPrev;
+    h.trigPrev=trig;h.sqPrev=sq;
+    const gpos=[h.g[12],h.g[13],h.g[14]];
+    let used=false;
+    if(!h.held&&(trigDown||sqDown)){
+      const b=nearestBody(gpos,.22);
+      if(b){b.held=hi;b.by=sqDown?'sq':'trig';b.off=M.mul(M.inv(h.g),rigid(b));h.held=b;used=true;buzz(h.src,.4,30);beep(520,.06);}
+    }
+    if(h.held&&!(h.held.by==='sq'?sq:trig))releaseBody(h);
+    if(trigDown&&!used&&!h.aim){const hit=bestHit(h);if(hit)hit.tg.sel(h);}
+    // телепорт: стик вперёд — целиться, отпустить — переместиться
+    if(!h.held){
+      if(ay<-.6){h.aim=true;aimTeleport(h);}
+      else if(h.aim&&ay>-.25){if(h.tp&&h.tp.valid){teleportTo(h.tp.x,h.tp.z);beep(660,.08);buzz(h.src,.3,30);}h.aim=false;h.tp=null;}
+    }else{h.aim=false;h.tp=null;}
+    // поворот щелчками по 30°
+    if(Math.abs(ax)>.7&&!h.turnLock){h.turnLock=true;turnBy(ax>0?-Math.PI/6:Math.PI/6);}
+    else if(Math.abs(ax)<.3)h.turnLock=false;
+  }
+}
+
+/* ---------- физика и обновление мира ---------- */
+function stepBody(b,dt){
+  if(b.held!==null){
+    const h=H[b.held];
+    if(h&&h.has){const m=M.mul(h.g,b.off);b.p=[m[12],m[13],m[14]];m[12]=m[13]=m[14]=0;b.m=m;b.v=[0,0,0];}
+    return;
+  }
+  const hs=b.s/2,prevY=b.p[1];
+  b.v[1]-=9.8*dt;
+  for(let k=0;k<3;k++)b.p[k]+=b.v[k]*dt;
+  for(const bx of BOXES){
+    const dx=bx.hx+hs-Math.abs(b.p[0]-bx.x),dz=bx.hz+hs-Math.abs(b.p[2]-bx.z);
+    if(dx>0&&dz>0&&b.p[1]<bx.top+hs){
+      if(prevY>=bx.top+hs-.03){
+        b.p[1]=bx.top+hs;if(b.v[1]<0)b.v[1]=Math.abs(b.v[1])<.6?0:-b.v[1]*(b.shape==='ball'?.7:.25);
+        b.v[0]*=.9;b.v[2]*=.9;
+      }else if(dx<dz){b.p[0]+=(b.p[0]>=bx.x?1:-1)*dx;b.v[0]*=-.3;}
+      else{b.p[2]+=(b.p[2]>=bx.z?1:-1)*dz;b.v[2]*=-.3;}
+    }
+  }
+  if(b.p[1]<hs){
+    b.p[1]=hs;
+    if(b.v[1]<0)b.v[1]=Math.abs(b.v[1])<.6?0:-b.v[1]*(b.shape==='ball'?.75:.3);
+    b.v[0]*=.85;b.v[2]*=.85;
+    if(b.shape==='cube')b.m=M.rotY(Math.atan2(b.m[8],b.m[0]));
+  }
+  const lim=5.8-hs;
+  if(b.p[0]>lim){b.p[0]=lim;b.v[0]*=-.5;}if(b.p[0]<-lim){b.p[0]=-lim;b.v[0]*=-.5;}
+  if(b.p[2]>lim){b.p[2]=lim;b.v[2]*=-.5;}if(b.p[2]<-lim){b.p[2]=-lim;b.v[2]*=-.5;}
+}
+function stepWorld(dt){
+  btnCool=Math.max(0,btnCool-dt);btnDip=Math.max(0,btnDip-dt*.12);
+  for(const p of PL){if(p.orbit){p.ang+=p.speed*dt;p.pos[0]=SUN.x+p.orbit*Math.cos(p.ang);p.pos[2]=SUN.z+p.orbit*Math.sin(p.ang);}}
+  buildTargets();
+  for(const b of bodies)stepBody(b,dt);
+  for(const c of conf){c.v[1]-=6*dt;for(let k=0;k<3;k++)c.p[k]+=c.v[k]*dt;c.life-=dt;}
+  for(let i=conf.length-1;i>=0;i--)if(conf[i].life<=0||conf[i].p[1]<0)conf.splice(i,1);
+  for(let hi=0;hi<2;hi++){
+    const h=H[hi];if(!h.has){h.hover=null;continue;}
+    h.hover=h.aim?null:bestHit(h);
+    // нажатие кнопки рукой
+    const dx=h.g[12]-BTN.x,dz=h.g[14]-BTN.z,hd=Math.hypot(dx,dz);
+    if(hd<.17&&h.g[13]>.88&&h.g[13]<1.12){if(!h.poked){h.poked=true;pressButton(h);}}
+    else if(hd>.25)h.poked=false;
+  }
+}
+
+/* ---------- список отрисовки (матрицы считаются один раз за кадр) ---------- */
+let L=[];
+function add(m,model,col,em,mode,tex,ps){L.push({m,model,col,em:em||0,mode:mode||0,tex:tex||null,ps:ps||1});}
+function buildDrawList(head){
+  L=[];
+  add(mesh.stars,M.id(),[1,1,1],0,3,null,2);
+  add(mesh.quad,M.mul(M.rotX(-Math.PI/2),M.scale(12,12,1)),[.07,.10,.18],0,2);
+  const wc=[.12,.17,.3],tc=[.2,.7,1];
+  add(mesh.cube,TRS(0,1.5,-6,12,3,.2),wc);add(mesh.cube,TRS(0,1.5,6,12,3,.2),wc);
+  add(mesh.cube,TRS(6,1.5,0,.2,3,12),wc);add(mesh.cube,TRS(-6,1.5,0,.2,3,12),wc);
+  add(mesh.cube,TRS(0,3.02,-6,12,.05,.25),tc,1);add(mesh.cube,TRS(0,3.02,6,12,.05,.25),tc,1);
+  add(mesh.cube,TRS(6,3.02,0,.25,.05,12),tc,1);add(mesh.cube,TRS(-6,3.02,0,.25,.05,12),tc,1);
+  add(mesh.cube,TRS(TBL.x,TBL.top/2,TBL.z,TBL.hx*2,TBL.top,TBL.hz*2),[.45,.3,.2]);
+  add(mesh.cube,TRS(PED.x,PED.top/2,PED.z,PED.hx*2,PED.top,PED.hz*2),[.35,.38,.45]);
+  add(mesh.cube,TRS(BTN.x,.95-btnDip,BTN.z,.3,.1,.3),[.9,.15,.15],.15);
+  add(mesh.sphere,TRS(BTN.x,1.75,BTN.z,.5,.5,.5),LAMP[lampI],1);
+  const hov=new Set();for(const h of H)if(h.has&&h.hover)hov.add(h.hover.tg.id);
+  PL.forEach((p,i)=>{
+    const k=hov.has(i)?1.3:1;
+    if(p.orbit)add(mesh.circle,TRS(SUN.x,SUN.y,SUN.z,p.orbit,1,p.orbit),[.35,.42,.65],1);
+    add(mesh.sphere,TRS(p.pos[0],p.pos[1],p.pos[2],p.rad*k,p.rad*k,p.rad*k),p.col,p.em||(i===sel?.5:0));
+    if(p.ring)add(mesh.disc,M.mul(M.trans(p.pos[0],p.pos[1],p.pos[2]),M.mul(M.rotX(.4),M.scale(p.rad*1.9,1,p.rad*1.9))),[.8,.7,.5],.4);
+  });
+  for(const b of bodies)add(b.shape==='ball'?mesh.sphere:mesh.cube,M.mul(M.trans(b.p[0],b.p[1],b.p[2]),M.mul(b.m,M.scale(b.s,b.s,b.s))),b.col,.1);
+  for(const c of conf)add(mesh.cube,TRS(c.p[0],c.p[1],c.p[2],.035,.035,.035,c.life*5),c.col,.7);
+  for(let hi=0;hi<2;hi++){
+    const h=H[hi];if(!h.has)continue;
+    add(mesh.cube,M.mul(h.g,M.mul(M.trans(0,0,.04),M.scale(.045,.035,.13))),hi?[.95,.55,.2]:[.3,.55,1],.2);
+    let len=3,col=[.6,.8,1];
+    if(h.aim){col=h.tp&&h.tp.valid?[.3,1,.8]:[1,.3,.3];len=h.tp?Math.min(12,dist3(h.ro,[h.tp.x,0,h.tp.z])):1.5;
+      if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),col,1);}
+    else if(h.hover){len=h.hover.t;col=[1,.9,.3];}
+    add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-len/2),M.scale(.004,.004,len))),col,1);
+    if(h.hover&&!h.aim)add(mesh.sphere,TRS(h.ro[0]+h.rd[0]*len,h.ro[1]+h.rd[1]*len,h.ro[2]+h.rd[2]*len,.03,.03,.03),col,1);
+  }
+  for(const p of panels){
+    if(!p.show)continue;
+    const yaw=Math.atan2(head[0]-p.pos[0],head[2]-p.pos[2]);
+    add(mesh.quad,TRS(p.pos[0],p.pos[1],p.pos[2],p.w,p.h,1,yaw),[1,1,1],0,1,p.tex);
+  }
+}
+function renderScene(proj,view,cam){
+  gl.useProgram(prog);
+  gl.uniform1i(U.uTex,0);
+  gl.uniformMatrix4fv(U.uProj,false,proj);gl.uniformMatrix4fv(U.uView,false,view);gl.uniform3fv(U.uCam,cam);
+  for(const o of L){
+    gl.uniformMatrix4fv(U.uModel,false,o.model);gl.uniform3fv(U.uCol,o.col);
+    gl.uniform1f(U.uEm,o.em);gl.uniform1i(U.uMode,o.mode);gl.uniform1f(U.uPS,o.ps);
+    if(o.tex){gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,o.tex);}
+    gl.bindVertexArray(o.m.vao);gl.drawArrays(o.m.mode,0,o.m.n);
+  }
+  gl.bindVertexArray(null);
+}
+
+/* ---------- VR-режим ---------- */
+function xrFrame(t,frame){
+  if(!session)return;
+  session.requestAnimationFrame(xrFrame);
+  curFrame=frame;
+  const dt=last?Math.min(.05,(t-last)/1000):.016;last=t;
+  readPoses(frame,dt,true);
+  handleInput();
+  if(moved){for(const h of H)h.skipVel=true;readPoses(frame,dt,false);moved=false;}
+  stepWorld(dt);
+  const vp=frame.getViewerPose(refSpace);
+  if(!vp)return;
+  const layer=session.renderState.baseLayer;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,layer.framebuffer);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(.04,.06,.12,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  const hp=vp.transform.position;
+  buildDrawList([hp.x,hp.y,hp.z]);
+  for(const v of vp.views){
+    const vpt=layer.getViewport(v),p=v.transform.position;
+    gl.viewport(vpt.x,vpt.y,vpt.width,vpt.height);
+    renderScene(v.projectionMatrix,v.transform.inverse.matrix,[p.x,p.y,p.z]);
+  }
+}
+function onEnd(){
+  session=null;baseRef=null;refSpace=null;curFrame=null;last=0;
+  for(const h of H){if(h.held)releaseBody(h);h.has=false;}
+  ui.style.display='';startDesk();
+}
+async function enter(){
+  try{actx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){actx=null;}
+  let s;
+  try{s=await navigator.xr.requestSession('immersive-vr',{requiredFeatures:['local-floor']});}
+  catch(e){msg.textContent='Не удалось войти в VR: '+(e&&e.message||e);return;}
+  try{
+    if(gl.makeXRCompatible)await gl.makeXRCompatible();
+    s.updateRenderState({baseLayer:new XRWebGLLayer(s,gl)});
+    baseRef=await s.requestReferenceSpace('local-floor');
+    session=s;deskId++;
+    P.yaw=0;P.tx=0;P.tz=0;applyPlayer();
+    s.addEventListener('end',onEnd);
+    ui.style.display='none';last=0;
+    s.requestAnimationFrame(xrFrame);
+  }catch(e){
+    session=null;msg.textContent='Ошибка запуска VR: '+(e&&e.message||e);
+    try{s.end();}catch(_){}
+  }
+}
+
+/* ---------- режим просмотра на ПК (для проверки без шлема) ---------- */
+const D={x:0,z:0,yaw:0,pitch:0},keys={};
+canvas.addEventListener('pointermove',e=>{if(e.buttons){D.yaw-=(e.movementX||0)*.005;D.pitch=Math.max(-1.2,Math.min(1.2,D.pitch-(e.movementY||0)*.005));}});
+window.addEventListener('keydown',e=>{keys[e.code]=true;});
+window.addEventListener('keyup',e=>{keys[e.code]=false;});
+function startDesk(){
+  const id=++deskId;let lt=0;
+  const f=t=>{
+    if(id!==deskId||session)return;
+    requestAnimationFrame(f);
+    const dt=lt?Math.min(.05,(t-lt)/1000):.016;lt=t;
+    const sp=2.2*dt,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
+    if(keys.KeyW||keys.ArrowUp){D.x+=fx*sp;D.z+=fz*sp;}
+    if(keys.KeyS||keys.ArrowDown){D.x-=fx*sp;D.z-=fz*sp;}
+    if(keys.KeyD||keys.ArrowRight){D.x+=rx*sp;D.z+=rz*sp;}
+    if(keys.KeyA||keys.ArrowLeft){D.x-=rx*sp;D.z-=rz*sp;}
+    D.x=Math.max(-5.5,Math.min(5.5,D.x));D.z=Math.max(-5.5,Math.min(5.5,D.z));
+    stepWorld(dt);
+    const dpr=Math.min(window.devicePixelRatio||1,2),w=(canvas.clientWidth*dpr)|0,h=(canvas.clientHeight*dpr)|0;
+    if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(.04,.06,.12,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    const cam=[D.x,1.6,D.z];
+    const view=M.mul(M.rotX(-D.pitch),M.mul(M.rotY(-D.yaw),M.trans(-cam[0],-cam[1],-cam[2])));
+    buildDrawList(cam);
+    renderScene(M.persp(1.2,w/Math.max(1,h),.05,200),view,cam);
+  };
+  requestAnimationFrame(f);
+}
+
+/* ---------- запуск ---------- */
+(async()=>{
+  try{if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});}catch(e){}
+  let ok=false;
+  try{ok=!!(navigator.xr&&await navigator.xr.isSessionSupported('immersive-vr'));}catch(e){}
+  if(ok){
+    msg.textContent='Шлем найден. Нажми кнопку и надень очки.';
+    enterBtn.hidden=false;enterBtn.addEventListener('click',enter);
+  }else{
+    msg.textContent='VR не обнаружен: включён режим просмотра на экране.';
+    hint.textContent='Мышь (зажать) — осмотр, W A S D — движение. Для настоящего VR открой эту страницу в Meta Quest Browser по адресу https или localhost.';
+    ui.style.top='auto';ui.style.bottom='16px';ui.style.transform='translate(-50%,0)';
+  }
+  startDesk();
+})();
+})();
+</script>
+</body>
+</html>
