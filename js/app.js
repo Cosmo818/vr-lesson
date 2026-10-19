@@ -151,5 +151,7 @@ async function init(){
   setInterval(()=>{if(S.server()&&!document.hidden)S.sync();},60000);
   VR.app={E,choose,startSession,endSession,go};
 }
+/* возврат кнопкой «Назад» из кэша браузера: WebGL и состояние могут быть уже неживыми — перезагружаем страницу */
+window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();

@@ -156,7 +156,6 @@ $('pinForm').onsubmit=async e=>{
   const s=S.settings(),ok=(await pinHash($('pin').value.trim(),s.pinSalt||DEF_SALT))===(s.pinHash||DEF_HASH);
   if(ok){$('pinErr').textContent='';unlock();}else{$('pinErr').textContent='Неверный пароль.';$('pin').value='';}
 };
-if(unlocked())unlock();
 
 /* ---- вкладки ---- */
 $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','tests','questions','feedback','data'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
@@ -330,6 +329,8 @@ $('editor').onclick=e=>{
 };
 
 window.addEventListener('storage',()=>{S.reload();renderAll();});
+/* вход по сохранённой сессии — только в самом конце, когда все функции и переменные уже объявлены */
+if(unlocked())unlock();
 setInterval(()=>{if(!$('app').hidden&&S.server()&&!document.hidden)S.sync();},30000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('app').hidden&&S.server())S.sync();});
 })();
