@@ -42,6 +42,7 @@ function merge(A,B){
 }
 function load(){
   if(db)return db;
+  try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){} // просим браузер не очищать данные сайта сам
   let x=null;try{const s=localStorage.getItem(KEY);x=s?JSON.parse(s):null;}catch(e){x=null;}
   db=norm(x);return db;
 }
