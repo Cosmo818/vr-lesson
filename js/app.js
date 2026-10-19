@@ -50,11 +50,17 @@ function endSession(){
   const st=E.student;let msg='';
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
-  sess=null;E.student=null;E.deskInput=false;E.toggleMenu(false);
+  sess=null;E.student=null;E.deskInput=false;E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
   $('summary').textContent=msg;$('summary').hidden=false;
   chosen=null;renderList();showSection('pick');
+}
+function showSync(st){
+  const el=$('sync');if(!el)return;
+  const t=st.at?new Date(st.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'';
+  el.textContent=st.state==='ok'?'Сервер: синхронизировано в '+t:st.state==='err'?'Сервер недоступен ('+st.msg+'). Данные сохранены в шлеме и отправятся позже.':st.state==='wait'?'Связь с сервером…':'';
+  el.className='small '+(st.state==='err'?'warn':'muted');
 }
 const mmss=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
 const left=()=>sess?sess.limit-(performance.now()-sess.t0)/1000:0;
@@ -76,14 +82,15 @@ function hooks(){
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
     p.text((st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
-    p.button(36,150,W-72,90,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    p.button(36,150,W-72,86,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    const bw=(W-90)/2;
     VR.ORDER.forEach((k,i)=>{
-      const sub=D.subjects[k],b=best&&best[k].best!==null?'  ✓ '+best[k].best+'/'+best[k].total:'';
-      p.button(36,256+i*104,W-72,90,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(k);},{bg:E.roomId===k?'#f8fafc':sub.color,fg:'#0b1020',size:40});
+      const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';
+      p.button(36+(i%2)*(bw+18),252+((i/2)|0)*100,bw,86,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(k);},{bg:E.roomId===k?'#f8fafc':sub.color,fg:'#0b1020',size:36});
     });
-    p.button(36,690,(W-90)/2,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
-    p.button(54+(W-90)/2,690,(W-90)/2,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
-    p.text('Меню: кнопка A или X',W/2,808,{size:28,align:'center',color:'#94a3b8'});
+    p.button(36,670,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
+    p.button(54+bw,670,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
+    p.text('Меню: кнопка A или X',W/2,800,{size:28,align:'center',color:'#94a3b8'});
   };
   E.hooks.onRoom=()=>{E.hud.dirty=true;};
 }
@@ -116,6 +123,9 @@ async function init(){
   xrOk=await E.xrSupported();
   $('mode').textContent=xrOk?'Шлем найден: можно входить в VR.':'VR не найден: будет режим экрана (мышь — осмотр, W A S D — ходьба, щелчок — выбрать, E — взять, M — меню).';
   try{if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});}catch(e){}
+  S.onStatus(st=>{showSync(st);if(st.state==='ok'){if(!sess)renderList();for(const p of E.panels)p.dirty=true;}});
+  if(S.server()){showSync({state:'wait'});S.sync();}
+  setInterval(()=>{if(S.server()&&!document.hidden)S.sync();},60000);
   VR.app={E,choose,startSession,endSession,go};
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();

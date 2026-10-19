@@ -54,6 +54,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
     <div class="tabs" id="tabs">
       <button class="tab on" data-t="rating">Рейтинг</button>
       <button class="tab" data-t="students">Ученики</button>
+      <button class="tab" data-t="tests">Конструктор тестов</button>
       <button class="tab" data-t="questions">Сложные вопросы</button>
       <button class="tab" data-t="data">Данные и настройки</button>
     </div>
@@ -61,7 +62,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
     <section id="t-rating">
       <div class="row"><label>Класс: <select id="fClass"></select></label><span class="muted small" id="rInfo"></span></div>
       <div class="scroll card" style="padding:0"><table id="rTable"></table></div>
-      <p class="muted small">Баллы: лучший результат каждого теста × 10 + 2 за каждое открытие в комнатах. Тест сдан, если верно 3 из 5 и больше. Нажми на ученика, чтобы увидеть все попытки.</p>
+      <p class="muted small">Баллы: по каждому предмету лучший результат в процентах × 50 (5 из 5 = 50 баллов) + 2 за каждое открытие в комнатах. Предмет сдан, если верно не меньше 60%. Нажми на ученика, чтобы увидеть все попытки.</p>
       <div id="detail"></div>
     </section>
 
@@ -73,6 +74,14 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <div class="scroll card" style="padding:0"><table id="sTable"></table></div>
     </section>
 
+    <section id="t-tests" hidden>
+      <p class="muted">Свои тесты появляются в VR в выбранной комнате у учеников указанных классов (общие — на стене холла). Верный ответ отмечай кружком.</p>
+      <div class="row"><button class="btn" id="newTest">+ Новый тест</button>
+        <span class="muted">или копия встроенных вопросов:</span><select id="tplSubj"></select><select id="tplBand"></select><button class="btn ghost" id="fromBank">Создать копию</button></div>
+      <div class="scroll card" style="padding:0"><table id="tTable"></table></div>
+      <div id="editor"></div>
+    </section>
+
     <section id="t-questions" hidden>
       <p class="muted">Вопросы, на которые чаще всего отвечают неверно. Это темы, которые стоит повторить на уроке.</p>
       <div class="row"><label>Предмет: <select id="fSubj"></select></label></div>
@@ -81,6 +90,12 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
 
     <section id="t-data" hidden>
       <div class="note">Все данные хранятся <b>только в этом браузере</b>. Ученики проходят уроки в шлеме, поэтому их результаты лежат в браузере шлема: открой эту страницу в шлеме. Чтобы посмотреть результаты на компьютере, нажми «Скачать данные» в шлеме и загрузи файл здесь через «Загрузить».</div>
+      <div class="card">
+        <h2 style="margin-top:0">Сервер (Raspberry Pi)</h2>
+        <p class="muted small">Адрес сервера и ключ. Здесь, на странице учителя, используй ключ учителя. В шлеме — ключ шлема (он даёт только сохранять результаты). Ключи лежат на Pi в файле /opt/vr-lesson-data/keys.json.</p>
+        <div class="row"><input id="srvUrl" placeholder="https://имя.tailXXXX.ts.net" style="flex:1 1 260px"><input id="srvKey" type="password" placeholder="Ключ" style="flex:1 1 200px" autocomplete="off"></div>
+        <div class="row"><button class="btn" id="srvSave">Подключить и синхронизировать</button><button class="btn ghost" id="srvOff">Отключить</button><span id="srvMsg" class="muted"></span></div>
+      </div>
       <div class="card">
         <h2 style="margin-top:0">Настройки</h2>
         <div class="row"><label>Минут на одного ученика: <input id="minutes" type="number" min="1" max="45" style="width:90px"></label></div>
@@ -109,6 +124,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
 </div>
 
 <script src="js/data.js"></script>
+<script src="js/questions.js"></script>
 <script src="js/store.js"></script>
 <script>
 (function(){
@@ -117,17 +133,18 @@ const D=VR.DATA,S=VR.Store,SUBJ=S.SUBJ;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dt=ts=>ts?new Date(ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const subjOpts=v=>Object.keys(D.subjects).map(k=>`<option value="${k}"${k===v?' selected':''}>${D.subjects[k].title}${k==='gen'?' (холл)':''}</option>`).join('');
 const cls=(b,t)=>b===null?'s-none':b/t>=.8?'s-good':b/t>=.6?'s-mid':'s-bad';
 let sel=null;
 
 /* ---- вход по PIN ---- */
 function unlocked(){try{return sessionStorage.getItem('vrl.teacher')==='1';}catch(e){return false;}}
-function unlock(){try{sessionStorage.setItem('vrl.teacher','1');}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();}
+function unlock(){try{sessionStorage.setItem('vrl.teacher','1');}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();if(S.server())S.sync();}
 $('pinForm').onsubmit=e=>{e.preventDefault();if($('pin').value===String(S.settings().pin))unlock();else{$('pinErr').textContent='Неверный PIN.';$('pin').value='';}};
 if(unlocked())unlock();
 
 /* ---- вкладки ---- */
-$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','questions','data'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
+$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','tests','questions','data'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
 
 /* ---- рейтинг ---- */
 function rows(){
@@ -157,8 +174,8 @@ function renderDetail(){
   $('detail').innerHTML=`<div class="card"><h2 style="margin-top:0">${esc(s.name)}, ${s.grade} класс</h2>
    <p class="muted">Открытий: ${disc.length}. Попыток тестов: ${res.length}.</p>`+
    (res.length?'<div class="scroll"><table><tr><th>Когда</th><th>Предмет</th><th>Задания</th><th>Результат</th><th>Время</th><th>Ошибки</th></tr>'+res.map(r=>{
-     const wrong=(r.ans||[]).filter(a=>!a[1]).map(a=>D.qById[a[0]]?esc(D.qById[a[0]].q):esc(a[0]));
-     return`<tr><td class="small">${dt(r.ts)}</td><td>${D.subjects[r.subj]?D.subjects[r.subj].title:esc(r.subj)}</td><td class="small">${D.bands[r.band]||''}</td><td><span class="sc ${cls(r.score,r.total)}">${r.score}/${r.total}</span></td><td class="small">${r.dur?Math.round(r.dur/6)/10+' мин':'—'}</td><td class="small">${wrong.length?wrong.join('<br>'):'<span class="muted">нет</span>'}</td></tr>`;}).join('')+'</table></div>':'<p class="muted">Тестов ещё не было.</p>')+'</div>';
+     const wrong=(r.ans||[]).filter(a=>!a[1]).map(a=>{const q=S.question(a[0]);return q?esc(q.q):'<span class="muted">(вопрос удалён)</span>';});
+     return`<tr><td class="small">${dt(r.ts)}</td><td>${D.subjects[r.subj]?D.subjects[r.subj].title:esc(r.subj)}</td><td class="small">${r.testTitle?'«'+esc(r.testTitle)+'»':D.bands[r.band]||''}</td><td><span class="sc ${cls(r.score,r.total)}">${r.score}/${r.total}</span></td><td class="small">${r.dur?Math.round(r.dur/6)/10+' мин':'—'}</td><td class="small">${wrong.length?wrong.join('<br>'):'<span class="muted">нет</span>'}</td></tr>`;}).join('')+'</table></div>':'<p class="muted">Тестов ещё не было.</p>')+'</div>';
 }
 
 /* ---- ученики ---- */
@@ -180,14 +197,18 @@ $('fSubj').innerHTML='<option value="all">Все</option>'+SUBJ.map(k=>`<option 
 $('fSubj').onchange=()=>renderQuestions();
 function renderQuestions(){
   const f=$('fSubj').value,st={};
-  for(const r of S.results())for(const a of(r.ans||[])){const q=D.qById[a[0]];if(!q||(f!=='all'&&q.subj!==f))continue;const x=st[a[0]]=st[a[0]]||{q,n:0,ok:0};x.n++;x.ok+=a[1]?1:0;}
+  for(const r of S.results())for(const a of(r.ans||[])){const q=S.question(a[0]);if(!q||(f!=='all'&&q.subj!==f))continue;const x=st[a[0]]=st[a[0]]||{q,n:0,ok:0};x.n++;x.ok+=a[1]?1:0;}
   const L=Object.values(st).sort((a,b)=>a.ok/a.n-b.ok/b.n||b.n-a.n).slice(0,25);
-  $('qTable').innerHTML=L.length?'<tr><th>Вопрос</th><th>Предмет</th><th>Классы</th><th>Ответов</th><th>Верно</th></tr>'+L.map(x=>{const pc=Math.round(x.ok/x.n*100),c=pc>=80?'var(--good)':pc>=60?'var(--mid)':'var(--bad)';
-    return`<tr><td>${esc(x.q.q)}<div class="muted small">Верный ответ: ${esc(x.q.a[0])}</div></td><td>${D.subjects[x.q.subj].title}</td><td class="small">${D.bands[x.q.band]}</td><td>${x.n}</td><td><b>${pc}%</b><div class="bar"><i style="width:${pc}%;background:${c}"></i></div></td></tr>`;}).join(''):'<tr><td class="muted">Ответов пока нет.</td></tr>';
+  $('qTable').innerHTML=L.length?'<tr><th>Вопрос</th><th>Предмет</th><th>Тест / классы</th><th>Ответов</th><th>Верно</th></tr>'+L.map(x=>{const pc=Math.round(x.ok/x.n*100),c=pc>=80?'var(--good)':pc>=60?'var(--mid)':'var(--bad)';
+    return`<tr><td>${esc(x.q.q)}<div class="muted small">Верный ответ: ${esc(x.q.a[0])}</div></td><td>${D.subjects[x.q.subj]?D.subjects[x.q.subj].title:''}</td><td class="small">${x.q.test?'«'+esc(x.q.test)+'»':D.bands[x.q.band]||''}</td><td>${x.n}</td><td><b>${pc}%</b><div class="bar"><i style="width:${pc}%;background:${c}"></i></div></td></tr>`;}).join(''):'<tr><td class="muted">Ответов пока нет.</td></tr>';
 }
 
 /* ---- данные ---- */
-function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';}
+function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';const sv=S.server();if(sv&&!$('srvUrl').value){$('srvUrl').value=sv.url;}showSrv(S.status);}
+function showSrv(st){const t=st.at?new Date(st.at).toLocaleTimeString('ru-RU'):'';$('srvMsg').textContent=!S.server()?'Сервер не подключён: данные только в этом браузере.':st.state==='ok'?'Синхронизировано в '+t+(st.role==='teacher'?' (ключ учителя)':' (ключ шлема: тесты и удаление отсюда не отправятся)'):st.state==='err'?'Ошибка: '+st.msg:'Связь…';}
+$('srvSave').onclick=async()=>{const u=$('srvUrl').value.trim(),k=$('srvKey').value.trim();if(!u||!k){$('srvMsg').textContent='Нужны адрес и ключ.';return;}S.setServer(u,k);$('srvKey').value='';$('srvMsg').textContent='Связь…';await S.sync();renderAll();};
+$('srvOff').onclick=()=>{S.setServer(null);S.status={state:'off'};renderAll();};
+S.onStatus(st=>{if(st.state==='ok')renderAll();else showSrv(st);});
 $('saveSet').onclick=()=>{
   const m=Math.max(1,Math.min(45,parseInt($('minutes').value,10)||8)),p=$('newPin').value.trim(),patch={minutes:m};
   if(p){if(!/^\d{4,12}$/.test(p)){$('setMsg').textContent='PIN — от 4 до 12 цифр.';return;}patch.pin=p;}
@@ -209,7 +230,76 @@ $('upBtn').onclick=()=>{const f=$('upFile').files[0];if(!f){$('ioMsg').textConte
 $('pasteBtn').onclick=()=>doImport($('paste').value);
 $('clearRes').onclick=()=>{if(confirm('Удалить ВСЕ результаты тестов и открытия? Список учеников останется.')&&confirm('Точно? Восстановить можно только из скачанной копии.')){S.clearResults();renderAll();}};
 
-function renderAll(){if($('app').hidden)return;renderRating();renderStudents();renderQuestions();renderData();}
+function renderAll(){if($('app').hidden)return;renderRating();renderStudents();renderTests();renderQuestions();renderData();}
+/* ---- конструктор тестов ---- */
+let ed=null,edErr='';
+const gOpts=(v)=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===v?' selected':''}>${i+1}</option>`).join('');
+$('tplSubj').innerHTML=Object.keys(D.Q).map(k=>`<option value="${k}">${D.subjects[k].title}</option>`).join('');
+$('tplBand').innerHTML=Object.keys(D.bands).map(k=>`<option value="${k}">${D.bands[k]}</option>`).join('');
+const bandRange={a:[1,4],b:[5,6],c:[7,8],d:[9,11]};
+const blankQ=()=>({q:'',a:['','','',''],e:'',c:0});
+const toEd=t=>({id:t.id,created:t.created,title:t.title,subj:t.subj,gmin:t.gmin,gmax:t.gmax,active:t.active!==false,qs:t.qs.map(q=>({id:q.id,q:q.q,a:q.a.concat(['','','','']).slice(0,4),e:q.e||'',c:0}))});
+$('newTest').onclick=()=>{ed={title:'',subj:'math',gmin:5,gmax:6,active:true,qs:[blankQ()]};edErr='';renderEditor();};
+$('fromBank').onclick=()=>{
+  const sj=$('tplSubj').value,b=$('tplBand').value,qs=D.Q[sj][b];
+  ed={title:D.subjects[sj].title+', '+D.bands[b]+' (копия)',subj:sj,gmin:bandRange[b][0],gmax:bandRange[b][1],active:true,qs:qs.map(q=>({q:q.q,a:q.a.slice(),e:q.e,c:0}))};edErr='';renderEditor();
+};
+function renderTests(){
+  const L=S.tests();
+  $('tTable').innerHTML=L.length?'<tr><th>Тест</th><th>Где</th><th>Классы</th><th>Вопросов</th><th>Включён</th><th></th></tr>'+L.map(t=>`<tr data-id="${t.id}"><td><b>${esc(t.title)}</b></td><td>${D.subjects[t.subj]?D.subjects[t.subj].title:''}</td><td>${t.gmin}–${t.gmax}</td><td>${t.qs.length}</td><td><input type="checkbox" class="act"${t.active!==false?' checked':''}></td><td style="white-space:nowrap"><button class="btn ed">Изменить</button> <button class="btn ghost cp">Копия</button> <button class="btn red del">Удалить</button></td></tr>`).join(''):'<tr><td class="muted">Своих тестов пока нет. Нажми «+ Новый тест» или создай копию встроенных вопросов и отредактируй.</td></tr>';
+  renderEditor();
+}
+$('tTable').onclick=e=>{
+  const tr=e.target.closest('[data-id]');if(!tr)return;const t=S.test(tr.dataset.id);if(!t)return;
+  if(e.target.classList.contains('act')){S.saveTest(Object.assign({},t,{active:e.target.checked}));renderTests();}
+  if(e.target.classList.contains('ed')){ed=toEd(t);edErr='';renderEditor();$('editor').scrollIntoView({behavior:'smooth'});}
+  if(e.target.classList.contains('cp')){ed=toEd(t);delete ed.id;delete ed.created;ed.title+=' (копия)';ed.qs.forEach(q=>delete q.id);edErr='';renderEditor();}
+  if(e.target.classList.contains('del')&&confirm(`Удалить тест «${t.title}»? Результаты учеников останутся.`)){S.removeTest(t.id);if(ed&&ed.id===t.id)ed=null;renderTests();}
+};
+function renderEditor(){
+  const box=$('editor');if(!ed){box.innerHTML='';return;}
+  box.innerHTML=`<div class="card"><h2 style="margin-top:0">${ed.id?'Редактирование теста':'Новый тест'}</h2>
+   <div class="row"><input id="eTitle" placeholder="Название, например «Дроби, 5 класс»" value="${esc(ed.title)}" style="flex:1 1 300px" maxlength="120"></div>
+   <div class="row"><label>Где показать: <select id="eSubj">${subjOpts(ed.subj)}</select></label>
+     <label>Классы: с <select id="eMin">${gOpts(ed.gmin)}</select> по <select id="eMax">${gOpts(ed.gmax)}</select></label>
+     <label><input type="checkbox" id="eAct"${ed.active?' checked':''}> включён</label></div>
+   <p class="muted small">В VR показываются до 15 вопросов в случайном порядке; варианты ответов перемешиваются.</p>
+   <div id="eQs">${ed.qs.map((q,i)=>`<div class="card" data-i="${i}" style="background:#0e1730">
+     <div class="row" style="justify-content:space-between"><b>Вопрос ${i+1}</b><span><button class="btn ghost up" type="button">↑</button> <button class="btn ghost dn" type="button">↓</button> <button class="btn red rm" type="button">Удалить</button></span></div>
+     <textarea class="qq" placeholder="Текст вопроса" style="font-family:inherit;font-size:15px;min-height:60px">${esc(q.q)}</textarea>
+     ${q.a.map((a,k)=>`<div class="row"><label title="Верный ответ"><input type="radio" name="c${i}" value="${k}"${q.c===k?' checked':''}> верный</label><input class="qa" data-k="${k}" placeholder="Вариант ${k+1}${k>1?' (можно пусто)':''}" value="${esc(a)}" style="flex:1 1 240px"></div>`).join('')}
+     <input class="qe" placeholder="Пояснение после ответа (необязательно)" value="${esc(q.e)}" style="width:100%">
+   </div>`).join('')}</div>
+   <div class="row"><button class="btn ghost" id="eAdd" type="button">+ Вопрос</button><button class="btn" id="eSave" type="button">Сохранить тест</button><button class="btn ghost" id="eCancel" type="button">Отмена</button><span id="eErr" style="color:var(--bad)">${esc(edErr)}</span></div></div>`;
+}
+function collect(){
+  if(!ed)return;
+  ed.title=$('eTitle').value;ed.subj=$('eSubj').value;ed.gmin=parseInt($('eMin').value,10);ed.gmax=parseInt($('eMax').value,10);ed.active=$('eAct').checked;
+  for(const card of $('eQs').querySelectorAll('[data-i]')){
+    const q=ed.qs[+card.dataset.i];q.q=card.querySelector('.qq').value;q.e=card.querySelector('.qe').value;
+    for(const inp of card.querySelectorAll('.qa'))q.a[+inp.dataset.k]=inp.value;
+    const r=card.querySelector('input[type=radio]:checked');q.c=r?+r.value:0;
+  }
+}
+$('editor').onclick=e=>{
+  if(!ed)return;const t=e.target,card=t.closest('[data-i]'),i=card?+card.dataset.i:-1;
+  if(t.id==='eAdd'){collect();ed.qs.push(blankQ());renderEditor();return;}
+  if(t.id==='eCancel'){ed=null;renderEditor();return;}
+  if(i>=0&&t.classList.contains('rm')){collect();ed.qs.splice(i,1);renderEditor();return;}
+  if(i>=0&&(t.classList.contains('up')||t.classList.contains('dn'))){collect();const j=t.classList.contains('up')?i-1:i+1;if(j>=0&&j<ed.qs.length){const x=ed.qs[i];ed.qs[i]=ed.qs[j];ed.qs[j]=x;}renderEditor();return;}
+  if(t.id==='eSave'){
+    collect();edErr='';
+    if(!ed.title.trim())edErr='Укажи название теста.';
+    else if(ed.gmax<ed.gmin)edErr='Класс «по» меньше, чем «с».';
+    else if(!ed.qs.length)edErr='Добавь хотя бы один вопрос.';
+    else for(let k=0;k<ed.qs.length;k++){const q=ed.qs[k];if(!q.q.trim()){edErr='Вопрос '+(k+1)+': нет текста.';break;}if(!String(q.a[q.c]||'').trim()){edErr='Вопрос '+(k+1)+': верный ответ пустой.';break;}if(q.a.filter(a=>a.trim()).length<2){edErr='Вопрос '+(k+1)+': нужно минимум 2 варианта.';break;}}
+    if(edErr){renderEditor();return;}
+    const qs=ed.qs.map(q=>{const a=[q.a[q.c]].concat(q.a.filter((x,k)=>k!==q.c));return{id:q.id,q:q.q,a,e:q.e};});
+    S.saveTest({id:ed.id,created:ed.created,title:ed.title.trim(),subj:ed.subj,gmin:ed.gmin,gmax:ed.gmax,active:ed.active,qs});
+    ed=null;renderTests();
+  }
+};
+
 window.addEventListener('storage',()=>{S.reload();renderAll();});
 })();
 </script>

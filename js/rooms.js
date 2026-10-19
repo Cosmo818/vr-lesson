@@ -3,23 +3,27 @@
 'use strict';
 const VR=window.VR,D=VR.DATA,M=VR.M,TRS=VR.TRS,G=VR.geo;
 const ROOMS=VR.ROOMS={};
-const ORDER=['math','phys','chem','space'];
+const ORDER=['math','phys','chem','bio','space','soc','logic','hist'];
 const fmt=(x,d)=>x.toFixed(d===undefined?1:d).replace('.',',');
 const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;const t=a[i];a[i]=a[j];a[j]=t;}return a;};
 const YL=Math.PI/2,YR=-Math.PI/2;
 const faceTo=(pos,tx,tz)=>Math.atan2(tx-pos[0],tz-pos[2]);
 const backDoor=(E,z)=>E.door(0,z||5.88,Math.PI,'hall','← Холл','#94a3b8');
-VR.ORDER=ORDER;
+VR.ORDER=ORDER;VR.RU={shuffle,fmt,faceTo,backDoor,YL,YR};
 
 /* ======================= ТЕСТ ======================= */
-function makeQuiz(E,subj,pos,yaw){
+function makeQuiz(E,subj,pos,yaw,opt){
+  opt=opt||{};
   const sub=D.subjects[subj],Q={phase:'intro'};
   const grade=()=>E.student&&E.student.grade?E.student.grade:5;
   const band=()=>VR.Store.band(grade());
-  const start=()=>{
-    const pool=shuffle(D.Q[subj][band()].slice());
-    Q.qs=pool.slice(0,5).map(q=>({q,order:shuffle(q.a.map((_,i)=>i))}));
-    Q.i=0;Q.score=0;Q.ans=[];Q.phase='q';Q.t0=Date.now();
+  const tTests=()=>VR.Store.testsFor(subj,grade()).slice(0,opt.teacherOnly?5:3);
+  const start=test=>{
+    let items;
+    if(test)items=shuffle(test.qs.slice()).slice(0,15).map(q=>({q:{id:'t:'+test.id+':'+q.id,q:q.q,a:q.a,e:q.e},order:shuffle(q.a.map((_,i)=>i))}));
+    else items=shuffle(((D.Q[subj]||{})[band()]||[]).slice()).slice(0,5).map(q=>({q,order:shuffle(q.a.map((_,i)=>i))}));
+    if(!items.length)return;
+    Q.test=test||null;Q.qs=items;Q.i=0;Q.score=0;Q.ans=[];Q.phase='q';Q.t0=Date.now();
   };
   const answer=k=>{
     if(Q.phase!=='q')return;
@@ -31,27 +35,29 @@ function makeQuiz(E,subj,pos,yaw){
     if(Q.phase!=='fb')return;
     Q.i++;if(Q.i<Q.qs.length){Q.phase='q';return;}
     Q.phase='res';const st=E.student;
-    if(st&&st.id){VR.Store.addResult({sid:st.id,subj,band:band(),grade:grade(),score:Q.score,total:Q.qs.length,dur:Math.round((Date.now()-Q.t0)/1000),ans:Q.ans});Q.saved=true;}
+    if(st&&st.id){VR.Store.addResult({sid:st.id,subj,band:band(),grade:grade(),test:Q.test?Q.test.id:null,testTitle:Q.test?Q.test.title:null,score:Q.score,total:Q.qs.length,dur:Math.round((Date.now()-Q.t0)/1000),ans:Q.ans});Q.saved=true;}
     else Q.saved=false;
-    if(Q.score===Q.qs.length){E.fanfare();E.burst([pos[0],pos[1]+.8,pos[2]],60);}else if(Q.score>=3)E.chime();
+    const r=Q.score/Q.qs.length;
+    if(r===1){E.fanfare();E.burst([pos[0],pos[1]+.8,pos[2]],60);}else if(r>=.6)E.chime();
     E.menu.dirty=true;E.hud.dirty=true;
     if(E.hooks.onResult)E.hooks.onResult(subj,Q.score,Q.qs.length);
   };
   const p=E.addPanel({w:2,h:1.4,pos,yaw,accent:sub.color,draw:(c,p)=>{
     const W=p.W,H=p.H;
     if(Q.phase==='intro'){
-      p.text('Тест: '+sub.title,40,34,{size:64,bold:true});
-      p.text(D.bands[band()]+'  ·  5 вопросов',40,122,{size:40,color:'#b8c7ea'});
-      let best='Ты ещё не проходил этот тест.';
-      if(E.student&&E.student.id){const b=VR.Store.best(E.student.id)[subj];if(b.best!==null)best='Твой лучший результат: '+b.best+' из '+b.total+'  (попыток: '+b.attempts+')';}
-      else best='Режим гостя: результат не сохранится.';
-      p.text(best,40,196,{size:38});
-      p.text('Сначала изучи комнату, потом проверь себя. Выбирай ответ лучом и нажимай курок.',40,270,{size:36,color:'#cbd5e1'});
-      p.button(W/2-260,H-170,520,120,'Начать тест',start,{bg:sub.color,fg:'#0b1020',size:52});
+      const tt=tTests();
+      p.text(opt.teacherOnly?'Тесты учителя':'Тест: '+sub.title,40,30,{size:62,bold:true});
+      p.text(D.bands[band()]+(E.student&&E.student.id?'':'  ·  гость: результат не сохранится'),40,116,{size:38,color:'#b8c7ea'});
+      if(!opt.teacherOnly&&E.student&&E.student.id){const b=VR.Store.best(E.student.id)[subj];p.text(b.best!==null?'Лучший результат: '+b.best+' из '+b.total+'  (попыток: '+b.attempts+')':'Ты ещё не проходил тесты по этому предмету.',40,176,{size:36});}
+      let y=opt.teacherOnly?190:250;
+      if(!opt.teacherOnly){p.button(40,y,W-80,100,'Тест комнаты · 5 вопросов',()=>start(null),{bg:sub.color,fg:'#0b1020',size:44});y+=112;}
+      for(const t of tt){p.button(40,y,W-80,90,'Тест учителя: '+t.title+' ('+Math.min(15,t.qs.length)+' вопр.)',()=>start(t),{bg:'#334155',size:36});y+=100;}
+      if(opt.teacherOnly&&!tt.length)p.text('Учитель пока не добавил общих тестов для твоего класса. Тесты по предметам — в комнатах.',40,200,{size:38,color:'#cbd5e1'});
     }else if(Q.phase==='q'){
       const it=Q.qs[Q.i];
-      p.text('Вопрос '+(Q.i+1)+' из '+Q.qs.length,40,28,{size:34,color:'#b8c7ea'});
-      for(let k=0;k<Q.qs.length;k++){c.fillStyle=k<Q.ans.length?(Q.ans[k][1]?'#22c55e':'#ef4444'):(k===Q.i?'#ffffff':'#475569');c.beginPath();c.arc(W-60-(Q.qs.length-1-k)*40,46,13,0,7);c.fill();}
+      p.text((Q.test?Q.test.title+'  ·  ':'')+'Вопрос '+(Q.i+1)+' из '+Q.qs.length,40,28,{size:34,color:'#b8c7ea',maxW:W-60-Q.qs.length*32});
+      const step=Math.min(40,(W*.45)/Q.qs.length);
+      for(let k=0;k<Q.qs.length;k++){c.fillStyle=k<Q.ans.length?(Q.ans[k][1]?'#22c55e':'#ef4444'):(k===Q.i?'#ffffff':'#475569');c.beginPath();c.arc(W-60-(Q.qs.length-1-k)*step,46,Math.min(13,step*.35),0,7);c.fill();}
       p.text(it.q.q,40,82,{size:44,bold:true,maxY:300});
       it.order.forEach((orig,k)=>p.button(40,306+k*100,W-80,86,it.q.a[orig],()=>answer(k),{bg:'#1e3a8a',size:36}));
     }else if(Q.phase==='fb'){
@@ -59,17 +65,17 @@ function makeQuiz(E,subj,pos,yaw){
       p.text('Вопрос '+(Q.i+1)+' из '+Q.qs.length,40,28,{size:34,color:'#b8c7ea'});
       p.text(Q.ok?'✓ Верно!':'✗ Неверно',40,80,{size:68,bold:true,color:Q.ok?'#4ade80':'#f87171'});
       p.text('Правильный ответ: '+it.q.a[0],40,176,{size:42,bold:true,maxY:300});
-      p.text(it.q.e,40,300,{size:38,color:'#cbd5e1',maxY:H-170});
+      if(it.q.e)p.text(it.q.e,40,300,{size:38,color:'#cbd5e1',maxY:H-170});
       p.button(W/2-250,H-150,500,112,Q.i+1<Q.qs.length?'Дальше →':'Узнать результат',next,{bg:sub.color,fg:'#0b1020',size:46});
     }else{
-      const n=Q.score>=Q.qs.length?3:Q.score>=4?2:Q.score>=3?1:0;
+      const r=Q.score/Q.qs.length,n=r>=1?3:r>=.8?2:r>=.6?1:0;
       p.text('Результат',40,30,{size:56,bold:true});
       p.text(Q.score+' из '+Q.qs.length,W/2,110,{size:120,bold:true,align:'center',color:n?'#4ade80':'#fbbf24'});
       p.text('★'.repeat(n)+'☆'.repeat(3-n),W/2,262,{size:84,align:'center',color:'#facc15'});
-      const msg=['Попробуй ещё раз: изучи комнату внимательнее.','Неплохо, тест пройден!','Очень хорошо!','Отлично! Ты всё знаешь.'][n];
-      p.text(msg,W/2,376,{size:40,align:'center'});
+      p.text(['Попробуй ещё раз: изучи комнату внимательнее.','Неплохо, тест пройден!','Очень хорошо!','Отлично! Ты всё знаешь.'][n],W/2,376,{size:40,align:'center'});
       p.text(Q.saved?'Результат сохранён':'Гость: результат не сохранён',W/2,436,{size:32,align:'center',color:'#94a3b8'});
-      p.button(W/2-250,H-150,500,112,'Пройти ещё раз',start,{bg:'#334155',size:44});
+      p.button(40,H-150,(W-100)/2,112,'Ещё раз',()=>start(Q.test),{bg:'#334155',size:44});
+      p.button(60+(W-100)/2,H-150,(W-100)/2,112,'Все тесты',()=>{Q.phase='intro';},{bg:'#334155',size:44});
     }
   }});
   p.quiz=Q;p.quizApi={start,answer,next};
@@ -78,26 +84,25 @@ function makeQuiz(E,subj,pos,yaw){
 VR.makeQuiz=makeQuiz;
 
 /* ======================= ХОЛЛ ======================= */
+const DOORS=[['math',-5.88,-4.2,YL],['phys',-5.88,-1.6,YL],['chem',-5.88,1,YL],['bio',-5.88,3.6,YL],['space',5.88,-4.2,YR],['soc',5.88,-1.6,YR],['logic',5.88,1,YR],['hist',5.88,3.6,YR]];
 ROOMS.hall={
   title:'Холл',env:{floor:[.07,.1,.18],wall:[.12,.17,.3],trim:[.2,.7,1],grid:[.25,.55,.9]},
   hint:'Холл. Наведи луч на дверь или кнопку и нажми курок. Меню: кнопка A или X.',
   build(E,S){
-    E.addPanel({w:3.4,h:2.2,pos:[0,1.65,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
+    E.addPanel({w:3.4,h:2.4,pos:[0,1.7,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
       const st=E.student;
-      p.text('Привет, '+(st?st.name:'гость')+'!',50,32,{size:66,bold:true});
-      p.text((st&&st.grade?st.grade+' класс  ·  ':'')+'Выбери комнату, изучи её и пройди тест.',50,120,{size:36,color:'#b8c7ea'});
+      p.text('Привет, '+(st?st.name:'гость')+'!',50,30,{size:64,bold:true});
+      p.text((st&&st.grade?st.grade+' класс  ·  ':'')+'Выбери комнату, изучи её и пройди тест.',50,112,{size:34,color:'#b8c7ea'});
       const best=st&&st.id?VR.Store.best(st.id):null;
       ORDER.forEach((k,i)=>{
-        const sub=D.subjects[k],x=50+(i%2)*474,y=186+((i/2)|0)*150;
-        const b=best&&best[k].best!==null?'   ✓ '+best[k].best+'/'+best[k].total:'';
-        p.button(x,y,450,130,sub.title+b,()=>E.goRoom(k),{bg:sub.color,fg:'#0b1020',size:48});
+        const sub=D.subjects[k],x=50+(i%2)*474,y=170+((i/2)|0)*104;
+        const b=best&&best[k].best!==null?'  ✓ '+best[k].best+'/'+best[k].total:'';
+        p.button(x,y,450,92,sub.title+b,()=>E.goRoom(k),{bg:sub.color,fg:'#0b1020',size:40});
       });
-      p.text('Стик вперёд и отпустить — телепорт  ·  Стик вбок — поворот\nКурок или хват рядом с предметом — взять  ·  Кнопка A или X — меню',50,500,{size:30,color:'#cbd5e1',lh:40});
+      p.text('Стик вперёд и отпустить — телепорт  ·  Стик вбок — поворот  ·  Кнопка A или X — меню\nТесты учителя — на стене у тебя за спиной',50,600,{size:28,color:'#cbd5e1',lh:38});
     }});
-    E.door(-5.88,-2.5,YL,'math',D.subjects.math.title,D.subjects.math.color);
-    E.door(-5.88,2.2,YL,'phys',D.subjects.phys.title,D.subjects.phys.color);
-    E.door(5.88,-2.5,YR,'chem',D.subjects.chem.title,D.subjects.chem.color);
-    E.door(5.88,2.2,YR,'space',D.subjects.space.title,D.subjects.space.color);
+    for(const [k,x,z,yaw] of DOORS)E.door(x,z,yaw,k,D.subjects[k].title,D.subjects[k].color);
+    makeQuiz(E,'gen',[0,1.6,5.86],Math.PI,{teacherOnly:true});
     /* разминка: стол с предметами */
     const T=E.addTable(-2.7,-3.7,.7,.35,.8);
     [[-3.2,'cube',[.9,.25,.25]],[-2.95,'cube',[.25,.8,.35]],[-2.7,'cube',[.3,.5,.95]],[-2.42,'ball',[.95,.8,.2]],[-2.15,'ball',[.95,.95,.95]]]

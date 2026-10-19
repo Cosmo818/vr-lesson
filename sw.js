@@ -1,11 +1,11 @@
 /* Офлайн-кэш: при наличии сети берём свежие файлы, без сети — из кэша. */
-const V='vr-lesson-v2';
-const FILES=['./','index.html','teacher.html','css/style.css','js/data.js','js/store.js','js/engine.js','js/rooms.js','js/app.js','manifest.webmanifest','icon.svg'];
+const V='vr-lesson-v3';
+const FILES=['./','index.html','teacher.html','css/style.css','js/data.js','js/questions.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/app.js','manifest.webmanifest','icon.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
 self.addEventListener('fetch',e=>{
   const r=e.request;
-  if(r.method!=='GET'||new URL(r.url).origin!==location.origin)return;
+  if(r.method!=='GET'||new URL(r.url).origin!==location.origin||new URL(r.url).pathname.indexOf('/api/')>=0)return;
   e.respondWith((async()=>{
     const c=await caches.open(V);
     try{
