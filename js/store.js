@@ -174,7 +174,7 @@ const Store=VR.Store={
         db=merge(load(),data.state);save();
         Store.status={state:'ok',at:now(),role:data.role,msg:''};
       }catch(e){
-        Store.status={state:'err',at:now(),role:null,msg:e&&e.name==='AbortError'?'Нет ответа от сервера':(e&&e.message)||'Нет связи'};
+        Store.status={state:'err',at:now(),role:null,msg:e&&e.name==='AbortError'?'сервер не ответил за 12 секунд':(e instanceof TypeError||/fetch/i.test(e&&e.message||''))?'нет связи с сервером: сеть, VPN или сервер выключен':(e&&e.message)||'нет связи'};
       }
       for(const f of Store._statusL)try{f(Store.status);}catch(e){}
       return Store.status;
