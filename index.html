@@ -16,7 +16,7 @@
   <div class="card">
     <header>
       <h1>VR-урок</h1>
-      <a class="link" href="teacher.html">Учителю →</a>
+      <span class="links"><a class="link" href="help.html">Справка</a><a class="link" href="teacher.html">Учителю</a></span>
     </header>
     <p id="status" class="warn"></p>
     <p id="summary" class="ok" hidden></p>
@@ -59,9 +59,11 @@
       <div class="row"><button id="fbSend" class="btn">Отправить</button><button id="fbCancel" class="btn ghost">Отмена</button><span id="fbMsg" class="ok"></span></div>
     </section>
 
-    <p class="row"><button id="fbOpen" class="btn ghost">Оставить отзыв или идею</button></p>
-    <p id="mode" class="muted small"></p>
-    <p id="sync" class="muted small"></p>
+    <footer>
+      <button id="fbOpen" class="linkbtn">Оставить отзыв</button>
+      <span id="mode" class="muted small"></span>
+      <span id="sync" class="muted small"></span>
+    </footer>
   </div>
 </div>
 

@@ -144,7 +144,7 @@ async function init(){
   E.loadRoom('hall');E.startDesk();
   renderList();showSection('pick');
   xrOk=await E.xrSupported();
-  $('mode').textContent=xrOk?'Шлем найден: можно входить в VR.':'VR не найден: будет режим экрана (мышь — осмотр, W A S D — ходьба, щелчок — выбрать, E — взять, M — меню).';
+  $('mode').textContent=xrOk?'':'Шлем не найден — откроется режим экрана.';
   try{if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});}catch(e){}
   S.onStatus(st=>{showSync(st);if(st.state==='ok'){if(!sess)renderList();for(const p of E.panels)p.dirty=true;}});
   if(S.server()){showSync({state:'wait'});S.sync();}

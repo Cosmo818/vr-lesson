@@ -7,7 +7,7 @@
 const VR=window.VR=window.VR||{};
 const KEY='vrlesson.v1',SKEY='vrlesson.server';
 const SUBJ=['math','phys','chem','space','bio','soc','logic','hist','gen'];
-const blank=()=>({v:2,students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{pin:'1234',minutes:8,resetAt:0,updated:0}});
+const blank=()=>({v:2,students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{minutes:8,resetAt:0,updated:0}});
 let db=null;
 const now=()=>Date.now();
 const clampGrade=g=>{g=parseInt(g,10);return g>=1&&g<=11?g:5;};
