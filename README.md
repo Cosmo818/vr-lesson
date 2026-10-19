@@ -39,7 +39,7 @@
 
 Сайт открыт по HTTPS, поэтому и адрес сервера нужен с HTTPS. Самый простой путь — Tailscale Funnel на Pi.
 
-Обновление сервера: `cd /opt/vr-lesson && git pull && docker restart vr-lesson-api`. Резервная копия — файл `/opt/vr-lesson-data/vrlesson.db`.
+Обновление сервера: `cd /opt/vr-lesson-app && git pull && docker restart vr-lesson-api`. Резервная копия — файл `/opt/vr-lesson-data/vrlesson.db`.
 
 ## Файлы
 

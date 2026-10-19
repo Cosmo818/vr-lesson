@@ -12,7 +12,7 @@
 Каждая рабочая версия сохранена отдельной веткой: `release-v1.0`, `release-v2.0`, `release-v3.0`, `release-v3.1` (теги через прокси не отправляются).
 - Посмотреть: GitHub → Branches.
 - Откатить сайт: `git revert` до нужной версии (история сохраняется, ничего не удаляется).
-- Сервер на Pi: `cd /opt/vr-lesson && git fetch origin release-v3.1 && git checkout FETCH_HEAD && docker restart vr-lesson-api`.
+- Сервер на Pi: `cd /opt/vr-lesson-app && git fetch origin release-v3.1 && git checkout FETCH_HEAD && docker restart vr-lesson-api`.
 
 ## Карта модулей (один файл — одна ответственность)
 | Файл | За что отвечает | Публичный интерфейс |
