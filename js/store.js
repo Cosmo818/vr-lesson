@@ -7,7 +7,7 @@
 const VR=window.VR=window.VR||{};
 const KEY='vrlesson.v1',SKEY='vrlesson.server';
 const SUBJ=['math','phys','chem','space','bio','soc','logic','hist','gen'];
-const blank=()=>({v:2,students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{minutes:8,resetAt:0,updated:0}});
+const blank=()=>({v:2,classes:[],students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{minutes:8,resetAt:0,updated:0}});
 let db=null;
 const now=()=>Date.now();
 const clampGrade=g=>{g=parseInt(g,10);return g>=1&&g<=11?g:5;};
@@ -17,7 +17,8 @@ function norm(x){
   const b=blank();
   if(!x||typeof x!=='object')return b;
   const o={v:2};
-  o.students=Array.isArray(x.students)?x.students.filter(s=>s&&s.id&&s.name).map(s=>({id:String(s.id),name:String(s.name).slice(0,40),grade:clampGrade(s.grade),created:s.created||0,updated:s.updated||s.created||0})):[];
+  o.students=Array.isArray(x.students)?x.students.filter(s=>s&&s.id&&s.name).map(s=>({id:String(s.id),name:String(s.name).slice(0,40),grade:clampGrade(s.grade),classId:s.classId||null,pinHash:s.pinHash||null,created:s.created||0,updated:s.updated||s.created||0})):[];
+  o.classes=Array.isArray(x.classes)?x.classes.filter(c=>c&&c.id).map(c=>({id:String(c.id),grade:clampGrade(c.grade),letter:String(c.letter||'').slice(0,4),created:c.created||0,updated:c.updated||0})):[];
   o.results=Array.isArray(x.results)?x.results.filter(r=>r&&r.id&&r.sid&&r.subj):[];
   o.disc=x.disc&&typeof x.disc==='object'?x.disc:{};
   o.feedback=Array.isArray(x.feedback)?x.feedback.filter(f=>f&&f.id&&(f.text||f.kind)):[];
@@ -32,12 +33,12 @@ function merge(A,B){
   const settings=(B.settings.updated||0)>(A.settings.updated||0)?B.settings:A.settings;
   const reset=settings.resetAt||0;
   const lww=(a,b)=>{const m=new Map();for(const x of a.concat(b)){if(del[x.id])continue;const o=m.get(x.id);if(!o||(x.updated||0)>(o.updated||0))m.set(x.id,x);}return[...m.values()];};
-  const students=lww(A.students,B.students),tests=lww(A.tests,B.tests);
+  const students=lww(A.students,B.students),tests=lww(A.tests,B.tests),classes=lww(A.classes,B.classes);
   const rm=new Map();for(const r of A.results.concat(B.results))if(!rm.has(r.id)&&!del[r.sid]&&!del[r.id]&&(r.ts||0)>=reset)rm.set(r.id,r);
   const disc={};
   for(const src of[A.disc,B.disc])for(const sid in src){if(del[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
   const fm=new Map();for(const f of A.feedback.concat(B.feedback))if(!fm.has(f.id)&&!del[f.id])fm.set(f.id,f);
-  return{v:2,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
+  return{v:2,classes,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
 }
 function load(){
   if(db)return db;
@@ -57,21 +58,68 @@ const Store=VR.Store={
   /* ученики */
   students(){return load().students.slice().sort((a,b)=>a.grade-b.grade||a.name.localeCompare(b.name,'ru'));},
   student(id){return load().students.find(s=>s.id===id)||null;},
-  addStudent(name,grade){
+  addStudent(name,grade,classId){
     name=String(name||'').trim().slice(0,40);if(!name)return null;
-    const t=now(),s={id:uid(),name,grade:clampGrade(grade),created:t,updated:t};
+    const k=classId?Store.klass(classId):null;
+    const t=now(),s={id:uid(),name,grade:k?k.grade:clampGrade(grade),classId:k?k.id:null,pinHash:null,created:t,updated:t};
     load().students.push(s);save();Store.syncSoon();return s;
   },
   updateStudent(id,patch){
     const s=Store.student(id);if(!s)return null;
     if(patch.name!=null){const n=String(patch.name).trim().slice(0,40);if(n)s.name=n;}
     if(patch.grade!=null)s.grade=clampGrade(patch.grade);
+    if(patch.classId!==undefined){const k=patch.classId?Store.klass(patch.classId):null;s.classId=k?k.id:null;if(k)s.grade=k.grade;}
+    if(patch.pinHash!==undefined)s.pinHash=patch.pinHash;
     s.updated=now();save();Store.syncSoon();return s;
   },
   removeStudent(id){
     const d=load();d.deleted[id]=now();
     d.students=d.students.filter(s=>s.id!==id);d.results=d.results.filter(r=>r.sid!==id);delete d.disc[id];
     save();Store.syncSoon();
+  },
+
+  /* классы: {id, grade 1–11, letter «А»} */
+  classes(){return load().classes.slice().sort((a,b)=>a.grade-b.grade||a.letter.localeCompare(b.letter,'ru'));},
+  klass(id){return load().classes.find(c=>c.id===id)||null;},
+  className(c){return c?c.grade+(c.letter||''):'';},
+  addClass(grade,letter){
+    letter=String(letter||'').trim().toUpperCase().slice(0,4);grade=clampGrade(grade);
+    if(load().classes.some(c=>c.grade===grade&&c.letter===letter))return null;
+    const t=now(),c={id:uid(),grade,letter,created:t,updated:t};load().classes.push(c);save();Store.syncSoon();return c;
+  },
+  removeClass(id){
+    const d=load();d.deleted[id]=now();d.classes=d.classes.filter(c=>c.id!==id);
+    for(const s of d.students)if(s.classId===id){s.classId=null;s.updated=now();}
+    save();Store.syncSoon();
+  },
+  studentsOf(classId){return Store.students().filter(s=>(s.classId||null)===(classId||null));},
+
+  /* коды входа учеников: 4 цифры, хранится только хэш */
+  genPin(){const a=new Uint32Array(1);(globalThis.crypto||window.crypto).getRandomValues(a);return String(1000+a[0]%9000);},
+  async pinHash(id,pin){
+    const enc=new TextEncoder(),c=(globalThis.crypto||window.crypto).subtle;
+    const k=await c.importKey('raw',enc.encode(String(pin)),'PBKDF2',false,['deriveBits']);
+    const b=await c.deriveBits({name:'PBKDF2',salt:enc.encode('st:'+id),iterations:20000,hash:'SHA-256'},k,256);
+    return btoa(String.fromCharCode(...new Uint8Array(b)));
+  },
+  async setStudentPin(id,pin){pin=pin||Store.genPin();Store.updateStudent(id,{pinHash:await Store.pinHash(id,pin)});return pin;},
+  async checkStudentPin(s,pin){if(!s.pinHash)return true;return(await Store.pinHash(s.id,String(pin||'').trim()))===s.pinHash;},
+
+  /* рейтинг классов. Балл ученика — его баллы (тесты + открытия).
+     Средний балл класса считается только по активным ученикам и «подтягивается» к общему среднему
+     с весом K учеников (байесовское среднее): маленький класс не обгонит всех за счёт 1–2 сильных учеников,
+     а большой класс не проигрывает из-за размера. Отдельно — доля активных и точность ответов. */
+  classStats(K){
+    K=K||5;const cls=Store.classes(),all=[],rows=[];
+    for(const c of cls.concat([{id:null,grade:0,letter:''}])){
+      const st=Store.studentsOf(c.id);if(!c.id&&!st.length)continue;
+      let act=[],ok=0,tot=0;
+      for(const s of st){const p=Store.points(s.id);const rs=Store.results(s.id);if(p.total>0||rs.length){act.push(p.total);all.push(p.total);}for(const r of rs){ok+=r.score;tot+=r.total;}}
+      rows.push({c,n:st.length,active:act.length,mean:act.length?act.reduce((a,b)=>a+b,0)/act.length:0,acc:tot?ok/tot:null,_sum:act.reduce((a,b)=>a+b,0)});
+    }
+    const g=all.length?all.reduce((a,b)=>a+b,0)/all.length:0;
+    for(const r of rows)r.rating=r.active?(r._sum+K*g)/(r.active+K):null;
+    return{rows:rows.sort((a,b)=>(b.rating??-1)-(a.rating??-1)),globalMean:g,K};
   },
 
   /* результаты и открытия */

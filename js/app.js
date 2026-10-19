@@ -4,22 +4,51 @@
 const VR=window.VR,D=VR.DATA,S=VR.Store;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let E=null,xrOk=false,chosen=null,filter='all',sess=null,lastStudent=null;
+let E=null,xrOk=false,chosen=null,sess=null,lastStudent=null;
 
 function showSection(id){for(const s of['pick','ready','fb'])$(s).hidden=s!==id;$('fbOpen').hidden=id==='fb';}
+/* вход: класс → ученик → код */
+const LKEY='vrlesson.lastClass';
+let fails=0,lockUntil=0;
 function renderList(){
-  const list=S.students(),grades=[...new Set(list.map(s=>s.grade))].sort((a,b)=>a-b);
-  if(filter!=='all'&&!grades.includes(filter))filter='all';
-  $('classes').innerHTML=list.length?['all',...grades].map(g=>`<button class="chip${g===filter?' on':''}" data-g="${g}">${g==='all'?'Все':g+' кл.'}</button>`).join(''):'';
-  const shown=list.filter(s=>filter==='all'||s.grade===filter);
-  $('list').innerHTML=shown.length?shown.map(s=>{const p=S.points(s.id);return`<button class="stu" data-id="${s.id}"><b>${esc(s.name)}</b><span>${s.grade} класс · ${p.total} баллов · тесты ${p.passed}/4</span></button>`;}).join('')
-    :'<p class="muted">Пока нет учеников. Добавь первого кнопкой ниже.</p>';
+  const cls=S.classes(),loose=S.studentsOf(null);
+  const opts=cls.map(c=>[c.id,S.className(c)+' класс']);if(loose.length)opts.push(['-','Без класса']);
+  let last='';try{last=localStorage.getItem(LKEY)||'';}catch(e){}
+  const cur=$('selClass').value||last;
+  $('selClass').innerHTML='<option value="">— выбери класс —</option>'+opts.map(([v,t])=>`<option value="${v}">${esc(t)}</option>`).join('');
+  if(opts.some(o=>o[0]===cur))$('selClass').value=cur;
+  $('login').hidden=!opts.length;
+  $('pickErr').textContent=opts.length?'':'Учитель ещё не добавил учеников. Можно войти гостем.';
+  renderStudents();
+}
+function renderStudents(){
+  const v=$('selClass').value,st=v?S.studentsOf(v==='-'?null:v):[];
+  const cur=$('selStu').value;
+  $('selStu').innerHTML='<option value="">— выбери себя —</option>'+st.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  if(st.some(s=>s.id===cur))$('selStu').value=cur;
+  $('selStu').disabled=!v;renderPin();
+}
+function renderPin(){
+  const s=S.student($('selStu').value);
+  $('pinL').hidden=!!(s&&!s.pinHash);
+  $('selPin').disabled=!s;$('enterBtn').disabled=!s;
+}
+async function tryEnter(e){
+  e.preventDefault();
+  const s=S.student($('selStu').value);if(!s)return;
+  if(Date.now()<lockUntil){$('pickErr').textContent='Слишком много попыток. Подожди '+Math.ceil((lockUntil-Date.now())/1000)+' с.';return;}
+  $('pickErr').textContent='';$('enterBtn').disabled=true;
+  const ok=await S.checkStudentPin(s,$('selPin').value);
+  $('enterBtn').disabled=false;
+  if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}$('pickErr').textContent='Неверный код. Если забыл — подойди к учителю.';return;}
+  fails=0;$('selPin').value='';try{localStorage.setItem(LKEY,$('selClass').value);}catch(err){}
+  choose(s);
 }
 function choose(st){
   chosen=st;
   $('who').textContent=st.id?st.name:'Гость';
   $('guestGrade').hidden=!!st.id;
-  if(st.id){const p=S.points(st.id);$('whoInfo').textContent=st.grade+' класс · '+D.bands[S.band(st.grade)]+' задания · '+p.total+' баллов';}
+  if(st.id){const p=S.points(st.id),k=S.klass(st.classId);$('whoInfo').textContent=(k?S.className(k):st.grade)+' класс · '+D.bands[S.band(st.grade)]+' задания · '+p.total+' баллов';}
   else $('whoInfo').textContent='Результаты гостя не сохраняются. Выбери класс для заданий:';
   $('go').textContent=xrOk?'Войти в VR':'Начать на экране';
   showSection('ready');
@@ -102,16 +131,9 @@ function hooks(){
 }
 
 function bind(){
-  $('classes').addEventListener('click',e=>{const b=e.target.closest('[data-g]');if(!b)return;filter=b.dataset.g==='all'?'all':parseInt(b.dataset.g,10);renderList();});
-  $('list').addEventListener('click',e=>{const b=e.target.closest('[data-id]');if(!b)return;const st=S.student(b.dataset.id);if(st)choose(st);});
-  $('addBtn').onclick=()=>{$('addForm').hidden=false;$('addBtn').hidden=true;$('nm').focus();};
-  $('cancelAdd').onclick=()=>{$('addForm').hidden=true;$('addBtn').hidden=false;};
-  $('addForm').onsubmit=e=>{
-    e.preventDefault();
-    const st=S.addStudent($('nm').value,$('gr').value);
-    if(!st){$('nm').focus();return;}
-    $('nm').value='';$('addForm').hidden=true;$('addBtn').hidden=false;filter='all';renderList();choose(st);
-  };
+  $('selClass').onchange=()=>{$('selStu').value='';renderStudents();$('pickErr').textContent='';};
+  $('selStu').onchange=()=>{renderPin();$('pickErr').textContent='';if(!$('selPin').disabled&&!$('pinL').hidden)$('selPin').focus();};
+  $('login').onsubmit=tryEnter;
   $('guestBtn').onclick=()=>choose({id:null,name:'Гость',grade:5});
   $('back').onclick=()=>{chosen=null;showSection('pick');};
   $('go').onclick=go;
@@ -137,7 +159,7 @@ function bind(){
 }
 
 async function init(){
-  for(let g=1;g<=11;g++){$('gr').insertAdjacentHTML('beforeend',`<option value="${g}"${g===5?' selected':''}>${g} класс</option>`);$('gg').insertAdjacentHTML('beforeend',`<option value="${g}"${g===5?' selected':''}>${g} класс</option>`);}
+  for(let g=1;g<=11;g++){$('gg').insertAdjacentHTML('beforeend',`<option value="${g}"${g===5?' selected':''}>${g} класс</option>`);}
   if(!S.canSave())$('status').textContent='Внимание: браузер не даёт сохранять данные (приватный режим?). Прогресс не запишется.';
   try{E=VR.createEngine($('c'));}catch(e){$('status').textContent=e.message;return;}
   E.rooms=VR.ROOMS;hooks();bind();
@@ -149,7 +171,7 @@ async function init(){
   S.onStatus(st=>{showSync(st);if(st.state==='ok'){if(!sess)renderList();for(const p of E.panels)p.dirty=true;}});
   if(S.server()){showSync({state:'wait'});S.sync();}
   setInterval(()=>{if(S.server()&&!document.hidden)S.sync();},60000);
-  VR.app={E,choose,startSession,endSession,go};
+  VR.app={E,choose,startSession,endSession,go,renderList};
 }
 /* возврат кнопкой «Назад» из кэша браузера: WebGL и состояние могут быть уже неживыми — перезагружаем страницу */
 window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});

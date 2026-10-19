@@ -1,5 +1,5 @@
 /* Офлайн-кэш: при наличии сети берём свежие файлы, без сети — из кэша. */
-const V='vr-lesson-v5';
+const V='vr-lesson-v6';
 const FILES=['./','index.html','teacher.html','css/style.css','js/data.js','js/questions.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/app.js','help.html','help-teacher.html','css/help.css','manifest.webmanifest','icon.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});

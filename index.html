@@ -23,18 +23,14 @@
 
     <section id="pick">
       <h2>Кто сейчас в шлеме?</h2>
-      <div id="classes" class="chips"></div>
-      <div id="list" class="grid"></div>
-      <div class="row">
-        <button id="addBtn" class="btn">+ Новый ученик</button>
-        <button id="guestBtn" class="btn ghost">Гость</button>
-      </div>
-      <form id="addForm" class="row form" hidden>
-        <input id="nm" maxlength="40" placeholder="Имя и фамилия" autocomplete="off">
-        <select id="gr"></select>
-        <button class="btn">Сохранить</button>
-        <button type="button" id="cancelAdd" class="btn ghost">Отмена</button>
+      <form id="login" class="steps" autocomplete="off">
+        <label>Класс<select id="selClass"></select></label>
+        <label>Ученик<select id="selStu"></select></label>
+        <label id="pinL">Код входа<input id="selPin" type="password" inputmode="numeric" maxlength="6" placeholder="4 цифры"></label>
+        <button id="enterBtn" class="btn">Дальше</button>
       </form>
+      <p id="pickErr" class="warn"></p>
+      <p class="muted small">Код входа выдаёт учитель. Забыл — подойди к учителю. <button type="button" id="guestBtn" class="linkbtn">Войти гостем</button></p>
     </section>
 
     <section id="ready" hidden>

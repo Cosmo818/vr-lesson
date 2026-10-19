@@ -38,7 +38,7 @@ function makeCtx(xr){
     location:{protocol:'file:'},performance:{now:()=>Date.now()},
     requestAnimationFrame:f=>rafQ.push(f),setTimeout:(f)=>0,clearTimeout:()=>{},setInterval:()=>0,fetch:(...a)=>fetch(...a),AbortController,
     XRRigidTransform:class{constructor(p,o){this.p=p;this.o=o;}},XRWebGLLayer:class{constructor(){this.framebuffer={};}getViewport(){return{x:0,y:0,width:10,height:10};}},
-    console,Math,Date,JSON,Float32Array,Set,Map,Promise,String,Number,Object,Array,parseInt,isFinite,Error
+    console,Math,Date,JSON,Float32Array,crypto:require('crypto').webcrypto,TextEncoder,btoa,Uint8Array,Uint32Array,Set,Map,Promise,String,Number,Object,Array,parseInt,isFinite,Error
   };
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
@@ -73,10 +73,15 @@ function makeCtx(xr){
   let TT=0;const run=(n)=>{for(let i=0;i<n;i++){const f=C.rafQ.shift();TT+=16;if(f)f(TT);}};
   run(3);
   // добавление ученика через форму
-  C.sb.document.getElementById("nm").value='Аня Петрова';C.sb.document.getElementById("gr").value='6';
-  C.sb.document.getElementById("addForm").onsubmit({preventDefault(){}});
-  const stu=St.students()[0];
-  ok(stu&&stu.name==='Аня Петрова'&&stu.grade===6,'ученик добавлен');
+  const doc=C.sb.document.getElementById.bind(C.sb.document);
+  const k6=St.addClass(6,'а');ok(k6&&k6.letter==='А'&&!St.addClass(6,'А'),'класс 6А создан, дубль не создаётся');
+  const stu=St.addStudent('Аня Петрова',null,k6.id);const pin=await St.setStudentPin(stu.id);
+  ok(stu.grade===6&&/^\d{4}$/.test(pin)&&St.student(stu.id).pinHash,'ученик добавлен в 6А, код из 4 цифр, хранится только хэш');
+  app.renderList();
+  doc("selClass").value=k6.id;doc("selClass").onchange();doc("selStu").value=stu.id;doc("selStu").onchange();
+  doc("selPin").value='0000'===pin?'1111':'0000';await doc("login").onsubmit({preventDefault(){}});
+  ok(doc("ready").hidden&&/Неверный код/.test(doc("pickErr").textContent),'неверный код не пускает');
+  doc("selPin").value=pin;await doc("login").onsubmit({preventDefault(){}});
   ok(!C.sb.document.getElementById("ready").hidden&&C.sb.document.getElementById("who").textContent==="Аня Петрова"&&C.sb.document.getElementById("go").textContent==="Начать на экране","ученик выбран, кнопка «Начать на экране»");
   await app.go();
   ok(E.deskInput&&E.student.id===stu.id,'сеанс начат в режиме экрана');
@@ -273,6 +278,11 @@ function makeCtx(xr){
     ok(TS.results(s1.id).length===1&&TS.discoveries(s1.id).length===1,'учитель видит результат и открытие со шлема');
     ok(!TS.tests().some(t=>t.title==='Самовольный тест'),'ключ шлема не может добавлять тесты');
     ok(TS.question(TS.results(s1.id)[0].ans[0][0]).q==='Ближе к Солнцу?','вопрос теста учителя находится по id');
+    const kc=TS.addClass(5,'Б');TS.updateStudent(s1.id,{classId:kc.id});await TS.setStudentPin(s1.id,'4321');await TS.sync();await HS.sync();
+    ok(HS.klass(kc.id)&&HS.student(s1.id).classId===kc.id&&await HS.checkStudentPin(HS.student(s1.id),'4321'),'класс и код ученика дошли до шлема');
+    await HS.setStudentPin(s1.id,'0000');await HS.sync();await TS.sync();
+    ok(await TS.checkStudentPin(TS.student(s1.id),'4321'),'ключ шлема не может поменять код ученика');
+    const s3=HS.addClass(9,'В');await HS.sync();await TS.sync();ok(!TS.klass(s3.id),'ключ шлема не может создавать классы');
     TS.updateStudent(s1.id,{name:'Пётр Иванов'});await TS.sync();await HS.sync();
     ok(HS.student(s1.id).name==='Пётр Иванов','переименование дошло до шлема');
     TS.removeStudent(s1.id);await TS.sync();await HS.sync();

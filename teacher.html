@@ -53,7 +53,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
     <header><h1>VR-урок: прогресс учеников</h1><span style="display:flex;gap:18px"><a href="help-teacher.html">Справка</a><a href="index.html" id="toStudents">Выйти к ученикам</a></span></header>
     <div class="tabs" id="tabs">
       <button class="tab on" data-t="rating">Рейтинг</button>
-      <button class="tab" data-t="students">Ученики</button>
+      <button class="tab" data-t="students">Классы и ученики</button>
       <button class="tab" data-t="tests">Конструктор тестов</button>
       <button class="tab" data-t="questions">Сложные вопросы</button>
       <button class="tab" data-t="feedback">Отзывы</button>
@@ -68,11 +68,14 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
     </section>
 
     <section id="t-students" hidden>
-      <div class="card">
-        <h2 style="margin-top:0">Добавить ученика</h2>
-        <form id="addForm" class="row"><input id="aName" maxlength="40" placeholder="Имя и фамилия"><select id="aGrade"></select><button class="btn">Добавить</button></form>
+      <div class="row">
+        <label>Класс: <select id="cSel"></select></label>
+        <span class="muted">или новый:</span><select id="cGrade"></select><input id="cLetter" maxlength="3" placeholder="А" style="width:70px"><button class="btn" id="cAdd">Создать класс</button>
       </div>
-      <div class="scroll card" style="padding:0"><table id="sTable"></table></div>
+      <div id="cCard"></div>
+      <h2>Рейтинг классов</h2>
+      <div class="scroll card" style="padding:0"><table id="cRank"></table></div>
+      <p class="muted small">Рейтинг класса — средний балл активных учеников с поправкой на размер класса (байесовское среднее): к классу добавляются 5 «средних» учеников по всей школе. Так класс из двух сильных учеников не обгоняет всех случайно, а большой класс не проигрывает из-за размера. Активность и точность ответов показаны отдельно.</p>
     </section>
 
     <section id="t-tests" hidden>
@@ -170,19 +173,19 @@ $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(cons
 /* ---- рейтинг ---- */
 function rows(){
   const f=$('fClass').value;
-  return S.students().filter(s=>f==='all'||String(s.grade)===f).map(s=>({s,b:S.best(s.id),p:S.points(s.id),last:S.lastActive(s.id)}))
+  return S.students().filter(s=>f==='all'||(f==='-'?!s.classId:s.classId===f)).map(s=>({s,b:S.best(s.id),p:S.points(s.id),last:S.lastActive(s.id)}))
     .sort((a,b)=>b.p.total-a.p.total||a.s.name.localeCompare(b.s.name,'ru'));
 }
 function renderRating(){
-  const grades=[...new Set(S.students().map(s=>s.grade))].sort((a,b)=>a-b),cur=$('fClass').value||'all';
-  $('fClass').innerHTML='<option value="all">Все</option>'+grades.map(g=>`<option value="${g}">${g} класс</option>`).join('');
-  $('fClass').value=grades.map(String).includes(cur)?cur:'all';
+  const cur=$('fClass').value||'all',cls=S.classes(),loose=S.studentsOf(null).length;
+  $('fClass').innerHTML='<option value="all">Все</option>'+cls.map(c=>`<option value="${c.id}">${S.className(c)}</option>`).join('')+(loose?'<option value="-">Без класса</option>':'');
+  $('fClass').value=[...$('fClass').options].some(o=>o.value===cur)?cur:'all';
   const R=rows();
   $('rInfo').textContent=R.length?`Учеников: ${R.length}. Попыток тестов: ${R.reduce((a,r)=>a+SUBJ.reduce((x,k)=>x+r.b[k].attempts,0),0)}.`:'';
   if(!R.length){$('rTable').innerHTML='<tr><td class="muted">В этом браузере пока нет учеников. Данные хранятся там, где проходили занятия (в шлеме). Чтобы увидеть их здесь, подключи сервер во вкладке «Данные и настройки» или загрузи файл данных.</td></tr>';$('detail').innerHTML='';return;}
   const medal=['🥇','🥈','🥉'];
   $('rTable').innerHTML='<tr><th>#</th><th>Ученик</th><th>Класс</th>'+SUBJ.map(k=>`<th>${D.subjects[k].title}</th>`).join('')+'<th>Открытия</th><th>Баллы</th><th>Был в VR</th></tr>'+
-    R.map((r,i)=>`<tr class="click" data-id="${r.s.id}"><td class="medal">${r.p.total>0&&i<3?medal[i]:i+1}</td><td><b>${esc(r.s.name)}</b></td><td>${r.s.grade}</td>`+
+    R.map((r,i)=>`<tr class="click" data-id="${r.s.id}"><td class="medal">${r.p.total>0&&i<3?medal[i]:i+1}</td><td><b>${esc(r.s.name)}</b></td><td>${esc(clsName(S.klass(r.s.classId))==='Без класса'?r.s.grade+' кл.':clsName(S.klass(r.s.classId)))}</td>`+
       SUBJ.map(k=>{const x=r.b[k];return`<td><span class="sc ${cls(x.best,x.total)}">${x.best===null?'—':x.best+'/'+x.total}</span>${x.attempts?`<div class="muted small">${x.attempts} поп.</div>`:''}</td>`;}).join('')+
       `<td>${r.p.discCount}</td><td><b>${r.p.total}</b></td><td class="small muted">${dt(r.last)}</td></tr>`).join('');
   renderDetail();
@@ -200,17 +203,42 @@ function renderDetail(){
 }
 
 /* ---- ученики ---- */
+/* ---- классы и ученики ---- */
+let curClass=null,newCodes={};
+const clsName=c=>c?S.className(c):'Без класса';
+$('cGrade').innerHTML=Array.from({length:11},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');
+$('cAdd').onclick=()=>{const c=S.addClass($('cGrade').value,$('cLetter').value);if(!c){alert('Такой класс уже есть.');return;}$('cLetter').value='';curClass=c.id;newCodes={};renderStudents();};
+$('cSel').onchange=()=>{curClass=$('cSel').value||null;newCodes={};renderStudents();};
 function renderStudents(){
-  const L=S.students();
-  $('sTable').innerHTML=L.length?'<tr><th>Имя</th><th>Класс</th><th>Баллы</th><th></th></tr>'+L.map(s=>`<tr data-id="${s.id}"><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="gr">${grOpts(s.grade)}</select></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">Удалить</button></td></tr>`).join(''):'<tr><td class="muted">Учеников пока нет.</td></tr>';
+  const cls=S.classes(),loose=S.studentsOf(null);
+  if(curClass&&curClass!=='-'&&!S.klass(curClass))curClass=null;
+  if(!curClass)curClass=cls.length?cls[0].id:(loose.length?'-':null);
+  $('cSel').innerHTML=cls.map(c=>`<option value="${c.id}">${clsName(c)}</option>`).join('')+(loose.length?'<option value="-">Без класса</option>':'');
+  if(curClass)$('cSel').value=curClass;
+  const box=$('cCard');
+  if(!curClass){box.innerHTML='<div class="card muted">Создайте первый класс: выберите параллель, букву и нажмите «Создать класс».</div>';renderClassRank();return;}
+  const k=curClass==='-'?null:S.klass(curClass),L=S.studentsOf(k?k.id:null);
+  const st=S.classStats().rows.find(r=>(r.c.id||null)===(k?k.id:null));
+  const clsOpts=v=>S.classes().map(c=>`<option value="${c.id}"${c.id===v?' selected':''}>${clsName(c)}</option>`).join('')+`<option value=""${!v?' selected':''}>без класса</option>`;
+  box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${clsName(k)} <span class="muted small">· учеников: ${L.length}${st&&st.rating!=null?' · рейтинг '+st.rating.toFixed(1):''}</span></h2>${k?'<button class="btn ghost" id="cDel">Удалить класс</button>':''}</div>
+   ${k?`<div class="row"><textarea id="bulk" placeholder="Добавить учеников: по одному имени в строке" style="min-height:70px;font-family:inherit;font-size:15px"></textarea></div><div class="row"><button class="btn" id="bulkAdd">Добавить и выдать коды</button></div>`:''}
+   ${Object.keys(newCodes).length?`<div class="card" id="codes" style="background:#0e1730"><b>Коды входа — раздайте ученикам.</b> Они показываются только сейчас. <button class="btn ghost" id="printCodes">Печать</button><div id="codesList">${Object.keys(newCodes).map(id=>{const s=S.student(id);return s?`<div class="row" style="margin:4px 0"><span style="min-width:220px">${esc(s.name)}</span><b style="font-size:20px;letter-spacing:3px">${newCodes[id]}</b></div>`:'';}).join('')}</div></div>`:''}
+   <div class="scroll"><table><tr><th>Имя</th><th>Класс</th><th>Код входа</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${newCodes[s.id]?'<b>'+newCodes[s.id]+'</b>':s.pinHash?'<span class="muted">задан</span>':'<span style="color:var(--mid)">нет</span>'} <button class="btn ghost pin">Новый код</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">Удалить</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
+  renderClassRank();
 }
-const grOpts=g=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===g?' selected':''}>${i+1} класс</option>`).join('');
-$('aGrade').innerHTML=grOpts(5);
-$('addForm').onsubmit=e=>{e.preventDefault();if(S.addStudent($('aName').value,$('aGrade').value)){$('aName').value='';renderStudents();}};
-$('sTable').onclick=e=>{
-  const tr=e.target.closest('[data-id]');if(!tr)return;const id=tr.dataset.id,s=S.student(id);
-  if(e.target.classList.contains('sv')){S.updateStudent(id,{name:tr.querySelector('.nm').value,grade:tr.querySelector('.gr').value});renderStudents();}
-  if(e.target.classList.contains('del')&&s&&confirm(`Удалить ученика «${s.name}» вместе со всеми его результатами? Это нельзя отменить.`)){S.removeStudent(id);if(sel===id)sel=null;renderStudents();}
+function renderClassRank(){
+  const R=S.classStats().rows;
+  $('cRank').innerHTML=R.length?'<tr><th>#</th><th>Класс</th><th>Рейтинг</th><th>Средний балл</th><th>Активных</th><th>Верных ответов</th></tr>'+R.map((r,i)=>`<tr><td>${r.rating!=null?i+1:'—'}</td><td><b>${clsName(r.c.id?r.c:null)}</b></td><td><b>${r.rating!=null?r.rating.toFixed(1):'—'}</b></td><td>${r.active?r.mean.toFixed(1):'—'}</td><td>${r.active} из ${r.n}</td><td>${r.acc!=null?Math.round(r.acc*100)+'%':'—'}</td></tr>`).join(''):'<tr><td class="muted">Классов пока нет.</td></tr>';
+}
+$('cCard').onclick=async e=>{
+  const t=e.target;
+  if(t.id==='cDel'){const k=S.klass(curClass);if(k&&confirm(`Удалить класс ${clsName(k)}? Ученики останутся «без класса».`)){S.removeClass(k.id);curClass=null;renderStudents();}return;}
+  if(t.id==='bulkAdd'){const names=$('bulk').value.split('\n').map(x=>x.trim()).filter(Boolean);if(!names.length)return;for(const n of names){const s=S.addStudent(n,null,curClass);if(s)newCodes[s.id]=await S.setStudentPin(s.id);}renderStudents();return;}
+  if(t.id==='printCodes'){const w=window.open('','_blank');if(!w){alert('Разрешите всплывающие окна для печати.');return;}w.document.write('<meta charset="utf-8"><title>Коды входа</title><style>body{font:16px sans-serif;padding:20px}.c{display:inline-block;width:45%;border:1px dashed #999;padding:12px;margin:6px;border-radius:8px}b{font-size:24px;letter-spacing:4px}</style><h3>VR-урок: коды входа, '+esc(clsName(S.klass(curClass)))+'</h3>'+Object.keys(newCodes).map(id=>{const s=S.student(id);return s?`<div class="c">${esc(s.name)}<br><b>${newCodes[id]}</b></div>`:'';}).join(''));w.document.close();w.focus();w.print();return;}
+  const tr=t.closest('[data-id]');if(!tr)return;const id=tr.dataset.id,s=S.student(id);if(!s)return;
+  if(t.classList.contains('pin')){newCodes[id]=await S.setStudentPin(id);renderStudents();return;}
+  if(t.classList.contains('sv')){S.updateStudent(id,{name:tr.querySelector('.nm').value,classId:tr.querySelector('.cl').value||null});renderStudents();return;}
+  if(t.classList.contains('del')&&confirm(`Удалить ученика «${s.name}» вместе со всеми его результатами? Это нельзя отменить.`)){S.removeStudent(id);delete newCodes[id];if(sel===id)sel=null;renderStudents();}
 };
 
 /* ---- сложные вопросы ---- */

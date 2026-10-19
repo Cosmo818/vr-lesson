@@ -52,6 +52,7 @@ def init_db():
     with db() as c:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS students(id TEXT PRIMARY KEY, name TEXT, grade INTEGER, updated INTEGER, doc TEXT);
+        CREATE TABLE IF NOT EXISTS classes(id TEXT PRIMARY KEY, name TEXT, updated INTEGER, doc TEXT);
         CREATE TABLE IF NOT EXISTS tests(id TEXT PRIMARY KEY, title TEXT, subj TEXT, updated INTEGER, doc TEXT);
         CREATE TABLE IF NOT EXISTS results(id TEXT PRIMARY KEY, sid TEXT, subj TEXT, score INTEGER, total INTEGER, ts INTEGER, doc TEXT);
         CREATE TABLE IF NOT EXISTS disc(sid TEXT, k TEXT, ts INTEGER, PRIMARY KEY(sid, k));
@@ -88,10 +89,19 @@ def merge_in(c, inc, role):
             continue
         upd = num(s.get('updated') or s.get('created'))
         row = c.execute('SELECT updated FROM students WHERE id = ?', (s['id'],)).fetchone()
+        if row and not teacher:
+            continue  # ключ шлема может только добавлять новых учеников, но не менять существующих (имя, класс, код входа)
         if not row or upd > row[0]:
             c.execute('INSERT OR REPLACE INTO students(id, name, grade, updated, doc) VALUES(?, ?, ?, ?, ?)',
                       (s['id'], str(s['name'])[:40], num(s.get('grade'), 5), upd, json.dumps(s, ensure_ascii=False)))
     if teacher:
+        for k in inc.get('classes') or []:
+            if not isinstance(k, dict) or not k.get('id') or k['id'] in deleted:
+                continue
+            row = c.execute('SELECT updated FROM classes WHERE id = ?', (k['id'],)).fetchone()
+            if not row or num(k.get('updated')) > row[0]:
+                c.execute('INSERT OR REPLACE INTO classes(id, name, updated, doc) VALUES(?, ?, ?, ?)',
+                          (k['id'], '%s%s' % (num(k.get('grade')), str(k.get('letter', ''))[:4]), num(k.get('updated')), json.dumps(k, ensure_ascii=False)))
         for t in inc.get('tests') or []:
             if not isinstance(t, dict) or not t.get('id') or t['id'] in deleted:
                 continue
@@ -118,6 +128,7 @@ def merge_in(c, inc, role):
     # подчистить удалённое и сброшенное
     c.execute('DELETE FROM students WHERE id IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM tests WHERE id IN (SELECT id FROM deleted)')
+    c.execute('DELETE FROM classes WHERE id IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM deleted) OR id IN (SELECT id FROM deleted) OR ts < ?', (reset,))
     c.execute('DELETE FROM disc WHERE sid IN (SELECT id FROM deleted) OR ts < ?', (reset,))
     c.execute('DELETE FROM feedback WHERE id IN (SELECT id FROM deleted)')
@@ -134,6 +145,7 @@ def state(c):
         disc.setdefault(sid, {})[k] = ts
     return {
         'v': 2,
+        'classes': [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')],
         'students': [json.loads(r[0]) for r in c.execute('SELECT doc FROM students')],
         'tests': [json.loads(r[0]) for r in c.execute('SELECT doc FROM tests')],
         'results': [json.loads(r[0]) for r in c.execute('SELECT doc FROM results ORDER BY ts')],

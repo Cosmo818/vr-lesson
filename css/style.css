@@ -13,6 +13,12 @@ p{margin:8px 0;line-height:1.45}
 .link{color:#93c5fd;font-size:17px;text-decoration:none}
 .links{display:flex;gap:18px}
 footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin-top:18px;padding-top:12px;border-top:1px solid var(--line)}
+.steps{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}
+.steps label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:15px}
+.steps select,.steps input{padding:12px;border-radius:12px;border:1px solid var(--line);background:#0e1730;color:var(--text);font-size:18px;width:100%}
+.steps select:disabled,.steps input:disabled{opacity:.45}
+.steps .btn{height:50px}
+@media (max-width:600px){.steps{grid-template-columns:1fr}}
 .linkbtn{background:none;border:0;padding:0;color:#93c5fd;font-size:16px;cursor:pointer}
 #fbOpen[hidden]{display:none}
 .muted{color:var(--muted)}.small{font-size:14px}.warn{color:var(--warn);min-height:0}.ok{color:var(--ok)}
