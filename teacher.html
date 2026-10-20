@@ -104,7 +104,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <div class="card">
         <h2 style="margin-top:0">Сервер (Raspberry Pi)</h2>
         <p class="muted small">Адрес сервера и ключ. Здесь, на странице учителя, используй ключ учителя. В шлеме — ключ шлема (он даёт только сохранять результаты). Ключи лежат на Pi в файле /opt/vr-lesson-data/keys.json.</p>
-        <div class="row"><input id="srvUrl" placeholder="https://имя.tailXXXX.ts.net" style="flex:1 1 260px"><input id="srvKey" type="password" placeholder="Ключ (без кавычек)" style="flex:1 1 200px" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><label class="small muted"><input type="checkbox" id="srvShow"> показать</label></div>
+        <div class="row"><input id="srvUrl" placeholder="https://vrklass.ru" style="flex:1 1 260px"><input id="srvKey" type="password" placeholder="Ключ (без кавычек)" style="flex:1 1 200px" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><label class="small muted"><input type="checkbox" id="srvShow"> показать</label></div>
         <div class="row"><button class="btn" id="srvSave">Подключить и синхронизировать</button><button class="btn ghost" id="srvOff">Отключить</button><span id="srvMsg" class="muted"></span></div>
       </div>
       <div class="card">
@@ -253,9 +253,10 @@ function renderQuestions(){
 }
 
 /* ---- данные ---- */
-function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';const sv=S.server();if(!$('srvUrl').value)$('srvUrl').value=sv?sv.url:(/^https:/.test(location.protocol)&&!/github\.io$/.test(location.hostname)?location.origin:'');showSrv(S.status);}
+function defSrv(){return /(^|\.)github\.io$|^localhost$|^127\./.test(location.hostname)?'':location.origin;}
+function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';const sv=S.server();if(!$('srvUrl').value)$('srvUrl').value=sv?sv.url:defSrv();showSrv(S.status);}
 function showSrv(st){const t=st.at?new Date(st.at).toLocaleTimeString('ru-RU'):'';$('srvMsg').textContent=!S.server()?'Сервер не подключён: данные только в этом браузере.':st.state==='ok'?'Синхронизировано в '+t+(st.role==='teacher'?' (ключ учителя)':' (ключ шлема: тесты и удаление отсюда не отправятся)'):st.state==='err'?'Ошибка: '+st.msg:'Связь…';}
-$('srvSave').onclick=async()=>{const u=$('srvUrl').value.trim(),k=$('srvKey').value.trim();if(!u||!k){$('srvMsg').textContent='Нужны адрес и ключ.';return;}S.setServer(u,k);$('srvKey').value='';$('srvMsg').textContent='Связь…';await S.sync();renderAll();};
+$('srvSave').onclick=async()=>{const u=$('srvUrl').value.trim()||defSrv(),k=$('srvKey').value.trim();if(!u||!k){$('srvMsg').textContent='Нужны адрес и ключ.';return;}S.setServer(u,k);$('srvKey').value='';$('srvMsg').textContent='Связь…';await S.sync();renderAll();};
 $('srvShow').onchange=e=>{$('srvKey').type=e.target.checked?'text':'password';};
 $('srvOff').onclick=()=>{S.setServer(null);S.status={state:'off'};renderAll();};
 S.onStatus(st=>{if(st.state==='ok')renderAll();else showSrv(st);});
