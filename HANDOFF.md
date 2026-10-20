@@ -4,7 +4,7 @@
 
 ## Статус
 - Версия 3.1: полевой прототип (каркас), графика без текстур. Ученики тестируют и оставляют отзывы.
-- Сайт: https://cosmo818.github.io/vr-lesson/ (GitHub Pages, ветка `main`). Учителю: `teacher.html`.
+- Сайт: https://vrklass.ru (Caddy на Pi, `deploy/Caddyfile`, контейнер `vrklass-web`) и запасной https://cosmo818.github.io/vr-lesson/ (GitHub Pages, ветка `main`). Учителю: `teacher.html`.
 - Сервер синхронизации: `server/app.py` в Docker на Raspberry Pi; база `/opt/vr-lesson-data/vrlesson.db`.
 - План развития ведётся в отдельном документе (ссылка в описании репозитория или в чате проекта).
 

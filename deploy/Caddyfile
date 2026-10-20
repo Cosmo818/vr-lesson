@@ -1,0 +1,17 @@
+# VR-урок: сайт и API на своём домене (Caddy сам получает и продлевает HTTPS-сертификат).
+# Сайт — файлы репозитория (/srv), API — контейнер vr-lesson-api в сети vrklass.
+vrklass.ru {
+	encode gzip
+	header /sw.js Cache-Control "no-cache"
+	# route — строго по порядку: скрытые файлы, API, сайт
+	route {
+		@hidden path /.git* /server/* /tests/* /deploy/* *.md /.gitignore
+		respond @hidden 404
+		reverse_proxy /api/* vr-lesson-api:8787
+		root * /srv
+		file_server
+	}
+}
+www.vrklass.ru {
+	redir https://vrklass.ru{uri} permanent
+}

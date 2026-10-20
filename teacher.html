@@ -253,7 +253,7 @@ function renderQuestions(){
 }
 
 /* ---- данные ---- */
-function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';const sv=S.server();if(sv&&!$('srvUrl').value){$('srvUrl').value=sv.url;}showSrv(S.status);}
+function renderData(){const s=S.settings();$('minutes').value=s.minutes;$('newPin').value='';const sv=S.server();if(!$('srvUrl').value)$('srvUrl').value=sv?sv.url:(/^https:/.test(location.protocol)&&!/github\.io$/.test(location.hostname)?location.origin:'');showSrv(S.status);}
 function showSrv(st){const t=st.at?new Date(st.at).toLocaleTimeString('ru-RU'):'';$('srvMsg').textContent=!S.server()?'Сервер не подключён: данные только в этом браузере.':st.state==='ok'?'Синхронизировано в '+t+(st.role==='teacher'?' (ключ учителя)':' (ключ шлема: тесты и удаление отсюда не отправятся)'):st.state==='err'?'Ошибка: '+st.msg:'Связь…';}
 $('srvSave').onclick=async()=>{const u=$('srvUrl').value.trim(),k=$('srvKey').value.trim();if(!u||!k){$('srvMsg').textContent='Нужны адрес и ключ.';return;}S.setServer(u,k);$('srvKey').value='';$('srvMsg').textContent='Связь…';await S.sync();renderAll();};
 $('srvShow').onchange=e=>{$('srvKey').type=e.target.checked?'text':'password';};
