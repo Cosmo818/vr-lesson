@@ -177,8 +177,8 @@ function rows(){
     .sort((a,b)=>b.p.total-a.p.total||a.s.name.localeCompare(b.s.name,'ru'));
 }
 function renderRating(){
-  const cur=$('fClass').value||'all',cls=S.classes(),loose=S.studentsOf(null).length;
-  $('fClass').innerHTML='<option value="all">Все</option>'+cls.map(c=>`<option value="${c.id}">${S.className(c)}</option>`).join('')+(loose?'<option value="-">Без класса</option>':'');
+  const cur=$('fClass').value||'all',klist=S.classes(),loose=S.studentsOf(null).length;
+  $('fClass').innerHTML='<option value="all">Все</option>'+klist.map(c=>`<option value="${c.id}">${S.className(c)}</option>`).join('')+(loose?'<option value="-">Без класса</option>':'');
   $('fClass').value=[...$('fClass').options].some(o=>o.value===cur)?cur:'all';
   const R=rows();
   $('rInfo').textContent=R.length?`Учеников: ${R.length}. Попыток тестов: ${R.reduce((a,r)=>a+SUBJ.reduce((x,k)=>x+r.b[k].attempts,0),0)}.`:'';
@@ -210,10 +210,10 @@ $('cGrade').innerHTML=Array.from({length:11},(_,i)=>`<option value="${i+1}">${i+
 $('cAdd').onclick=()=>{const c=S.addClass($('cGrade').value,$('cLetter').value);if(!c){alert('Такой класс уже есть.');return;}$('cLetter').value='';curClass=c.id;newCodes={};renderStudents();};
 $('cSel').onchange=()=>{curClass=$('cSel').value||null;newCodes={};renderStudents();};
 function renderStudents(){
-  const cls=S.classes(),loose=S.studentsOf(null);
+  const klist=S.classes(),loose=S.studentsOf(null);
   if(curClass&&curClass!=='-'&&!S.klass(curClass))curClass=null;
-  if(!curClass)curClass=cls.length?cls[0].id:(loose.length?'-':null);
-  $('cSel').innerHTML=cls.map(c=>`<option value="${c.id}">${clsName(c)}</option>`).join('')+(loose.length?'<option value="-">Без класса</option>':'');
+  if(!curClass)curClass=klist.length?klist[0].id:(loose.length?'-':null);
+  $('cSel').innerHTML=klist.map(c=>`<option value="${c.id}">${clsName(c)}</option>`).join('')+(loose.length?'<option value="-">Без класса</option>':'');
   if(curClass)$('cSel').value=curClass;
   const box=$('cCard');
   if(!curClass){box.innerHTML='<div class="card muted">Создайте первый класс: выберите параллель, букву и нажмите «Создать класс».</div>';renderClassRank();return;}
@@ -294,7 +294,8 @@ function renderFeedback(){
 $('fbF').onchange=renderFeedback;
 $('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Удалить отзыв?')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
 $('fbCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';download('vr-urok-otzyvy-'+stamp()+'.csv','\ufeff'+[['Дата','Тип','Комната','Оценка','Текст','Класс'].map(q).join(';'),...S.feedback().map(x=>[new Date(x.ts).toLocaleString('ru-RU'),KIND[x.kind]||x.kind,roomName(x.room),x.rating||'',x.text||'',x.grade||''].map(q).join(';'))].join('\r\n'),'text/csv');};
-function renderAll(){if($('app').hidden)return;renderRating();renderStudents();renderTests();renderQuestions();renderFeedback();renderData();}
+// каждая вкладка рисуется отдельно: ошибка в одной не должна ломать остальные и статус сервера
+function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderTests,renderQuestions,renderFeedback])try{f();}catch(e){console.error(f.name,e);}}
 /* ---- конструктор тестов ---- */
 let ed=null,edErr='';
 const gOpts=(v)=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===v?' selected':''}>${i+1}</option>`).join('');
