@@ -7,6 +7,8 @@
 - Сайт: https://vrklass.ru (Caddy на Pi, `deploy/Caddyfile`, контейнер `vrklass-web`) и запасной https://cosmo818.github.io/vr-lesson/ (GitHub Pages, ветка `main`). Учителю: `teacher.html`.
 - Сервер синхронизации: `server/app.py` в Docker на VPS RUVDS (`vr-lesson-api`, данные `/opt/vr-lesson-data`), сайт — Caddy `vrklass-web`. Обновление само: cron → `deploy/autoupdate.sh`. Pi — запасная копия (контейнер остановлен).
 - План развития ведётся в отдельном документе (ссылка в описании репозитория или в чате проекта).
+- Конструктор комнат для учителей: черновик формата и плана в `docs/ROOM_SPEC.md` (21.10.2026). Решения за владельцем — в конце документа.
+- Замер Babylon.js: страница `bench/` (https://vrklass.ru/bench/). Quest 3, VR: лёгкая сцена 89 к/с, тяжёлая 67 к/с. Замер на школьном Quest 1 ещё не сделан — от него зависит выбор библиотеки.
 
 ## Откат версии
 Каждая рабочая версия сохранена отдельной веткой: `release-v1.0`, `release-v2.0`, `release-v3.0`, `release-v3.1` (теги через прокси не отправляются).
