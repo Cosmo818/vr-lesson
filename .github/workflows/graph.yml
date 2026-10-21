@@ -21,6 +21,7 @@ jobs:
         run: graphify extract . --code-only
       - run: graphify export obsidian
       - run: graphify export wiki || true
+      - run: graphify export html || true
       - name: Документы проекта — в хранилище Obsidian
         run: |
           mkdir -p graphify-out/obsidian/_проект
