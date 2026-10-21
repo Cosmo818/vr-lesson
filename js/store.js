@@ -7,26 +7,13 @@
 const VR=window.VR=window.VR||{};
 const KEY='vrlesson.v1',SKEY='vrlesson.server';
 const SUBJ=['math','phys','chem','space','bio','soc','logic','hist','gen'];
-const blank=()=>({v:2,classes:[],students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{minutes:8,resetAt:0,updated:0}});
+const blank=()=>VR.schema.blank();
 let db=null;
 const now=()=>Date.now();
-const clampGrade=g=>{g=parseInt(g,10);return g>=1&&g<=11?g:5;};
+const clampGrade=g=>VR.schema.clampGrade(g);
 const uid=()=>now().toString(36)+Math.random().toString(36).slice(2,8);
 
-function norm(x){
-  const b=blank();
-  if(!x||typeof x!=='object')return b;
-  const o={v:2};
-  o.students=Array.isArray(x.students)?x.students.filter(s=>s&&s.id&&s.name).map(s=>({id:String(s.id),name:String(s.name).slice(0,40),grade:clampGrade(s.grade),classId:s.classId||null,pinHash:s.pinHash||null,created:s.created||0,updated:s.updated||s.created||0})):[];
-  o.classes=Array.isArray(x.classes)?x.classes.filter(c=>c&&c.id).map(c=>({id:String(c.id),grade:clampGrade(c.grade),letter:String(c.letter||'').slice(0,4),created:c.created||0,updated:c.updated||0})):[];
-  o.results=Array.isArray(x.results)?x.results.filter(r=>r&&r.id&&r.sid&&r.subj):[];
-  o.disc=x.disc&&typeof x.disc==='object'?x.disc:{};
-  o.feedback=Array.isArray(x.feedback)?x.feedback.filter(f=>f&&f.id&&(f.text||f.kind)):[];
-  o.tests=Array.isArray(x.tests)?x.tests.filter(t=>t&&t.id&&Array.isArray(t.qs)):[];
-  o.deleted=x.deleted&&typeof x.deleted==='object'?x.deleted:{};
-  o.settings=Object.assign(b.settings,x.settings||{});
-  return o;
-}
+function norm(x){return VR.schema.db(x);}
 function merge(A,B){
   A=norm(A);B=norm(B);
   const del=Object.assign({},A.deleted);for(const k in B.deleted)del[k]=Math.max(del[k]||0,B.deleted[k]);
@@ -38,7 +25,7 @@ function merge(A,B){
   const disc={};
   for(const src of[A.disc,B.disc])for(const sid in src){if(del[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
   const fm=new Map();for(const f of A.feedback.concat(B.feedback))if(!fm.has(f.id)&&!del[f.id])fm.set(f.id,f);
-  return{v:2,classes,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
+  return{v:VR.schema.VERSION,classes,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
 }
 function load(){
   if(db)return db;

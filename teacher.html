@@ -136,6 +136,9 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
 
 <script src="js/data.js"></script>
 <script src="js/questions.js"></script>
+<script src="js/errors.js"></script>
+<script src="js/schema.js"></script>
+<script src="js/flags.js"></script>
 <script src="js/store.js"></script>
 <script>
 (function(){
@@ -295,7 +298,7 @@ $('fbF').onchange=renderFeedback;
 $('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Удалить отзыв?')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
 $('fbCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';download('vr-urok-otzyvy-'+stamp()+'.csv','\ufeff'+[['Дата','Тип','Комната','Оценка','Текст','Класс'].map(q).join(';'),...S.feedback().map(x=>[new Date(x.ts).toLocaleString('ru-RU'),KIND[x.kind]||x.kind,roomName(x.room),x.rating||'',x.text||'',x.grade||''].map(q).join(';'))].join('\r\n'),'text/csv');};
 // каждая вкладка рисуется отдельно: ошибка в одной не должна ломать остальные и статус сервера
-function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderTests,renderQuestions,renderFeedback])try{f();}catch(e){console.error(f.name,e);}}
+function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderTests,renderQuestions,renderFeedback]){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
 /* ---- конструктор тестов ---- */
 let ed=null,edErr='';
 const gOpts=(v)=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===v?' selected':''}>${i+1}</option>`).join('');

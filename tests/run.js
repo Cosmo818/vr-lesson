@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -65,6 +65,22 @@ function makeCtx(xr){
   ok(dod.F.every(f=>f.every((v,i)=>Math.abs(V0.v3.dist3(dod.V[v],dod.V[f[(i+1)%5]])-e0)<1e-6)),'грани додекаэдра обходятся по кругу');
   // графики
   const sg=V0.curveSegs(3,2,0);ok(sg.length>50&&sg.every(s=>s.every(Number.isFinite)),'гипербола без разрыва через 0 ('+sg.length+' отрезков)');
+
+  /* ---------- ядро: schema, errors, flags ---------- */
+  {
+    const F=JSON.parse(fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.json'),'utf8'));
+    ok(JSON.stringify(V0.Store.norm(F))===fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.norm.json'),'utf8'),'schema: нормализация не изменилась');
+    const vs=V0.schema.validate('students',[{id:'x'},{id:'a',name:'Б',grade:99}]);
+    ok(vs.value.length===1&&vs.value[0].grade===5&&vs.dropped===1&&vs.ok===false,'schema: validate отбрасывает неполных и правит класс');
+    const vf=V0.schema.validate('settings',{flags:{demo:true,bad:'1','9x':true}}).value.flags;
+    ok(JSON.stringify(vf)==='{"demo":true,"bad":"1"}','schema: в флагах сохраняются значения новых версий (А6), имя с неверным форматом отбрасывается');
+    ok(V0.flags.on('bad')===false,'flags: нелогическое значение не включает флаг');
+    const er=V0.errors;let fb=0;
+    ok(er.guard('t',()=>{throw new Error('x');},()=>{fb++;})()===undefined&&er.list().pop().module==='t'&&fb===1,'errors: guard ловит ошибку, пишет в журнал, вызывает запасной вид один раз');
+    ok(await er.guard('ta',async()=>{throw new Error('y');})()===undefined&&er.list().pop().module==='ta','errors: guard ловит ошибку async-функции');
+    const fl=V0.flags;
+    ok(fl.on('nope')===false&&fl.set('demo',true)===true&&fl.on('demo')===true&&fl.set('9bad',true)===false,'flags: чтение, запись и проверка имени');
+  }
 
   /* ---------- режим экрана: полный сеанс ученика ---------- */
   const C=makeCtx(false),VR=C.sb.VR;
@@ -305,6 +321,10 @@ function makeCtx(xr){
     const s4=TS.addStudent('Вера Смирнова',4);await TS.sync();await HS.sync();
     HS.removeStudent(s4.id);HS.setSettings({minutes:44});await HS.sync();await TS.sync();
     ok(!!TS.student(s4.id)&&TS.settings().minutes!==44,'ключ шлема не может удалять учеников и менять настройки');
+    TS.setSettings({minutes:8});T.sb.VR.flags.set('demo',true);await TS.sync();await HS.sync();
+    ok(Hd.sb.VR.flags.on('demo')===true,'флаг учителя дошёл до шлема');
+    Hd.sb.VR.flags.set('demo',false);await HS.sync();await TS.sync();
+    ok(T.sb.VR.flags.on('demo')===true,'шлем не может менять флаги');
   }finally{srv.kill();}
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');
   process.exit(fails?1:0);

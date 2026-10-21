@@ -48,6 +48,7 @@ try:
         for t in ['rating', 'students', 'tests', 'questions', 'feedback', 'data']:
             pg.click('[data-t=%s]' % t); pg.wait_for_timeout(150)
         ok(not errs, 'учитель: вкладки с реальными данными (старые ученики, результаты) без ошибок' + ('' if not errs else ': ' + errs[0]))
+        ok(pg.evaluate('VR.errors.list().length')==0, 'учитель: журнал ошибок пуст на старых данных')
         pg.fill('#srvUrl', 'http://127.0.0.1:8772'); pg.fill('#srvKey', '"tk-test"'); pg.click('#srvSave'); pg.wait_for_timeout(2500)
         msg = pg.inner_text('#srvMsg'); ok(msg.startswith('Синхронизировано') and 'ключ учителя' in msg, 'учитель: «Подключить» → статус «Синхронизировано» (не висит «Связь…»): ' + msg)
         pg.fill('#srvUrl', 'http://127.0.0.1:8779'); pg.fill('#srvKey', 'x'); pg.click('#srvSave'); pg.wait_for_timeout(2500)
