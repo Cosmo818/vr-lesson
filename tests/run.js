@@ -48,6 +48,8 @@ function makeCtx(xr){
 }
 
 (async()=>{
+  /* ---------- законы и контракты (tests/laws.js) ---------- */
+  {const L=require(path.join(__dirname,'laws.js')).run(ROOT);for(const c of L.checks)ok(c.ok,'закон: '+c.msg);for(const w of L.warns)console.log('warn:',w);}
   /* ---------- данные ---------- */
   const C0=makeCtx(false);const V0=C0.sb.VR,D=V0.DATA;
   let qn=0,bad=[];
@@ -69,6 +71,7 @@ function makeCtx(xr){
   await tick();await tick();
   if(!VR.app){console.log("ELS:",Object.keys(C.els).join(","),C.sb.document.getElementById("status")&&C.sb.document.getElementById("status").textContent);}const app=VR.app,E=app.E,St=VR.Store;
   ok(!!E&&E.roomId==='hall','движок запущен, холл загружен');
+  ok(['addPanel','addBody','addStatic','addTable','door','discover','toast','burst','beep','chime','fanfare','goRoom','loadRoom','toggleMenu','exitXR','releaseInput'].every(k=>typeof E[k]==='function'),'контракт движка: инструменты для комнат на месте');
   ok(true,"-");
   let TT=0;const run=(n)=>{for(let i=0;i<n;i++){const f=C.rafQ.shift();TT+=16;if(f)f(TT);}};
   run(3);
@@ -298,6 +301,10 @@ function makeCtx(xr){
     const sql=cp.execFileSync('python3',['-c','import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute("select count(*) from students").fetchone()[0],c.execute("select count(*) from tests").fetchone()[0])',path.join(dir,'vrlesson.db')]).toString().trim();
     ok(sql==='1 1','в SQLite: 1 ученик, 1 тест ('+sql+')');
     ok(!fs.existsSync(path.join(dir,'keys.json'))||JSON.parse(fs.readFileSync(path.join(dir,'keys.json'),'utf8')).teacher,'ключи на месте');
+    HS.setServer(url,'dev-secret');
+    const s4=TS.addStudent('Вера Смирнова',4);await TS.sync();await HS.sync();
+    HS.removeStudent(s4.id);HS.setSettings({minutes:44});await HS.sync();await TS.sync();
+    ok(!!TS.student(s4.id)&&TS.settings().minutes!==44,'ключ шлема не может удалять учеников и менять настройки');
   }finally{srv.kill();}
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');
   process.exit(fails?1:0);
