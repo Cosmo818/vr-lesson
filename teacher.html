@@ -58,6 +58,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <button class="tab" data-t="questions">Сложные вопросы</button>
       <button class="tab" data-t="feedback">Отзывы</button>
       <button class="tab" data-t="data">Данные и настройки</button>
+      <button class="tab" data-t="archive">Архив</button>
     </div>
 
     <section id="t-rating">
@@ -90,6 +91,11 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <p class="muted">Вопросы, на которые чаще всего отвечают неверно. Это темы, которые стоит повторить на уроке.</p>
       <div class="row"><label>Предмет: <select id="fSubj"></select></label></div>
       <div class="scroll card" style="padding:0"><table id="qTable"></table></div>
+    </section>
+
+    <section id="t-archive" hidden>
+      <p class="muted">Архивные классы и ученики скрыты из списков и рейтинга, их результаты сохранены. «Вернуть» делает запись снова активной.</p>
+      <div id="arBox"></div>
     </section>
 
     <section id="t-feedback" hidden>
@@ -171,7 +177,7 @@ $('pinForm').onsubmit=async e=>{
 };
 
 /* ---- вкладки ---- */
-$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','tests','questions','feedback','data'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
+$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
 
 /* ---- рейтинг ---- */
 function rows(){
@@ -214,7 +220,7 @@ $('cAdd').onclick=()=>{const c=S.addClass($('cGrade').value,$('cLetter').value);
 $('cSel').onchange=()=>{curClass=$('cSel').value||null;newCodes={};renderStudents();};
 function renderStudents(){
   const klist=S.classes(),loose=S.studentsOf(null);
-  if(curClass&&curClass!=='-'&&!S.klass(curClass))curClass=null;
+  if(curClass&&curClass!=='-'&&!klist.some(c=>c.id===curClass))curClass=null;
   if(!curClass)curClass=klist.length?klist[0].id:(loose.length?'-':null);
   $('cSel').innerHTML=klist.map(c=>`<option value="${c.id}">${clsName(c)}</option>`).join('')+(loose.length?'<option value="-">Без класса</option>':'');
   if(curClass)$('cSel').value=curClass;
@@ -223,10 +229,10 @@ function renderStudents(){
   const k=curClass==='-'?null:S.klass(curClass),L=S.studentsOf(k?k.id:null);
   const st=S.classStats().rows.find(r=>(r.c.id||null)===(k?k.id:null));
   const clsOpts=v=>S.classes().map(c=>`<option value="${c.id}"${c.id===v?' selected':''}>${clsName(c)}</option>`).join('')+`<option value=""${!v?' selected':''}>без класса</option>`;
-  box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${clsName(k)} <span class="muted small">· учеников: ${L.length}${st&&st.rating!=null?' · рейтинг '+st.rating.toFixed(1):''}</span></h2>${k?'<button class="btn ghost" id="cDel">Удалить класс</button>':''}</div>
+  box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${clsName(k)} <span class="muted small">· учеников: ${L.length}${st&&st.rating!=null?' · рейтинг '+st.rating.toFixed(1):''}</span></h2>${k?'<button class="btn ghost" id="cDel">В архив</button>':''}</div>
    ${k?`<div class="row"><textarea id="bulk" placeholder="Добавить учеников: по одному имени в строке" style="min-height:70px;font-family:inherit;font-size:15px"></textarea></div><div class="row"><button class="btn" id="bulkAdd">Добавить и выдать коды</button></div>`:''}
    ${Object.keys(newCodes).length?`<div class="card" id="codes" style="background:#0e1730"><b>Коды входа — раздайте ученикам.</b> Они показываются только сейчас. <button class="btn ghost" id="printCodes">Печать</button><div id="codesList">${Object.keys(newCodes).map(id=>{const s=S.student(id);return s?`<div class="row" style="margin:4px 0"><span style="min-width:220px">${esc(s.name)}</span><b style="font-size:20px;letter-spacing:3px">${newCodes[id]}</b></div>`:'';}).join('')}</div></div>`:''}
-   <div class="scroll"><table><tr><th>Имя</th><th>Класс</th><th>Код входа</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${newCodes[s.id]?'<b>'+newCodes[s.id]+'</b>':s.pinHash?'<span class="muted">задан</span>':'<span style="color:var(--mid)">нет</span>'} <button class="btn ghost pin">Новый код</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">Удалить</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
+   <div class="scroll"><table><tr><th>Имя</th><th>Класс</th><th>Код входа</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${newCodes[s.id]?'<b>'+newCodes[s.id]+'</b>':s.pinHash?'<span class="muted">задан</span>':'<span style="color:var(--mid)">нет</span>'} <button class="btn ghost pin">Новый код</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">В архив</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
   renderClassRank();
 }
 function renderClassRank(){
@@ -235,13 +241,38 @@ function renderClassRank(){
 }
 $('cCard').onclick=async e=>{
   const t=e.target;
-  if(t.id==='cDel'){const k=S.klass(curClass);if(k&&confirm(`Удалить класс ${clsName(k)}? Ученики останутся «без класса».`)){S.removeClass(k.id);curClass=null;renderStudents();}return;}
+  if(t.id==='cDel'){const k=S.klass(curClass);if(k&&confirm(`Перенести класс ${clsName(k)} в архив? Ученики и результаты сохранятся, класс скроется из списков.`)){S.archiveClass(k.id);curClass=null;renderStudents();}return;}
   if(t.id==='bulkAdd'){const names=$('bulk').value.split('\n').map(x=>x.trim()).filter(Boolean);if(!names.length)return;for(const n of names){const s=S.addStudent(n,null,curClass);if(s)newCodes[s.id]=await S.setStudentPin(s.id);}renderStudents();return;}
   if(t.id==='printCodes'){const w=window.open('','_blank');if(!w){alert('Разрешите всплывающие окна для печати.');return;}w.document.write('<meta charset="utf-8"><title>Коды входа</title><style>body{font:16px sans-serif;padding:20px}.c{display:inline-block;width:45%;border:1px dashed #999;padding:12px;margin:6px;border-radius:8px}b{font-size:24px;letter-spacing:4px}</style><h3>VR-урок: коды входа, '+esc(clsName(S.klass(curClass)))+'</h3>'+Object.keys(newCodes).map(id=>{const s=S.student(id);return s?`<div class="c">${esc(s.name)}<br><b>${newCodes[id]}</b></div>`:'';}).join(''));w.document.close();w.focus();w.print();return;}
   const tr=t.closest('[data-id]');if(!tr)return;const id=tr.dataset.id,s=S.student(id);if(!s)return;
   if(t.classList.contains('pin')){newCodes[id]=await S.setStudentPin(id);renderStudents();return;}
   if(t.classList.contains('sv')){S.updateStudent(id,{name:tr.querySelector('.nm').value,classId:tr.querySelector('.cl').value||null});renderStudents();return;}
-  if(t.classList.contains('del')&&confirm(`Удалить ученика «${s.name}» вместе со всеми его результатами? Это нельзя отменить.`)){S.removeStudent(id);delete newCodes[id];if(sel===id)sel=null;renderStudents();}
+  if(t.classList.contains('del')&&confirm(`Перенести ученика «${s.name}» в архив? Результаты сохранятся.`)){S.archiveStudent(id);delete newCodes[id];if(sel===id)sel=null;renderStudents();}
+};
+
+/* ---- архив: только список и «Вернуть» ---- */
+function renderArchive(){
+  const ks=S.classes({all:true}).filter(c=>c.status==='archived'),ss=S.students({all:true}).filter(x=>x.status==='archived');
+  const nm=c=>{const k=c&&S.klass(c);return k?clsName(k)+(k.status==='archived'?' (в архиве)':''):'без класса';};
+  $('arBox').innerHTML=(ks.length||ss.length)?
+    (ks.length?'<h2>Классы</h2><div class="scroll card" style="padding:0"><table><tr><th>Класс</th><th></th></tr>'+ks.map(c=>`<tr data-kid="${c.id}"><td><b>${esc(clsName(c))}</b></td><td><button class="btn rs">Вернуть</button></td></tr>`).join('')+'</table></div>':'')+
+    (ss.length?'<h2>Ученики</h2><div class="scroll card" style="padding:0"><table><tr><th>Имя</th><th>Класс</th><th></th></tr>'+ss.map(x=>`<tr data-sid="${x.id}"><td><b>${esc(x.name)}</b></td><td>${esc(nm(x.classId))}</td><td><button class="btn rs">Вернуть</button></td></tr>`).join('')+'</table></div>':'')
+    :'<div class="card muted">В архиве ничего нет.</div>';
+}
+$('arBox').onclick=e=>{
+  if(!e.target.classList.contains('rs'))return;
+  const tr=e.target.closest('tr');if(!tr)return;
+  const dupMsg='Такой класс уже есть. Переименуй или архивируй существующий.';
+  if(tr.dataset.kid){if(S.restoreClass(tr.dataset.kid)===false)alert(dupMsg);}
+  else if(tr.dataset.sid){
+    const st=S.student(tr.dataset.sid),k=st&&st.classId?S.klass(st.classId):null;
+    if(k&&k.status==='archived'){
+      if(!confirm('Класс этого ученика в архиве. Вернуть ученика вместе с классом?'))return;
+      if(S.restoreClass(k.id)===false){alert(dupMsg);return;}
+    }
+    S.restoreStudent(tr.dataset.sid);
+  }
+  renderAll();
 };
 
 /* ---- сложные вопросы ---- */
@@ -298,7 +329,7 @@ $('fbF').onchange=renderFeedback;
 $('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Удалить отзыв?')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
 $('fbCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';download('vr-urok-otzyvy-'+stamp()+'.csv','\ufeff'+[['Дата','Тип','Комната','Оценка','Текст','Класс'].map(q).join(';'),...S.feedback().map(x=>[new Date(x.ts).toLocaleString('ru-RU'),KIND[x.kind]||x.kind,roomName(x.room),x.rating||'',x.text||'',x.grade||''].map(q).join(';'))].join('\r\n'),'text/csv');};
 // каждая вкладка рисуется отдельно: ошибка в одной не должна ломать остальные и статус сервера
-function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderTests,renderQuestions,renderFeedback]){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
+function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderTests,renderQuestions,renderFeedback,renderArchive]){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
 /* ---- конструктор тестов ---- */
 let ed=null,edErr='';
 const gOpts=(v)=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===v?' selected':''}>${i+1}</option>`).join('');

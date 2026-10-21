@@ -15,17 +15,18 @@ const uid=()=>now().toString(36)+Math.random().toString(36).slice(2,8);
 
 function norm(x){return VR.schema.db(x);}
 function merge(A,B){
-  A=norm(A);B=norm(B);
+  const SC=VR.schema;A=SC.db(A,{fill:false});B=SC.db(B,{fill:false});
   const del=Object.assign({},A.deleted);for(const k in B.deleted)del[k]=Math.max(del[k]||0,B.deleted[k]);
   const settings=(B.settings.updated||0)>(A.settings.updated||0)?B.settings:A.settings;
   const reset=settings.resetAt||0;
-  const lww=(a,b)=>{const m=new Map();for(const x of a.concat(b)){if(del[x.id])continue;const o=m.get(x.id);if(!o||(x.updated||0)>(o.updated||0))m.set(x.id,x);}return[...m.values()];};
-  const students=lww(A.students,B.students),tests=lww(A.tests,B.tests),classes=lww(A.classes,B.classes);
+  /* carry: поля школа/год/статус, которых нет у победителя (старый клиент их не знает), берутся у проигравшей версии; то же правило в server/app.py (fill_v3) */
+  const lww=(a,b,carry)=>{const m=new Map();for(const x of a.concat(b)){if(del[x.id])continue;const o=m.get(x.id);if(!o)m.set(x.id,x);else if((x.updated||0)>(o.updated||0))m.set(x.id,carry?SC.carry(x,o):x);else if(carry)m.set(o.id,SC.carry(o,x));}return[...m.values()];};
+  const students=lww(A.students,B.students,true).map(i=>SC.fill('students',i)),tests=lww(A.tests,B.tests),classes=lww(A.classes,B.classes,true).map(i=>SC.fill('classes',i));
   const rm=new Map();for(const r of A.results.concat(B.results))if(!rm.has(r.id)&&!del[r.sid]&&!del[r.id]&&(r.ts||0)>=reset)rm.set(r.id,r);
   const disc={};
   for(const src of[A.disc,B.disc])for(const sid in src){if(del[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
   const fm=new Map();for(const f of A.feedback.concat(B.feedback))if(!fm.has(f.id)&&!del[f.id])fm.set(f.id,f);
-  return{v:VR.schema.VERSION,classes,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
+  return{v:SC.VERSION,classes,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
 }
 function load(){
   if(db)return db;
@@ -44,12 +45,16 @@ const Store=VR.Store={
   canSave(){try{localStorage.setItem(KEY+'.t','1');localStorage.removeItem(KEY+'.t');return true;}catch(e){return false;}},
 
   /* ученики */
-  students(){return load().students.slice().sort((a,b)=>a.grade-b.grade||a.name.localeCompare(b.name,'ru'));},
+  /* по умолчанию архивные скрыты, как и ученики архивного класса; opt.all — все (история сохраняется) */
+  students(opt){
+    const all=!!(opt&&opt.all),ar=new Set(all?[]:load().classes.filter(c=>c.status==='archived').map(c=>c.id));
+    return load().students.filter(s=>all||(s.status!=='archived'&&!(s.classId&&ar.has(s.classId)))).sort((a,b)=>a.grade-b.grade||a.name.localeCompare(b.name,'ru'));
+  },
   student(id){return load().students.find(s=>s.id===id)||null;},
   addStudent(name,grade,classId){
     name=String(name||'').trim().slice(0,40);if(!name)return null;
-    const k=classId?Store.klass(classId):null;
-    const t=now(),s={id:uid(),name,grade:k?k.grade:clampGrade(grade),classId:k?k.id:null,pinHash:null,created:t,updated:t};
+    let k=classId?Store.klass(classId):null;if(k&&k.status==='archived')k=null; // в архивный класс новых учеников не кладём (то же на сервере для шлема)
+    const t=now(),s={id:uid(),name,grade:k?k.grade:clampGrade(grade),classId:k?k.id:null,pinHash:null,created:t,updated:t,school:VR.schema.DEFAULT_SCHOOL,year:VR.schema.acadYear(t),status:'active'};
     load().students.push(s);save();Store.syncSoon();return s;
   },
   updateStudent(id,patch){
@@ -67,20 +72,35 @@ const Store=VR.Store={
   },
 
   /* классы: {id, grade 1–11, letter «А»} */
-  classes(){return load().classes.slice().sort((a,b)=>a.grade-b.grade||a.letter.localeCompare(b.letter,'ru'));},
+  classes(opt){return load().classes.filter(c=>(opt&&opt.all)||c.status!=='archived').sort((a,b)=>a.grade-b.grade||a.letter.localeCompare(b.letter,'ru'));},
   klass(id){return load().classes.find(c=>c.id===id)||null;},
   className(c){return c?c.grade+(c.letter||''):'';},
   addClass(grade,letter){
     letter=String(letter||'').trim().toUpperCase().slice(0,4);grade=clampGrade(grade);
-    if(load().classes.some(c=>c.grade===grade&&c.letter===letter))return null;
-    const t=now(),c={id:uid(),grade,letter,created:t,updated:t};load().classes.push(c);save();Store.syncSoon();return c;
+    if(load().classes.some(c=>c.status!=='archived'&&c.grade===grade&&c.letter===letter))return null;
+    const t=now(),c={id:uid(),grade,letter,created:t,updated:t,school:VR.schema.DEFAULT_SCHOOL,year:VR.schema.acadYear(t),status:'active'};load().classes.push(c);save();Store.syncSoon();return c;
   },
   removeClass(id){
     const d=load();d.deleted[id]=now();d.classes=d.classes.filter(c=>c.id!==id);
     for(const s of d.students)if(s.classId===id){s.classId=null;s.updated=now();}
     save();Store.syncSoon();
   },
-  studentsOf(classId){return Store.students().filter(s=>(s.classId||null)===(classId||null));},
+  /* мягкое архивирование: запись остаётся, результаты сохраняются; updated всегда растёт, чтобы правка победила при слиянии */
+  _setStatus(list,id,status){
+    const r=load()[list].find(x=>x.id===id);if(!r)return null;
+    r.status=status;r.updated=Math.max(now(),(r.updated||0)+1);save();Store.syncSoon();return r;
+  },
+  archiveStudent(id){return Store._setStatus('students',id,'archived');},
+  restoreStudent(id){return Store._setStatus('students',id,'active');},
+  archiveClass(id){return Store._setStatus('classes',id,'archived');},
+  /* возврат класса: та же проверка дубля, что в addClass (параллель + буква среди активных); при дубле запись не меняется, результат false */
+  restoreClass(id){
+    const c=Store.klass(id);if(!c)return null;
+    if(c.status!=='archived')return c;
+    if(load().classes.some(o=>o.id!==id&&o.status!=='archived'&&o.grade===c.grade&&o.letter===c.letter))return false;
+    return Store._setStatus('classes',id,'active');
+  },
+  studentsOf(classId,opt){return Store.students(opt).filter(s=>(s.classId||null)===(classId||null));},
 
   /* коды входа учеников: 4 цифры, хранится только хэш */
   genPin(){const a=new Uint32Array(1);(globalThis.crypto||window.crypto).getRandomValues(a);return String(1000+a[0]%9000);},

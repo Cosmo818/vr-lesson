@@ -225,7 +225,7 @@ function run(root) {
 
     /* L8 */
     const S = VR.Store || {};
-    const fns = 'merge norm band reload onChange canSave students student addStudent updateStudent removeStudent classes klass className addClass removeClass studentsOf genPin pinHash setStudentPin checkStudentPin classStats addResult results addDiscovery discoveries best points lastActive tests test testsFor saveTest removeTest question addFeedback feedback removeFeedback settings setSettings clearResults exportJSON importJSON server setServer sync onStatus syncSoon'.split(' ');
+    const fns = 'merge norm band reload onChange canSave students student addStudent updateStudent removeStudent classes klass className addClass removeClass studentsOf archiveStudent restoreStudent archiveClass restoreClass genPin pinHash setStudentPin checkStudentPin classStats addResult results addDiscovery discoveries best points lastActive tests test testsFor saveTest removeTest question addFeedback feedback removeFeedback settings setSettings clearResults exportJSON importJSON server setServer sync onStatus syncSoon'.split(' ');
     const lost = fns.filter(k => typeof S[k] !== 'function');
     add(!lost.length, 'контракт VR.Store: методы на месте' + (lost.length ? ' (нет: ' + lost.join(', ') + ')' : ''));
     add(Array.isArray(S.SUBJ) && S.SUBJ.length === 9 && S.SUBJ.every(x => typeof x === 'string'), 'контракт VR.Store: SUBJ — 9 строк');

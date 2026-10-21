@@ -69,7 +69,31 @@ function makeCtx(xr){
   /* ---------- ядро: schema, errors, flags ---------- */
   {
     const F=JSON.parse(fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.json'),'utf8'));
-    ok(JSON.stringify(V0.Store.norm(F))===fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.norm.json'),'utf8'),'schema: нормализация не изменилась');
+    const strip=db=>{const o=JSON.parse(JSON.stringify(db));o.v=2;for(const k of['students','classes'])for(const i of o[k]){delete i.school;delete i.year;delete i.status;}return o;};
+    const nF=V0.Store.norm(F);
+    ok(JSON.stringify(strip(nF))===fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.norm.json'),'utf8'),'schema: старые поля не изменились (без school/year/status)');
+    const byId=(L,id)=>L.find(x=>x.id===id);
+    ok(nF.v===3&&[...nF.students,...nF.classes].every(x=>x.school==='school-default'&&x.status==='active'),'schema v3: у всех учеников и классов школа по умолчанию и статус active');
+    ok(byId(nF.classes,'c5a').year===2025&&byId(nF.classes,'c9b').year===2024&&byId(nF.students,'s1').year===2025&&byId(nF.students,'s2').year===2024&&byId(nF.students,'s3').year===null&&byId(nF.students,'s4').year===null,'schema v3: учебный год выводится из created (август — начало года, нет времени — null)');
+    ok(V0.schema.acadYear(1720000000000)===2023&&V0.schema.acadYear(0)===null,'schema v3: acadYear(июль 2024)=2023');
+    const s1n=byId(nF.students,'s1');
+    const mc=V0.Store.merge({students:[Object.assign({},s1n,{status:'archived',school:'school-default',year:2025,updated:5})]},{students:[{id:'s1',name:'Новое',grade:5,updated:9}]});
+    ok(mc.students.length===1&&mc.students[0].name==='Новое'&&mc.students[0].status==='archived','слияние: правка старого клиента (без status) не воскрешает архивного ученика');
+    const mc2=V0.Store.merge({students:[{id:'s1',name:'Новое',grade:5,updated:9}]},{students:[Object.assign({},s1n,{status:'archived',updated:5})]});
+    ok(mc2.students[0].name==='Новое'&&mc2.students[0].status==='archived','слияние: перенос полей не зависит от порядка аргументов');
+    const mc3=V0.Store.merge({students:[Object.assign({},s1n,{status:'archived',updated:5})]},{students:[Object.assign({},s1n,{status:'active',updated:9})]});
+    ok(mc3.students[0].status==='active','слияние: возврат из архива (новее) побеждает');
+    ok(V0.schema.fill('students',{id:'z',name:'я',status:'bad',school:'',year:'x',created:1760000000000}).status==='active','schema v3: недопустимые значения заменяются по умолчанию');
+    /* архив на фикстуре: реальные непустые данные */
+    {const Cx=makeCtx(false);await tick();const Sx=Cx.sb.VR.Store;Cx.store['vrlesson.v1']=JSON.stringify(F);Sx.reload();
+      const n0=Sx.students().length;
+      ok(n0===4&&Sx.classes().length===2,'архив: фикстура загружена (4 ученика, 2 класса)');
+      Sx.archiveStudent('s1');ok(Sx.students().length===3&&!Sx.studentsOf('c5a').length&&Sx.student('s1').status==='archived'&&Sx.results('s1').length>0,'архив: ученик скрыт, результаты сохранены');
+      Sx.restoreStudent('s1');ok(Sx.students().length===4&&Sx.studentsOf('c5a').length===1,'архив: ученик возвращён');
+      Sx.archiveClass('c9b');ok(Sx.classes().length===1&&!Sx.students().some(x=>x.id==='s2')&&Sx.students({all:true}).length===4&&!Sx.classStats().rows.some(r=>r.c.id==='c9b'),'архив: класс скрыт вместе с учениками, рейтинг без него');
+      const n9=Sx.addClass(9,'Б');ok(!!n9,'архив: новый 9Б после архивного допустим');
+      ok(Sx.restoreClass('c9b')===false&&Sx.klass('c9b').status==='archived'&&!Sx.students().some(x=>x.id==='s2'),'архив: возврат 9Б при активном дубле отклонён, ученики остались скрытыми вместе с классом');
+      Sx.archiveClass(n9.id);Sx.restoreClass('c9b');ok(Sx.students().some(x=>x.id==='s2')&&Sx.archiveStudent('nope')===null,'архив: класс возвращён вместе с учениками; неизвестный id → null');}
     const vs=V0.schema.validate('students',[{id:'x'},{id:'a',name:'Б',grade:99}]);
     ok(vs.value.length===1&&vs.value[0].grade===5&&vs.dropped===1&&vs.ok===false,'schema: validate отбрасывает неполных и правит класс');
     const vf=V0.schema.validate('settings',{flags:{demo:true,bad:'1','9x':true}}).value.flags;
@@ -325,7 +349,113 @@ function makeCtx(xr){
     ok(Hd.sb.VR.flags.on('demo')===true,'флаг учителя дошёл до шлема');
     Hd.sb.VR.flags.set('demo',false);await HS.sync();await TS.sync();
     ok(T.sb.VR.flags.on('demo')===true,'шлем не может менять флаги');
+    /* ---- архив и схема v3 ---- */
+    const arK=TS.addClass(7,'Г'),arA=TS.addStudent('Архивный Ученик',7,arK.id),arB=TS.addStudent('Второй Ученик',7,arK.id);
+    await TS.sync();await HS.sync();
+    ok(HS.studentsOf(arK.id).length===2&&HS.student(arA.id).status==='active'&&HS.student(arA.id).school==='school-default','v3: новые ученик и класс дошли до шлема со статусом active');
+    TS.archiveStudent(arA.id);await TS.sync();await HS.sync();
+    ok(!HS.studentsOf(arK.id).some(x=>x.id===arA.id)&&HS.student(arA.id).status==='archived','архив: ученик пропал из списка шлема, запись осталась');
+    TS.restoreStudent(arA.id);await TS.sync();await HS.sync();
+    ok(HS.studentsOf(arK.id).some(x=>x.id===arA.id)&&HS.student(arA.id).status==='active','архив: вернули из архива — запись снова активна и дошла до шлема');
+    TS.archiveClass(arK.id);await TS.sync();await HS.sync();
+    ok(!HS.classes().some(x=>x.id===arK.id)&&HS.studentsOf(arK.id).length===0&&!TS.classStats().rows.some(r=>r.c.id===arK.id),'архив: класс скрыт у шлема, ученики скрыты, рейтинг без класса');
+    const dupK=TS.addClass(7,'Г');ok(!!dupK,'архив: класс с той же параллелью и буквой после архива создаётся');
+    const stBefore=JSON.stringify(TS.klass(arK.id));
+    ok(TS.restoreClass(arK.id)===false&&JSON.stringify(TS.klass(arK.id))===stBefore&&TS.klass(arK.id).status==='archived','архив: возврат класса при активном дубле отклонён, запись не изменена');
+    {const arS=TS.students({all:true}).filter(x=>x.classId===arK.id);
+      ok(arS.length===2&&TS.students().every(x=>x.classId!==arK.id)&&TS.restoreClass(arK.id)===false,'архив: ученики архивного класса скрыты, а дубль всё ещё мешает вернуть класс (ученик не теряется: '+arS.length+')');}
+    TS.archiveClass(dupK.id);
+    ok(!!TS.restoreClass(arK.id)&&TS.klass(arK.id).status==='active'&&TS.studentsOf(arK.id).length===2,'архив: после архивации дубля класс возвращается вместе с учениками');
+    TS.archiveClass(arK.id);TS.removeClass(dupK.id);
+    {const inK=TS.addStudent('Новичок',7,arK.id);ok(inK.classId===null,'store: нового ученика в архивный класс не кладём');TS.removeStudent(inK.id);}
+    TS.restoreClass(arK.id);await TS.sync();await HS.sync();
+    ok(HS.classes().some(x=>x.id===arK.id)&&HS.studentsOf(arK.id).length===2,'архив: класс вернули — он и ученики снова у шлема');
+    TS.archiveStudent(arB.id);await TS.sync();await HS.sync();
+    HS.restoreStudent(arB.id);await HS.sync();await TS.sync();
+    ok(TS.student(arB.id).status==='archived','ключ шлема не меняет статус ученика');
+    /* старый учитель (без новых полей) правит архивного: на сервере остаётся архив; результат совпадает с JS merge */
+    {const post=(key,body)=>fetch(url+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json','X-Key':key},body:JSON.stringify(body)}).then(r=>r.json());
+      const cur=JSON.parse(JSON.stringify(TS.student(arB.id)));
+      const oldFmt={id:cur.id,name:'Правка старого клиента',grade:cur.grade,classId:cur.classId,pinHash:cur.pinHash,created:cur.created,updated:cur.updated+1000};
+      const resp=await post('teach-secret',{students:[oldFmt]});
+      const sv=resp.state.students.find(x=>x.id===cur.id);
+      const js=V0.Store.merge({students:[cur]},{students:[oldFmt]}).students.find(x=>x.id===cur.id);
+      const pick=x=>JSON.stringify([x.name,x.status,x.school,x.year]);
+      ok(sv.status==='archived'&&sv.name==='Правка старого клиента','сервер: правка архивного без новых полей оставляет его в архиве');
+      ok(pick(sv)===pick(js),'слияние: сервер и JS дают одинаковый результат ('+pick(sv)+')');
+      const nw=await post('dev-secret',{students:[{id:'dvnew1',name:'Шлемный',grade:5,created:1760000000000,updated:1760000000000,status:'archived',school:'x'}]});
+      const dn=nw.state.students.find(x=>x.id==='dvnew1');
+      ok(dn&&dn.status==='active'&&dn.school==='school-default'&&dn.year===2025,'сервер: новый ученик от шлема всегда active и в школе по умолчанию');
+      const ex1=await post('dev-secret',{students:[{id:cur.id,name:'Шлем',grade:5,updated:cur.updated+99999,status:'active'}]});
+      ok(ex1.state.students.find(x=>x.id===cur.id).status==='archived','сервер: шлем не может вернуть архивного из архива');
+      TS.archiveClass(arK.id);await TS.sync();
+      const hz=await post('dev-secret',{students:[{id:'dvnew2',name:'Шлемный2',grade:7,classId:arK.id,created:1760000000000,updated:1760000000000,year:1999,school:'чужая'},{id:'dvnew3',name:'Шлемный3',grade:7,created:1740000000000,updated:1740000000000,year:2077}]});
+      const d2=hz.state.students.find(x=>x.id==='dvnew2'),d3=hz.state.students.find(x=>x.id==='dvnew3');
+      ok(d2&&d2.classId===null&&d2.year===2025&&d2.school==='school-default'&&d2.status==='active','сервер: шлем не задаёт год и не кладёт ученика в архивный класс');
+      ok(d3&&d3.year===2024,'сервер: год ученика от шлема считается по дате создания, а не из присланного');
+      TS.restoreClass(arK.id);await TS.sync();}
+    ok(fs.readdirSync(dir).filter(f=>/^vrlesson\.db\.bak-/.test(f)).length===0,'свежая база: копий миграции нет');
   }finally{srv.kill();}
+
+  /* ---------- миграция настоящей базы v2 → v3 ---------- */
+  {
+    const dir2=fs.mkdtempSync(path.join(os.tmpdir(),'vrl-mig-'));
+    const F2=JSON.parse(fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.json'),'utf8'));
+    cp.execFileSync('python3',['-I',path.join(ROOT,'tests/fixtures/make_v2_db.py'),path.join(dir2,'vrlesson.db'),path.join(ROOT,'tests/fixtures/legacy-v2.json')]);
+    const url2='http://127.0.0.1:8798';
+    const start=async()=>{const p=cp.spawn('python3',['-I',path.join(ROOT,'server/app.py')],{env:Object.assign({},process.env,{DATA_DIR:dir2,PORT:'8798',TEACHER_KEY:'teach-secret',DEVICE_KEY:'dev-secret'}),stdio:'ignore'});
+      for(let i=0;i<50;i++){try{const r=await fetch(url2+'/api/health');if(r.ok)break;}catch(e){}await new Promise(r=>setTimeout(r,100));}return p;};
+    const pyq=(db,q)=>cp.execFileSync('python3',['-I','-c','import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute(sys.argv[2]).fetchone()[0])',db,q]).toString().trim();
+    const baks=()=>fs.readdirSync(dir2).filter(f=>/^vrlesson\.db\.bak-v2-/.test(f));
+    let p2=await start();
+    try{
+      ok(baks().length===1&&pyq(path.join(dir2,baks()[0]),'select count(*) from students')==='4','миграция: перед ней сделана копия базы v2 (4 ученика)');
+      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='3','миграция: user_version = 3');
+      const exp=await (await fetch(url2+'/api/export',{headers:{'X-Key':'teach-secret'}})).json();
+      const yr=id=>exp.students.find(x=>x.id===id).year;
+      ok(exp.students.length===4&&exp.students.every(x=>x.school==='school-default'&&x.status==='active')&&yr('s1')===2025&&yr('s2')===2024&&yr('s3')===null&&yr('s4')===null&&exp.classes.find(x=>x.id==='c5a').year===2025,'миграция: ученики и классы дозаполнены, годы выведены');
+      ok(exp.results.length===5&&exp.disc.s1&&exp.settings.futureKey==='keep-me'&&exp.v===3,'миграция: результаты, открытия и неизвестные настройки на месте');
+      ok(exp.students.find(x=>x.id==='s1').pinHash==='test-hash-1'&&exp.students.find(x=>x.id==='s1').name==='Иван Петров','миграция: прежние поля ученика не изменились');
+      const h=await (await fetch(url2+'/api/health')).json();ok(h.schema===3,'/api/health: schema = 3');
+    }finally{p2.kill();}
+    await new Promise(r=>setTimeout(r,300));
+    p2=await start();
+    try{
+      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='3','миграция повторяема: после перезапуска новой копии нет');
+    }finally{p2.kill();}
+    /* обрыв миграции: на временной базе v2 ломаем заполнение на второй записи; база должна остаться целой v2, повторный запуск — дать ту же v3 */
+    {
+      const dir3=fs.mkdtempSync(path.join(os.tmpdir(),'vrl-mig3-')),db3=path.join(dir3,'vrlesson.db');
+      cp.execFileSync('python3',['-I',path.join(ROOT,'tests/fixtures/make_v2_db.py'),db3,path.join(ROOT,'tests/fixtures/legacy-v2.json')]);
+      const dump=`import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps([c.execute('pragma user_version').fetchone()[0],[r[1] for r in c.execute('pragma table_info(students)')],c.execute('select id,doc from students order by id').fetchall(),c.execute('select id,doc from classes order by id').fetchall(),c.execute('select count(*) from results').fetchone()[0]],ensure_ascii=False))`;
+      const snap=()=>cp.execFileSync('python3',['-I','-c',dump,db3]).toString();
+      const before=snap();
+      const crash=`import sys,os;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
+import app,sqlite3
+n=[0];orig=app.fill_v3
+def bad(*a,**k):
+    n[0]+=1
+    if n[0]>=2: raise RuntimeError('обрыв')
+    return orig(*a,**k)
+app.fill_v3=bad
+c=sqlite3.connect(sys.argv[1])
+try:
+    app.migrate_v3(c)
+except RuntimeError:
+    print('crashed')`;
+      const out=cp.execFileSync('python3',['-I','-c',crash,db3,path.join(ROOT,'server'),dir3]).toString().trim();
+      ok(out==='crashed','миграция: обрыв посреди заполнения вызван');
+      ok(snap()===before&&JSON.parse(before)[0]<3&&!JSON.parse(before)[1].includes('school'),'миграция: после обрыва база целиком прежняя v2 (колонок нет, user_version < 3, данные те же)');
+      const run=`import sys,os;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
+import app,sqlite3
+c=sqlite3.connect(sys.argv[1]);app.migrate_v3(c);c.close()`;
+      cp.execFileSync('python3',['-I','-c',run,db3,path.join(ROOT,'server'),dir3]);
+      const after=snap(),A=JSON.parse(after);
+      ok(A[0]===3&&A[1].includes('school')&&A[2].length===4&&A[4]===5,'миграция: повторный запуск после обрыва даёт v3 без потерь');
+      cp.execFileSync('python3',['-I','-c',run,db3,path.join(ROOT,'server'),dir3]);
+      ok(snap()===after,'миграция: ещё один запуск базу не меняет');
+    }
+  }
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');
   process.exit(fails?1:0);
 })().catch(e=>{console.log('EXCEPTION',e&&e.stack||e);process.exit(2);});

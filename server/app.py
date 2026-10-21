@@ -6,7 +6,7 @@
   device  — для шлемов: ученики, результаты, открытия.
 Эндпоинты: GET /api/health, POST /api/sync, GET /api/export (только учитель).
 """
-import json, os, secrets, sqlite3, threading, time, hmac
+import json, os, secrets, sqlite3, sys, threading, time, hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DATA = os.environ.get('DATA_DIR', '/data')
@@ -15,6 +15,9 @@ DB_PATH = os.path.join(DATA, 'vrlesson.db')
 KEYS_PATH = os.path.join(DATA, 'keys.json')
 MAX_BODY = 8 * 1024 * 1024
 VERSION = '3'
+SCHEMA = 3
+DEFAULT_SCHOOL = 'school-default'
+NEW_FIELDS = ('school', 'year', 'status')
 lock = threading.Lock()
 
 
@@ -49,6 +52,7 @@ def db():
 
 
 def init_db():
+    existed = os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 0
     with db() as c:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS students(id TEXT PRIMARY KEY, name TEXT, grade INTEGER, updated INTEGER, doc TEXT);
@@ -61,6 +65,15 @@ def init_db():
         CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id = 1), updated INTEGER, doc TEXT);
         CREATE INDEX IF NOT EXISTS results_sid ON results(sid);
         ''')
+        ver = c.execute('PRAGMA user_version').fetchone()[0]
+        if ver < SCHEMA and existed:
+            try:
+                path = backup_db('v%d' % max(ver, 2))
+                print('копия базы перед миграцией: %s' % path, flush=True)
+            except Exception as e:
+                print('миграция остановлена: не удалось сделать копию базы:', e, flush=True)
+                sys.exit(1)
+        migrate_v3(c)  # при каждом старте: идемпотентно, дозаполняет строки, записанные прежней версией
 
 
 def num(x, d=0):
@@ -68,6 +81,112 @@ def num(x, d=0):
         return int(x)
     except (TypeError, ValueError):
         return d
+
+
+def acad_year(ts):
+    """Начало учебного года по времени создания (мс, UTC): август и позже — этот год, раньше — прошлый; нет времени — None."""
+    ts = num(ts)
+    if ts <= 0:
+        return None
+    try:
+        t = time.gmtime(ts / 1000)
+    except (OverflowError, OSError, ValueError):
+        return None
+    y = t.tm_year if t.tm_mon >= 8 else t.tm_year - 1
+    return y if 2000 <= y <= 2100 else None
+
+
+def ok_school(v):
+    return isinstance(v, str) and 1 <= len(v) <= 40
+
+
+def ok_year(v):
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, float):
+        v = int(v) if v.is_integer() else None
+    return isinstance(v, int) and 2000 <= v <= 2100
+
+
+def ok_status(v):
+    return v in ('active', 'archived')
+
+
+OK_FIELD = {'school': ok_school, 'year': ok_year, 'status': ok_status}
+
+
+def fill_v3(doc, old=None, device_new=False):
+    """Правило слияния v3 (то же, что SC.carry/SC.fill в js/schema.js): перенос недостающих полей из прежней версии, затем значения по умолчанию.
+    device_new: ключ шлема не создаёт архивных записей и не пишет в чужую школу."""
+    doc = dict(doc)
+    if isinstance(old, dict) and not device_new:
+        for f in NEW_FIELDS:
+            if not OK_FIELD[f](doc.get(f)) and OK_FIELD[f](old.get(f)):
+                doc[f] = old[f]
+    if device_new:
+        doc['status'] = 'active'
+        doc['school'] = DEFAULT_SCHOOL
+        doc['year'] = acad_year(doc.get('created'))  # шлем не задаёт учебный год сам
+    if not ok_school(doc.get('school')):
+        doc['school'] = DEFAULT_SCHOOL
+    if ok_year(doc.get('year')):
+        doc['year'] = int(doc['year'])
+    else:
+        doc['year'] = acad_year(doc.get('created'))
+    if not ok_status(doc.get('status')):
+        doc['status'] = 'active'
+    return doc
+
+
+def backup_db(tag):
+    """Копия базы средствами SQLite рядом с базой; существующие копии не трогаем."""
+    path = '%s.bak-%s-%s' % (DB_PATH, tag, time.strftime('%Y%m%d-%H%M%S', time.gmtime()))
+    src = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        dst = sqlite3.connect(path)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    os.chmod(path, 0o600)
+    return path
+
+
+def migrate_v3(c):
+    """v2 -> v3: колонки school/year/status (производный индекс, источник правды — doc), дозаполнение, user_version = 3. Повторяемо."""
+    # Одна явная транзакция: DDL в sqlite3 (Python 3.13) сам её не открывает. Обрыв -> ROLLBACK, база остаётся v2, повтор безопасен.
+    if c.in_transaction:
+        c.commit()
+    c.execute('BEGIN IMMEDIATE')
+    try:
+        for t in ('classes', 'students'):
+            cols = {r[1] for r in c.execute('PRAGMA table_info(%s)' % t)}
+            if 'school' not in cols:
+                c.execute('ALTER TABLE %s ADD COLUMN school TEXT' % t)
+            if 'year' not in cols:
+                c.execute('ALTER TABLE %s ADD COLUMN year INTEGER' % t)
+            if 'status' not in cols:
+                c.execute("ALTER TABLE %s ADD COLUMN status TEXT NOT NULL DEFAULT 'active'" % t)
+            for rid, raw in c.execute('SELECT id, doc FROM %s WHERE school IS NULL' % t).fetchall():
+                try:
+                    d = json.loads(raw)
+                    if not isinstance(d, dict):
+                        raise ValueError('не объект')
+                except ValueError as e:
+                    print('миграция: пропущена запись %s.%s (битый JSON: %s)' % (t, rid, e), flush=True)
+                    continue
+                d = fill_v3(d)
+                c.execute('UPDATE %s SET doc = ?, school = ?, year = ?, status = ? WHERE id = ?' % t,
+                          (json.dumps(d, ensure_ascii=False), d['school'], d['year'], d['status'], rid))
+        c.execute('CREATE INDEX IF NOT EXISTS students_school ON students(school, status)')
+        c.execute('PRAGMA user_version = %d' % SCHEMA)
+        c.execute('COMMIT')
+    except BaseException:
+        if c.in_transaction:
+            c.execute('ROLLBACK')
+        raise
 
 
 def merge_in(c, inc, role):
@@ -88,20 +207,26 @@ def merge_in(c, inc, role):
         if not isinstance(s, dict) or not s.get('id') or not s.get('name') or s['id'] in deleted:
             continue
         upd = num(s.get('updated') or s.get('created'))
-        row = c.execute('SELECT updated FROM students WHERE id = ?', (s['id'],)).fetchone()
+        row = c.execute('SELECT updated, doc FROM students WHERE id = ?', (s['id'],)).fetchone()
         if row and not teacher:
-            continue  # ключ шлема может только добавлять новых учеников, но не менять существующих (имя, класс, код входа)
+            continue  # ключ шлема может только добавлять новых учеников, но не менять существующих (имя, класс, код входа, архив)
         if not row or upd > row[0]:
-            c.execute('INSERT OR REPLACE INTO students(id, name, grade, updated, doc) VALUES(?, ?, ?, ?, ?)',
-                      (s['id'], str(s['name'])[:40], num(s.get('grade'), 5), upd, json.dumps(s, ensure_ascii=False)))
+            d = fill_v3(s, None if not row else load_doc(row[1]), device_new=not teacher)
+            if not teacher and d.get('classId'):
+                kr = c.execute('SELECT status FROM classes WHERE id = ?', (d['classId'],)).fetchone()
+                if kr and kr[0] == 'archived':
+                    d['classId'] = None  # шлем не кладёт учеников в архивный класс
+            c.execute('INSERT OR REPLACE INTO students(id, name, grade, updated, doc, school, year, status) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+                      (s['id'], str(s['name'])[:40], num(s.get('grade'), 5), upd, json.dumps(d, ensure_ascii=False), d['school'], d['year'], d['status']))
     if teacher:
         for k in inc.get('classes') or []:
             if not isinstance(k, dict) or not k.get('id') or k['id'] in deleted:
                 continue
-            row = c.execute('SELECT updated FROM classes WHERE id = ?', (k['id'],)).fetchone()
+            row = c.execute('SELECT updated, doc FROM classes WHERE id = ?', (k['id'],)).fetchone()
             if not row or num(k.get('updated')) > row[0]:
-                c.execute('INSERT OR REPLACE INTO classes(id, name, updated, doc) VALUES(?, ?, ?, ?)',
-                          (k['id'], '%s%s' % (num(k.get('grade')), str(k.get('letter', ''))[:4]), num(k.get('updated')), json.dumps(k, ensure_ascii=False)))
+                d = fill_v3(k, load_doc(row[1]) if row else None)
+                c.execute('INSERT OR REPLACE INTO classes(id, name, updated, doc, school, year, status) VALUES(?, ?, ?, ?, ?, ?, ?)',
+                          (k['id'], '%s%s' % (num(k.get('grade')), str(k.get('letter', ''))[:4]), num(k.get('updated')), json.dumps(d, ensure_ascii=False), d['school'], d['year'], d['status']))
         for t in inc.get('tests') or []:
             if not isinstance(t, dict) or not t.get('id') or t['id'] in deleted:
                 continue
@@ -134,6 +259,14 @@ def merge_in(c, inc, role):
     c.execute('DELETE FROM feedback WHERE id IN (SELECT id FROM deleted)')
 
 
+def load_doc(raw):
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def get_settings(c):
     row = c.execute('SELECT doc FROM settings WHERE id = 1').fetchone()
     return json.loads(row[0]) if row else {}
@@ -144,7 +277,7 @@ def state(c):
     for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
         disc.setdefault(sid, {})[k] = ts
     return {
-        'v': 2,
+        'v': SCHEMA,
         'classes': [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')],
         'students': [json.loads(r[0]) for r in c.execute('SELECT doc FROM students')],
         'tests': [json.loads(r[0]) for r in c.execute('SELECT doc FROM tests')],
@@ -201,7 +334,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith('/api/health'):
-            return self.reply(200, {'ok': True, 'version': VERSION})
+            return self.reply(200, {'ok': True, 'version': VERSION, 'schema': SCHEMA})
         if self.path.startswith('/api/export'):
             r = self.auth()
             if not r:
