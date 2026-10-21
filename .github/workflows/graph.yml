@@ -1,0 +1,33 @@
+# Карта кода (graphify) + хранилище Obsidian. Строится на GitHub после каждого пуша в main
+# и кладётся в отдельную ветку `graph` (main и автообновление VPS не трогает).
+name: graph
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: graph
+jobs:
+  graph:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install graphifyy
+      - name: Граф кода (локальный разбор, без ИИ и ключей)
+        run: graphify extract . --code-only
+      - run: graphify export obsidian
+      - run: graphify export wiki || true
+      - name: Документы проекта — в хранилище Obsidian
+        run: |
+          mkdir -p graphify-out/obsidian/_проект
+          cp HANDOFF.md CHECKLIST.md CLAUDE.md README.md graphify-out/obsidian/_проект/
+      - name: Публикация в ветку graph
+        run: |
+          cd graphify-out && rm -rf cache
+          git init -q -b graph && git add -A
+          git -c user.name=graph-bot -c user.email=actions@github.com commit -qm "graph ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" graph
