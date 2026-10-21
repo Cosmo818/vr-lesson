@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Замер Babylon.js</title>
+<style>
+body{margin:0;font:16px/1.4 system-ui,sans-serif;background:#10131a;color:#e8ecf4}
+#ui{padding:12px 14px}
+h1{font-size:20px;margin:0 0 6px}
+a.b,button{display:inline-block;margin:4px 6px 4px 0;padding:10px 14px;border-radius:10px;border:0;background:#2b6cff;color:#fff;font-size:16px;text-decoration:none}
+a.b.on{background:#18a058}
+#c{display:block;width:100%;height:52vh;background:#000;touch-action:none}
+pre{white-space:pre-wrap;word-break:break-word;background:#1b2030;padding:10px;border-radius:10px;font-size:15px}
+#res{font-size:22px;font-weight:700;color:#7dffb0}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>Замер Babylon.js для VR-урока</h1>
+  <div>Нагрузка:
+    <a class="b" id="l1" href="?level=1">1 лёгкая</a>
+    <a class="b" id="l2" href="?level=2">2 средняя</a>
+    <a class="b" id="l3" href="?level=3">3 тяжёлая</a>
+  </div>
+  <div id="res">Идёт подготовка…</div>
+  <button id="enter" hidden>Войти в VR и замерить</button>
+  <pre id="out"></pre>
+</div>
+<canvas id="c"></canvas>
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script>
+(function(){
+  var out=document.getElementById('out'),resEl=document.getElementById('res'),lines=[];
+  function say(t){lines.push(t);out.textContent=lines.join('\n');}
+  window.addEventListener('error',function(e){say('ОШИБКА: '+e.message+' ('+String(e.filename||'').split('/').pop()+':'+e.lineno+')');});
+  window.addEventListener('unhandledrejection',function(e){say('ОШИБКА promise: '+((e.reason&&e.reason.message)||e.reason));});
+
+  var level=parseInt((location.search.match(/level=(\d)/)||[0,2])[1],10);
+  if(level<1||level>3)level=2;
+  document.getElementById('l'+level).className+=' on';
+
+  var stats={};
+  function summarize(name,m){
+    var t=m.t.slice().sort(function(a,b){return a-b;});
+    if(!t.length)return name+': нет кадров';
+    var sum=0,i;for(i=0;i<t.length;i++)sum+=t[i];
+    var avg=sum/t.length,p99=t[Math.min(t.length-1,Math.floor(t.length*0.99))];
+    stats[name]={fps:+(1000/avg).toFixed(1),worstMs:+p99.toFixed(1),frames:t.length};
+    return name+': '+stats[name].fps+' к/с в среднем, худшие 1% кадров '+stats[name].worstMs+' мс ('+t.length+' кадров)';
+  }
+  function Meter(){this.t=[];this.last=0;this.on=false;}
+  Meter.prototype.tick=function(now){if(this.on&&this.last)this.t.push(now-this.last);this.last=now;};
+
+  function envInfo(){
+    var s='Браузер: '+navigator.userAgent;
+    try{
+      var g=document.createElement('canvas').getContext('webgl2');
+      if(!g){s+='\nWebGL2: НЕТ';}
+      else{
+        var d=g.getExtension('WEBGL_debug_renderer_info');
+        s+='\nWebGL2: да, видеочип: '+(d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):'скрыт')+', макс. текстура '+g.getParameter(g.MAX_TEXTURE_SIZE);
+      }
+    }catch(err){s+='\nWebGL2: ошибка '+err.message;}
+    s+='\nЭкран: '+screen.width+'x'+screen.height+', pixelRatio '+window.devicePixelRatio;
+    if(performance&&performance.memory)s+='\nПамять JS (МБ): '+Math.round(performance.memory.usedJSHeapSize/1048576)+' из '+Math.round(performance.memory.jsHeapSizeLimit/1048576);
+    return s;
+  }
+
+  async function main(){
+    say(envInfo());
+    say('Нагрузка: уровень '+level);
+    if(typeof BABYLON==='undefined'){
+      resEl.textContent='Библиотека не загрузилась';
+      say('Babylon.js не загрузился с cdn.babylonjs.com (нет сети или адрес заблокирован). Если это школьная сеть — запомнить: придётся хранить библиотеку на нашем сервере.');
+      return;
+    }
+    say('Версия Babylon.js: '+BABYLON.Engine.Version);
+    var canvas=document.getElementById('c');
+    var engine=new BABYLON.Engine(canvas,false,{stencil:false,powerPreference:'high-performance'});
+    say('Режим WebGL: '+engine.webGLVersion);
+    var scene=new BABYLON.Scene(engine);
+    scene.clearColor=new BABYLON.Color4(0.05,0.07,0.12,1);
+    var cam=new BABYLON.FreeCamera('cam',new BABYLON.Vector3(0,1.6,-4),scene);
+    cam.setTarget(new BABYLON.Vector3(0,1.4,0));
+    cam.attachControl(canvas,true);
+    new BABYLON.HemisphericLight('h',new BABYLON.Vector3(0,1,0.2),scene).intensity=0.8;
+    var sun=new BABYLON.DirectionalLight('d',new BABYLON.Vector3(-0.4,-1,0.3),scene);
+    sun.position=new BABYLON.Vector3(6,12,-6);sun.intensity=0.9;
+    var shadows=null;
+    if(level>=3){shadows=new BABYLON.ShadowGenerator(1024,sun);shadows.usePercentageCloserFiltering=true;}
+
+    var texSize=[512,1024,2048][level-1];
+    function makeTex(size,c1,c2){
+      var dt=new BABYLON.DynamicTexture('t'+size+c1,size,scene,true);
+      var cx=dt.getContext(),n=16,k=size/n,x,y;
+      for(y=0;y<n;y++)for(x=0;x<n;x++){cx.fillStyle=((x+y)%2)?c1:c2;cx.fillRect(x*k,y*k,k,k);}
+      dt.update();return dt;
+    }
+    var floorMat=new BABYLON.StandardMaterial('fm',scene);
+    floorMat.diffuseTexture=makeTex(texSize,'#44506b','#2a3248');
+    var ground=BABYLON.MeshBuilder.CreateGround('g',{width:14,height:14},scene);
+    ground.material=floorMat;ground.receiveShadows=!!shadows;
+    var wallMat=new BABYLON.StandardMaterial('wm',scene);
+    wallMat.diffuseTexture=makeTex(texSize,'#6a7fb0','#51648f');
+    var w;
+    [[0,7,0,0],[0,-7,0,0],[7,0,0,Math.PI/2],[-7,0,0,Math.PI/2]].forEach(function(p,i){
+      w=BABYLON.MeshBuilder.CreateBox('w'+i,{width:14,height:4,depth:0.2},scene);
+      w.position.set(i<2?0:p[0],2,i<2?p[1]:0);w.rotation.y=p[3];w.material=wallMat;
+    });
+
+    var count=[40,150,400][level-1],movers=[],i,mesh,mat,colors;
+    var usePbr=level>=2;
+    for(i=0;i<count;i++){
+      mesh=(i%2)?BABYLON.MeshBuilder.CreateSphere('s'+i,{diameter:0.35,segments:16},scene):BABYLON.MeshBuilder.CreateBox('b'+i,{size:0.3},scene);
+      if(usePbr){
+        mat=new BABYLON.PBRMaterial('p'+i,scene);
+        mat.albedoColor=new BABYLON.Color3(Math.random(),Math.random(),Math.random());
+        mat.metallic=0.3;mat.roughness=0.5;
+      }else{
+        mat=new BABYLON.StandardMaterial('m'+i,scene);
+        mat.diffuseColor=new BABYLON.Color3(Math.random(),Math.random(),Math.random());
+      }
+      mesh.material=mat;
+      mesh.position.set((Math.random()-0.5)*11,0.3+Math.random()*2.2,(Math.random()-0.5)*11);
+      if(shadows){shadows.addShadowCaster(mesh);}
+      movers.push({m:mesh,a:Math.random()*6.28,s:0.3+Math.random()*0.8,y:mesh.position.y});
+    }
+    say('Сцена: '+count+' предметов, '+(usePbr?'материал PBR':'простой материал')+', текстуры '+texSize+'px'+(shadows?', тени':''));
+
+    var hud=BABYLON.MeshBuilder.CreatePlane('hud',{width:2,height:1},scene);
+    hud.position.set(0,2,3);
+    var hudTex=new BABYLON.DynamicTexture('hud',{width:512,height:256},scene,false);
+    var hudMat=new BABYLON.StandardMaterial('hudm',scene);
+    hudMat.diffuseTexture=hudTex;hudMat.emissiveColor=new BABYLON.Color3(1,1,1);hudMat.disableLighting=true;
+    hud.material=hudMat;
+    function hudText(t){hudTex.drawText(t,20,130,'bold 48px monospace','#7dffb0','#101820',true);}
+    hudText('Замер…');
+
+    var meter=new Meter(),lastHud=0;
+    scene.onBeforeRenderObservable.add(function(){
+      var now=performance.now(),dt=engine.getDeltaTime()/1000,j,o;
+      meter.tick(now);
+      for(j=0;j<movers.length;j++){o=movers[j];o.a+=dt*o.s;o.m.position.y=o.y+Math.sin(o.a)*0.2;o.m.rotation.y=o.a;}
+      if(now-lastHud>600){lastHud=now;hudText(Math.round(engine.getFps())+' к/с');}
+    });
+    engine.runRenderLoop(function(){scene.render();});
+    window.addEventListener('resize',function(){engine.resize();});
+
+    function measure(name,ms){
+      return new Promise(function(done){
+        meter.t=[];meter.last=0;meter.on=true;
+        setTimeout(function(){meter.on=false;var s=summarize(name,meter);say(s);done(s);},ms);
+      });
+    }
+    function finalLine(){
+      var k,p=['BENCH уровень '+level];
+      for(k in stats)p.push(k+' '+stats[k].fps+' к/с (худшие '+stats[k].worstMs+' мс)');
+      resEl.textContent=p.join(' | ');
+      try{localStorage.setItem('bench-last',resEl.textContent);}catch(e){}
+    }
+
+    await new Promise(function(r){setTimeout(r,1500);});
+    resEl.textContent='Замер в окне, 8 секунд…';
+    await measure('Окно',8000);
+    finalLine();
+
+    var xrOk=false;
+    try{xrOk=!!(navigator.xr&&await navigator.xr.isSessionSupported('immersive-vr'));}catch(e){}
+    say('WebXR immersive-vr: '+(xrOk?'поддерживается':'НЕ поддерживается'));
+    if(!xrOk)return;
+
+    var xr=await scene.createDefaultXRExperienceAsync({floorMeshes:[ground],disableTeleportation:true});
+    var btn=document.getElementById('enter');btn.hidden=false;
+    btn.onclick=function(){xr.baseExperience.enterXRAsync('immersive-vr','local-floor',xr.renderTarget).catch(function(e){say('Вход в VR не удался: '+e.message);});};
+    xr.baseExperience.onStateChangedObservable.add(async function(state){
+      if(state===BABYLON.WebXRState.IN_XR){
+        hudText('Ждём 3 с…');
+        await new Promise(function(r){setTimeout(r,3000);});
+        await measure('VR',10000);
+        finalLine();
+        hudText('Готово: '+stats.VR.fps+' к/с');
+      }
+    });
+    say('Нажми «Войти в VR и замерить»: 3 секунды ожидания и 10 секунд замера. Смотри по сторонам. Потом выйди из VR — итог появится вверху страницы.');
+  }
+
+  // автозапуск — в самом конце скрипта
+  try{var prev=localStorage.getItem('bench-last');if(prev)say('Прошлый замер: '+prev);}catch(e){}
+  main().catch(function(e){say('ОШИБКА main: '+e.message);resEl.textContent='Сбой, смотри журнал ниже';});
+})();
+</script>
+</body>
+</html>
