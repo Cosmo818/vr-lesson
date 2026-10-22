@@ -469,18 +469,23 @@ def merge_in(c, inc, role, ip='', principal=None):
 
     def deny(kind):
         rej[kind] = rej.get(kind, 0) + 1
+    hard = {r[0] for r in c.execute('SELECT id FROM purged')}  # жёсткие надгробия: присланное клиентом purged не читаем никогда (Б74.2)
+    tomb = {}  # мягкие надгробия учеников и классов: применяются после lww, как в js/store.js merge (А11)
     if teacher:
+        inc_ids = {str(x['id']) for key in ('students', 'classes') for x in (inc.get(key) or []) if isinstance(x, dict) and x.get('id')}
         for k, ts in (inc.get('deleted') or {}).items():
             k = str(k)
+            if k in hard:
+                continue
             if user and not record_in_scope(c, sc, k, cache):
                 deny('deleted')
                 continue
+            if k in inc_ids or c.execute('SELECT 1 FROM students WHERE id = ?', (k,)).fetchone() or c.execute('SELECT 1 FROM classes WHERE id = ?', (k,)).fetchone():
+                tomb[k] = max(tomb.get(k, 0), num(ts))  # ученик или класс: надгробие = правка «в архив», в deleted не пишем
+                continue
             if c.execute('SELECT 1 FROM deleted WHERE id = ?', (k,)).fetchone() is None:  # пишем только новое удаление, повтор не дублируем
                 kind, school = find_record(c, k)
-                detail = {}
-                if kind == 'student':
-                    detail['results'] = c.execute('SELECT count(*) FROM results WHERE sid = ?', (k,)).fetchone()[0]
-                audit(c, who, 'delete', kind, k, school, detail)
+                audit(c, who, 'delete', kind, k, school, {})
             c.execute('INSERT INTO deleted(id, ts) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET ts = max(ts, excluded.ts)', (k, num(ts)))
         s = inc.get('settings') or {}
         if s:
@@ -504,7 +509,7 @@ def merge_in(c, inc, role, ip='', principal=None):
     reset = num(get_settings(c).get('resetAt'))
 
     for s in inc.get('students') or []:
-        if not isinstance(s, dict) or not s.get('id') or not s.get('name') or s['id'] in deleted:
+        if not isinstance(s, dict) or not s.get('id') or not s.get('name') or s['id'] in hard:
             continue
         upd = num(s.get('updated') or s.get('created'))
         row = c.execute('SELECT updated, doc FROM students WHERE id = ?', (s['id'],)).fetchone()
@@ -544,7 +549,7 @@ def merge_in(c, inc, role, ip='', principal=None):
                     audit(c, who, 'student.archive' if d['status'] == 'archived' else 'student.restore', 'student', s['id'], d['school'])
     if teacher:
         for k in inc.get('classes') or []:
-            if not isinstance(k, dict) or not k.get('id') or k['id'] in deleted:
+            if not isinstance(k, dict) or not k.get('id') or k['id'] in hard:
                 continue
             row = c.execute('SELECT updated, doc FROM classes WHERE id = ?', (k['id'],)).fetchone()
             if not row or num(k.get('updated')) > row[0]:
@@ -572,14 +577,14 @@ def merge_in(c, inc, role, ip='', principal=None):
                 elif (old_d or {}).get('status') != d['status']:
                     audit(c, who, 'class.archive' if d['status'] == 'archived' else 'class.restore', 'class', k['id'], d['school'], {'name': name})
         for t in inc.get('tests') or []:
-            if not isinstance(t, dict) or not t.get('id') or t['id'] in deleted:
+            if not isinstance(t, dict) or not t.get('id') or t['id'] in deleted or t['id'] in hard:
                 continue
             row = c.execute('SELECT updated FROM tests WHERE id = ?', (t['id'],)).fetchone()
             if not row or num(t.get('updated')) > row[0]:
                 c.execute('INSERT OR REPLACE INTO tests(id, title, subj, updated, doc) VALUES(?, ?, ?, ?, ?)',
                           (t['id'], str(t.get('title', ''))[:200], str(t.get('subj', '')), num(t.get('updated')), json.dumps(t, ensure_ascii=False)))
     for r in inc.get('results') or []:
-        if not isinstance(r, dict) or not r.get('id') or not r.get('sid') or r['sid'] in deleted or num(r.get('ts')) < reset:
+        if not isinstance(r, dict) or not r.get('id') or not r.get('sid') or r['sid'] in hard or r['id'] in deleted or r['id'] in hard or num(r.get('ts')) < reset:
             continue
         if (user or dev) and not sid_in_scope(c, sc, r['sid'], cache):
             deny('results')
@@ -587,12 +592,12 @@ def merge_in(c, inc, role, ip='', principal=None):
         c.execute('INSERT OR IGNORE INTO results(id, sid, subj, score, total, ts, doc, closed) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
                   (r['id'], r['sid'], str(r.get('subj', '')), num(r.get('score')), num(r.get('total')), num(r.get('ts')), json.dumps(r, ensure_ascii=False), 1 if r.get('closed') else 0))
     for f in inc.get('feedback') or []:
-        if not isinstance(f, dict) or not f.get('id') or f['id'] in deleted:
+        if not isinstance(f, dict) or not f.get('id') or f['id'] in deleted or f['id'] in hard:
             continue
         c.execute('INSERT OR IGNORE INTO feedback(id, ts, kind, room, rating, text, doc) VALUES(?, ?, ?, ?, ?, ?, ?)',
                   (f['id'], num(f.get('ts')), str(f.get('kind', ''))[:20], str(f.get('room') or '')[:20], num(f.get('rating'), None), str(f.get('text', ''))[:1000], json.dumps(f, ensure_ascii=False)))
     for sid, m in (inc.get('disc') or {}).items():
-        if sid in deleted or not isinstance(m, dict):
+        if sid in hard or not isinstance(m, dict):
             continue
         if (user or dev) and not sid_in_scope(c, sc, sid, cache):
             deny('disc')
@@ -600,18 +605,29 @@ def merge_in(c, inc, role, ip='', principal=None):
         for k, ts in m.items():
             if num(ts) >= reset:
                 c.execute('INSERT INTO disc(sid, k, ts) VALUES(?, ?, ?) ON CONFLICT(sid, k) DO UPDATE SET ts = CASE WHEN ts < ? THEN excluded.ts ELSE min(ts, excluded.ts) END', (sid, k, num(ts), reset))
+    for k, ts in tomb.items():  # после lww: надгробие новее победителя и запись не в архиве -> архив с updated = ts
+        for table, kind in (('students', 'student'), ('classes', 'class')):
+            row = c.execute('SELECT updated, doc, status FROM %s WHERE id = ?' % table, (k,)).fetchone()
+            if not row or ts <= row[0] or row[2] == 'archived':
+                continue
+            d = load_doc(row[1]) or {}
+            d['status'] = 'archived'
+            d['updated'] = ts
+            c.execute('UPDATE %s SET updated = ?, doc = ?, status = ? WHERE id = ?' % table, (ts, json.dumps(d, ensure_ascii=False), 'archived', k))
+            audit(c, who, kind + '.archive', kind, k, d.get('school') if ok_school(d.get('school')) else None, {'via': 'tombstone'})
     # подчистить удалённое и сброшенное
+    gone = "(SELECT id FROM deleted UNION SELECT id FROM purged)"
     for t, kind in (('tests', 'test'), ('feedback', 'feedback')):  # в корзину и удалить — в одной транзакции со слиянием
-        for rid, doc in c.execute('SELECT id, doc FROM %s WHERE id IN (SELECT id FROM deleted)' % t).fetchall():
+        for rid, doc in c.execute('SELECT id, doc FROM %s WHERE id IN %s' % (t, gone)).fetchall():
             to_trash(c, kind, rid, DEFAULT_SCHOOL, doc, who)
-    for rid, doc, sch in c.execute('SELECT r.id, r.doc, s.school FROM results r LEFT JOIN students s ON s.id = r.sid WHERE r.id IN (SELECT id FROM deleted) OR r.sid IN (SELECT id FROM deleted)').fetchall():
+    for rid, doc, sch in c.execute('SELECT r.id, r.doc, s.school FROM results r LEFT JOIN students s ON s.id = r.sid WHERE r.id IN %s OR r.sid IN (SELECT id FROM purged)' % gone).fetchall():
         to_trash(c, 'result', rid, sch, doc, who)
-    c.execute('DELETE FROM students WHERE id IN (SELECT id FROM deleted)')
-    c.execute('DELETE FROM tests WHERE id IN (SELECT id FROM deleted)')
-    c.execute('DELETE FROM classes WHERE id IN (SELECT id FROM deleted)')
-    c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM deleted) OR id IN (SELECT id FROM deleted)')
-    c.execute('DELETE FROM disc WHERE sid IN (SELECT id FROM deleted)')
-    c.execute('DELETE FROM feedback WHERE id IN (SELECT id FROM deleted)')
+    c.execute('DELETE FROM students WHERE id IN (SELECT id FROM purged)')
+    c.execute('DELETE FROM tests WHERE id IN %s' % gone)
+    c.execute('DELETE FROM classes WHERE id IN (SELECT id FROM purged)')
+    c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM purged) OR id IN %s' % gone)
+    c.execute('DELETE FROM disc WHERE sid IN (SELECT id FROM purged)')
+    c.execute('DELETE FROM feedback WHERE id IN %s' % gone)
     if rej:
         audit(c, who, 'sync.rejected', 'sync', None, None, rej)  # только счётчики по видам, без содержимого (А13)
     return {'rejected': rej}
@@ -693,6 +709,10 @@ def state(c, hide_pins=False, principal=None):
             rows.sort(key=lambda r: r[0] or 0)
             results = [json.loads(r[1]) for r in rows]
         settings = {k: v for k, v in get_settings(c).items() if k != 'pinHash'}
+    dels = {k: ts for k, ts in c.execute('SELECT id, ts FROM deleted')}
+    hardm = {k: ts for k, ts in c.execute('SELECT id, ts FROM purged')} if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='purged'").fetchone() else {}  # база до v6 (проверки читают её напрямую)
+    for k, ts in hardm.items():
+        dels[k] = max(dels.get(k, 0), ts)
     return {
         'v': SCHEMA,
         'classes': classes,
@@ -701,7 +721,8 @@ def state(c, hide_pins=False, principal=None):
         'results': results,
         'disc': disc,
         'feedback': [json.loads(r[0]) for r in c.execute('SELECT doc FROM feedback ORDER BY ts')],
-        'deleted': {k: ts for k, ts in c.execute('SELECT id, ts FROM deleted')},
+        'deleted': dels,
+        'purged': hardm,
         'settings': settings,
     }
 

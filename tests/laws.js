@@ -243,7 +243,9 @@ function run(root) {
       add(nf.students.length === 4 && nf.classes.length === 2 && nf.results.length === 5 && nf.tests.length === 1 && nf.feedback.length === 2, 'norm(старые данные): 4 ученика, 2 класса, 5 результатов, 1 тест, 2 отзыва');
       const cnt = m => [m.students.length, m.results.length, Object.keys(m.disc.s1 || {}).length].join(',');
       const mm = S.merge(JSON.parse(j(F)), JSON.parse(j(F)));
-      add(cnt(mm) === '4,4,2', 'merge(F,F): 4 ученика, 4 результата (удалённого нет), disc.s1 — 2 ключа (получено ' + cnt(mm) + ')');
+      add(cnt(mm) === '4,5,2', 'merge(F,F): 4 ученика, 5 результатов (надгробие ученика — только архив, результаты живут), disc.s1 — 2 ключа (получено ' + cnt(mm) + ')');
+      const Fp = JSON.parse(j(F)); Fp.purged = { gone1: 1760000900000 };
+      add(cnt(S.merge(Fp, JSON.parse(j(F)))) === '4,4,2' && cnt(S.merge(JSON.parse(j(F)), Fp)) === '4,4,2', 'merge(F,F) с purged: результат стёртого ученика (жёсткое надгробие) отброшен, остальное на месте');
       add(cnt(S.merge(JSON.parse(j(F)), {})) === cnt(mm) && cnt(S.merge({}, JSON.parse(j(F)))) === cnt(mm), 'merge: порядок аргументов не теряет данные');
       add(mm.settings.futureKey === 'keep-me', 'merge: неизвестные ключи настроек сохраняются');
       if (VR.schema) add(S.norm(null).v === VR.schema.VERSION, 'norm(null).v равна VR.schema.VERSION');

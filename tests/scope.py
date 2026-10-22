@@ -139,7 +139,7 @@ try:
     ok(r and r[0] == (UID['tA1'], 's-a'), 'новый класс учителя: teacherId = он, школа = его школа (%s)' % (r,))
     st, b = sync('tA2'); ok('cNew1' not in ids(b['state'], 'classes'), 'другой учитель нового класса не видит')
     st, b = sync('tA1', {'deleted': {'st-cA2-2': t2}})
-    ok(b['rejected'].get('deleted') == 1 and sql("select 1 from students where id='st-cA2-2'") and not sql("select 1 from deleted where id='st-cA2-2'"), 'учитель не может удалить ученика чужого класса')
+    ok(b['rejected'].get('deleted') == 1 and sql("select 1 from students where id='st-cA2-2'") and not sql("select 1 from deleted where id='st-cA2-2'") and sql("select status from students where id='st-cA2-2'")[0][0] == 'active', 'учитель не может удалить ученика чужого класса')
     st, b = sync('tA1', {'deleted': {'no-such-id': t2}})
     ok(b['rejected'].get('deleted') == 1 and not sql("select 1 from deleted where id='no-such-id'"), 'удаление неизвестного id отклонено (надгробие на будущий id запрещено)')
     st, b = sync('tA1', {'results': [{'id': 'rr1', 'sid': 'st-cA2-1', 'subj': 'math', 'score': 5, 'total': 5, 'ts': t2}, {'id': 'rr2', 'sid': 'st-cA1-1', 'subj': 'math', 'score': 5, 'total': 5, 'ts': t2}]})
@@ -158,7 +158,7 @@ try:
     st, b = sync('dirA', {'deleted': {'st-cB1-1': t2}})
     ok(b['rejected'].get('deleted') == 1 and not sql("select 1 from deleted where id='st-cB1-1'"), 'директор A не может удалить ученика школы B')
     st, b = sync('dirA', {'deleted': {'st-loose-a': t2}})
-    ok(not b['rejected'] and sql("select 1 from deleted where id='st-loose-a'"), 'директор удаляет ученика своей школы')
+    ok(not b['rejected'] and sql("select status, updated from students where id='st-loose-a'")[0] == ('archived', t2) and not sql("select 1 from deleted where id='st-loose-a'"), 'директор «удаляет» ученика своей школы: он в архиве (updated = время надгробия), записи в deleted нет')
     st, b = sync('sup', {'students': [{'id': 'sup-st', 'name': 'От суперадмина', 'grade': 5, 'classId': 'cB1', 'created': t2, 'updated': t2}]})
     ok(not b['rejected'] and sql("select 1 from students where id='sup-st'"), 'суперадмин пишет в любую школу')
     # журнал

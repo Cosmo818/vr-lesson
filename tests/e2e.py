@@ -197,6 +197,19 @@ try:
         pg.fill('#srvUrl', 'http://127.0.0.1:8772'); pg.fill('#srvKey', '"tk-test"'); pg.click('#srvSave'); pg.wait_for_timeout(2500)
         msg = pg.inner_text('#srvMsg'); ok(msg.startswith('Синхронизировано') and 'ключ учителя' in msg, 'учитель: «Подключить» → статус «Синхронизировано» (не висит «Связь…»): ' + msg)
         ok(pg.evaluate("VR.Store.student('s1').status")=='archived', 'учитель: после синхронизации ученик остался в архиве')
+        # старый клиент (v3) «удаляет» ученика надгробием: на сервере это архив, у нового кабинета ученик во вкладке «Архив», «Вернуть» работает
+        import urllib.request, json as _j
+        tomb = _j.dumps({'deleted': {'s2': int(time.time() * 1000)}}).encode()
+        rq = urllib.request.Request('http://127.0.0.1:8772/api/sync', data=tomb, headers={'Content-Type': 'application/json', 'X-Key': 'tk-test'})
+        srv_st = _j.loads(urllib.request.urlopen(rq).read())['state']
+        ok(next(x for x in srv_st['students'] if x['id'] == 's2')['status'] == 'archived' and 's2' not in srv_st['deleted'] and any(r['sid'] == 's2' for r in srv_st['results']), 'сервер: надгробие старого клиента = архив, результаты на месте, в deleted нет')
+        pg.evaluate('VR.Store.sync()'); pg.evaluate('VR.Store.sync()'); pg.wait_for_timeout(300)  # вторая — на случай, что первая присоединилась к уже идущей
+        pg.click('[data-t=archive]'); pg.wait_for_timeout(300)
+        ok(pg.evaluate("VR.Store.student('s2').status")=='archived' and pg.locator('#arBox tr[data-sid="s2"]').count()==1, 'учитель: ученик, удалённый старым клиентом, виден во вкладке «Архив»')
+        pg.click('#arBox tr[data-sid="s2"] .rs'); pg.wait_for_timeout(200)
+        pg.evaluate('VR.Store.sync()'); pg.evaluate('VR.Store.sync()'); pg.wait_for_timeout(300)  # вторая — на случай, что первая присоединилась к уже идущей
+        ok(pg.evaluate("VR.Store.student('s2').status")=='active' and pg.evaluate("VR.Store.results('s2').length")==1, 'учитель: «Вернуть» работает и после синхронизации, результаты на месте')
+        pg.click('[data-t=data]'); pg.wait_for_timeout(150)
         pg.fill('#srvUrl', 'http://127.0.0.1:8779'); pg.fill('#srvKey', 'x'); pg.click('#srvSave'); pg.wait_for_timeout(2500)
         ok(pg.inner_text('#srvMsg').startswith('Ошибка'), 'учитель: недоступный сервер → понятная ошибка, а не вечная «Связь…»')
         ok(not errs, 'ошибок JS нет' + ('' if not errs else ': ' + '; '.join(errs[:3])))

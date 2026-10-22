@@ -69,7 +69,7 @@ function makeCtx(xr){
   /* ---------- ядро: schema, errors, flags ---------- */
   {
     const F=JSON.parse(fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.json'),'utf8'));
-    const strip=db=>{const o=JSON.parse(JSON.stringify(db));o.v=2;for(const k of['students','classes'])for(const i of o[k]){delete i.school;delete i.year;delete i.status;}return o;};
+    const strip=db=>{const o=JSON.parse(JSON.stringify(db));o.v=2;delete o.purged;for(const k of['students','classes'])for(const i of o[k]){delete i.school;delete i.year;delete i.status;}return o;};
     const nF=V0.Store.norm(F);
     ok(JSON.stringify(strip(nF))===fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.norm.json'),'utf8'),'schema: старые поля не изменились (без school/year/status)');
     const byId=(L,id)=>L.find(x=>x.id===id);
@@ -414,7 +414,7 @@ function makeCtx(xr){
     TS.updateStudent(s1.id,{name:'Пётр Иванов'});await TS.sync();await HS.sync();
     ok(HS.student(s1.id).name==='Пётр Иванов','переименование дошло до шлема');
     TS.removeStudent(s1.id);await TS.sync();await HS.sync();
-    ok(!HS.student(s1.id)&&HS.results(s1.id).length===0,'удаление ученика дошло до шлема вместе с результатами');
+    ok(HS.student(s1.id).status==='archived'&&!HS.students().some(x=>x.id===s1.id)&&!HS.studentByNum(null,HS.numOf(HS.student(s1.id)))&&HS.results(s1.id).length===1&&TS.results(s1.id).length===1,'удаление ученика = архив: дошло до шлема (не в списке входа), результат на месте');
     const s2=HS.addStudent('Оля',3);HS.addResult({sid:s2.id,subj:'math',band:'a',grade:3,score:5,total:5,ans:[]});await HS.sync();await TS.sync();
     TS.clearResults();await TS.sync();await HS.sync();
     ok(HS.results().length===0&&HS.student(s2.id),'очистка результатов дошла до шлема, ученики остались');
@@ -424,12 +424,13 @@ function makeCtx(xr){
     HS.setServer(url,'wrong');st=await HS.sync();ok(st.state==='err'&&/ключ/.test(st.msg),'неверный ключ: '+st.msg);
     const ex=await fetch(url+'/api/export',{headers:{'X-Key':'dev-secret'}});ok(ex.status===403,'экспорт с ключом шлема запрещён');
     const sql=cp.execFileSync('python3',['-c','import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute("select count(*) from students").fetchone()[0],c.execute("select count(*) from tests").fetchone()[0])',path.join(dir,'vrlesson.db')]).toString().trim();
-    ok(sql==='1 1','в SQLite: 1 ученик, 1 тест ('+sql+')');
+    ok(sql==='2 1','в SQLite: 2 ученика (один в архиве), 1 тест ('+sql+')');
+    ok(cp.execFileSync('python3',['-c','import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute("select count(*) from students where status=\'archived\'").fetchone()[0],c.execute("select count(*) from results where sid=?",(sys.argv[2],)).fetchone()[0],c.execute("select count(*) from deleted where id=?",(sys.argv[2],)).fetchone()[0])',path.join(dir,'vrlesson.db'),s1.id]).toString().trim()==='1 1 0','в SQLite: удалённый учеником учителя ученик status=archived, его результат на месте, записи в deleted нет');
     ok(!fs.existsSync(path.join(dir,'keys.json'))||JSON.parse(fs.readFileSync(path.join(dir,'keys.json'),'utf8')).teacher,'ключи на месте');
     HS.setServer(url,'dev-secret');
     const s4=TS.addStudent('Вера Смирнова',4);await TS.sync();await HS.sync();
     HS.removeStudent(s4.id);HS.setSettings({minutes:44});await HS.sync();await TS.sync();
-    ok(!!TS.student(s4.id)&&TS.settings().minutes!==44,'ключ шлема не может удалять учеников и менять настройки');
+    ok(!!TS.student(s4.id)&&TS.student(s4.id).status==='active'&&TS.settings().minutes!==44,'ключ шлема не может удалять (архивировать) учеников и менять настройки');
     TS.setSettings({minutes:8});T.sb.VR.flags.set('demo',true);await TS.sync();await HS.sync();
     ok(Hd.sb.VR.flags.on('demo')===true,'флаг учителя дошёл до шлема');
     Hd.sb.VR.flags.set('demo',false);await HS.sync();await TS.sync();
@@ -511,7 +512,7 @@ function makeCtx(xr){
       const lastId=()=>+pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select coalesce(max(id),0) from audit_log").fetchone()[0])');
       const acts=r=>r.map(x=>x[3]+':'+x[5]).join('|');
       const early=rows(0);
-      ok(early.some(r=>r[3]==='student.create'&&r[1]==='device')&&early.some(r=>r[3]==='student.pin_change'&&r[1]==='legacy-teacher')&&early.some(r=>r[3]==='delete'&&r[4]==='student'),'аудит: действия предыдущих проверок уже в журнале (ученик от шлема, смена кода, удаление ученика)');
+      ok(early.some(r=>r[3]==='student.create'&&r[1]==='device')&&early.some(r=>r[3]==='student.pin_change'&&r[1]==='legacy-teacher')&&early.some(r=>r[3]==='student.archive'&&r[4]==='student'),'аудит: действия предыдущих проверок уже в журнале (ученик от шлема, смена кода, архив ученика)');
       /* архив / возврат ученика */
       const au=TS.addStudent('Аудит Ученик',6);await TS.sync();
       let m=lastId();
@@ -541,10 +542,16 @@ function makeCtx(xr){
       await HS.sync();ok(rows(m).length===1,'аудит: повторная синхронизация шлема не дублирует запись');
       /* удаление: вид записи и число результатов, запись журнала переживает удаление */
       HS.addResult({sid:hs.id,subj:'math',band:'a',grade:4,score:3,total:5,ans:[]});await HS.sync();await TS.sync();
+      const nRes=()=>+pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select count(*) from results where sid=?",(sys.argv[2],)).fetchone()[0])',hs.id);
       m=lastId();TS.removeStudent(hs.id);await TS.sync();r1=rows(m);
-      ok(r1.length===1&&r1[0][3]==='delete'&&r1[0][4]==='student'&&r1[0][5]===hs.id&&JSON.parse(r1[0][7]).results===1,'аудит: удаление ученика — вид, id и число удалённых результатов ('+(r1[0]&&r1[0][7])+')');
-      await TS.sync();ok(rows(m).length===1,'аудит: повтор удаления не дублирует запись');
-      ok(pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select count(*) from audit_log where target_id=?",(sys.argv[2],)).fetchone()[0])',hs.id)==='2'&&!TS.student(hs.id),'аудит: записи об удалённом ученике остаются в журнале');
+      ok(r1.length===1&&r1[0][3]==='student.archive'&&r1[0][4]==='student'&&r1[0][5]===hs.id&&r1[0][7]==='{}'&&nRes()===1,'аудит: removeStudent = архив — запись student.archive, результаты на месте ('+acts(r1)+')');
+      await TS.sync();ok(rows(m).length===1,'аудит: повтор не дублирует запись');
+      /* надгробие от старого клиента: архив с via=tombstone, в deleted не пишется, результаты остаются */
+      {const tk=TS.addStudent('Старый Клиент',6);HS.setServer(url,'dev-secret');await TS.sync();
+        const rr=await fetch(url+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json','X-Key':'teach-secret'},body:JSON.stringify({students:[],deleted:{[tk.id]:Date.now()+60000}})}).then(r=>r.json());
+        m=lastId()-0;const q=pq('import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps([c.execute("select status from students where id=?",(sys.argv[2],)).fetchone()[0],c.execute("select count(*) from deleted where id=?",(sys.argv[2],)).fetchone()[0],[r[0] for r in c.execute("select detail from audit_log where target_id=? and action=?",(sys.argv[2],"student.archive"))]]))',tk.id);
+        ok(JSON.stringify(JSON.parse(q))===JSON.stringify(['archived',0,['{"via": "tombstone"}']])&&rr.state.students.find(x=>x.id===tk.id).status==='archived'&&!(tk.id in rr.state.deleted),'аудит: надгробие старого клиента — status=archived, в deleted нет, аудит student.archive с via=tombstone ('+q+')');}
+      ok(pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select count(*) from audit_log where target_id=?",(sys.argv[2],)).fetchone()[0])',hs.id)==='2'&&TS.student(hs.id).status==='archived','аудит: записи об архивном ученике остаются в журнале, запись ученика на месте');
       /* секреты: ни хэшей кодов, ни хэша и соли пароля, ни ключей нет нигде в журнале */
       const hashes=TS.students({all:true}).map(x=>x.pinHash).filter(Boolean).concat([pinH,'SECRETHASH-aud-1','SECRETSALT-aud-1','teach-secret','dev-secret']);
       const dump=pq('import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps(["|".join(str(v) for v in r) for r in c.execute("select * from audit_log")],ensure_ascii=False))');
@@ -584,6 +591,57 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
       const r4=await post('teach-secret',{students:[Object.assign({},diff,{pinHash:'newh2',pinView:'abcd',updated:cur.updated+36000})]});
       ok(r4.state.students.find(x=>x.id===cur.id).pinView===undefined,'pinView: недопустимое значение (не 4–8 цифр) отбрасывается');
       TS.removeStudent(pv.id);await TS.sync();
+    }
+    /* ---- Б74 шаг 19: одно правило слияния в Node (Store.merge) и в живом сервере (merge_in), А11 ---- */
+    {const post=(key,body)=>fetch(url+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json','X-Key':key},body:JSON.stringify(body)}).then(r=>r.json());
+      const dbp=path.join(dir,'vrlesson.db'),purge=id=>cp.execFileSync('python3',['-I','-c','import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute("insert or replace into purged(id,ts,kind) values(?,?,?)",(sys.argv[2],int(sys.argv[3]),"test"));c.commit()',dbp,id,String(Date.now())]);
+      const B0=Date.now()+5e6,u=n=>B0+n*1000,mk=(kind,id,name,upd,status)=>kind==='students'?{id,name,grade:6,classId:null,pinHash:null,created:B0,updated:u(upd),school:'school-default',year:2025,status:status||'active'}:{id,grade:6,letter:name,created:B0,updated:u(upd),school:'school-default',year:2025,status:status||'active'};
+      const pick=(kind,x)=>kind==='students'?[x.name,x.status,x.updated]:[x.letter,x.status,x.updated];
+      /* [название, D в базе (upd,имя,статус) | null, I присланное | null, T надгробие | null, hard, ожидание [имя,статус,upd] | null] */
+      const CASES=[['надгробие новее записи',[10,'D'],null,20,0,['D','archived',20]],['надгробие старее записи',[10,'D'],null,5,0,['D','active',10]],
+        ['правка новее, надгробие между',[10,'D'],[20,'I'],15,0,['I','active',20]],['надгробие новее правки',[10,'D'],[20,'I'],30,0,['I','archived',30]],
+        ['равные updated, без надгробия',[10,'D'],[10,'I'],null,0,['D','active',10]],['равные updated, надгробие новее',[10,'D'],[10,'I'],11,0,['D','archived',11]],
+        ['надгробие равно updated',[10,'D'],null,10,0,['D','active',10]],['уже в архиве, надгробие новее',[10,'D','archived'],null,20,0,['D','archived',10]],
+        ['возврат после надгробия, надгробие повторно',[50,'D'],null,20,0,['D','active',50]],['новая запись и надгробие',null,[20,'I'],25,0,['I','archived',25]],
+        ['присланное старее базы, надгробие между',[30,'D'],[10,'I'],20,0,['D','active',30]],['присланное архивное новее базы, надгробие старее',[10,'D'],[20,'I','archived'],15,0,['I','archived',20]],
+        ['id в purged',[10,'D'],[20,'I'],30,1,null]];
+      let n=0,allOk=true,diffs=[];
+      for(const kind of['students','classes'])for(const [nm,D,I,T,hard,exp] of CASES){
+        if(kind==='classes'&&![0,3,5,12].includes(CASES.findIndex(c=>c[0]===nm)))continue;
+        const id='eq'+(++n)+'-'+kind[0]+Date.now().toString(36);
+        if(hard)purge(id);
+        const d=D&&mk(kind,id,D[1],D[0],D[2]),i=I&&mk(kind,id,I[1],I[0],I[2]);
+        if(d)await post('teach-secret',{[kind]:[d]});
+        const sv=await post('teach-secret',{[kind]:i?[i]:[],deleted:T!==null?{[id]:u(T)}:{}});
+        const SA={students:[],classes:[],deleted:{},purged:hard?{[id]:1}:{}};if(d)SA[kind]=[d];
+        const SB={[kind]:i?[i]:[],deleted:T!==null?{[id]:u(T)}:{}};
+        const cl=V0.Store.merge(SA,SB)[kind].find(x=>x.id===id),sr=sv.state[kind].find(x=>x.id===id);
+        const pc=cl?JSON.stringify(pick(kind,cl)):'нет',ps=sr?JSON.stringify(pick(kind,sr)):'нет';
+        const want=exp?JSON.stringify([exp[0],exp[1],u(exp[2])]):'нет';
+        if(pc!==ps||pc!==want){allOk=false;diffs.push(kind+' '+nm+': клиент '+pc+', сервер '+ps+', ждали '+want);}}
+      ok(allOk,'равенство слияния: Store.merge (Node) и merge_in (живой сервер) на '+n+' краевых случаях дают один итог'+(diffs.length?' ('+diffs.join('; ')+')':''));
+      /* результаты и открытия: архивный ученик — живут, жёстко стёртый — отбрасываются, одинаково на обеих сторонах */
+      for(const [nm,hard,wantN] of[['ученик в архиве',0,1],['ученик в purged',1,0]]){
+        const sid='eqr-'+hard+Date.now().toString(36),st=mk('students',sid,'R',10),rs={id:'r-'+sid,sid,subj:'math',band:'a',grade:6,score:3,total:5,ans:[],ts:Date.now()+9e6},dc={[sid]:{'x:y':Date.now()+9e6}};
+        if(hard)purge(sid);else await post('teach-secret',{students:[st]});
+        const sv=await post('teach-secret',{results:[rs],disc:dc,deleted:{[sid]:u(20)}});
+        const cl=V0.Store.merge({students:hard?[]:[st],deleted:{},purged:hard?{[sid]:1}:{}},{results:[rs],disc:dc,deleted:{[sid]:u(20)}});
+        const cn=[cl.results.filter(r=>r.sid===sid).length,Object.keys(cl.disc[sid]||{}).length],sn=[sv.state.results.filter(r=>r.sid===sid).length,Object.keys(sv.state.disc[sid]||{}).length];
+        ok(JSON.stringify(cn)===JSON.stringify(sn)&&sn[0]===wantN&&sn[1]===wantN,'равенство слияния: результаты и открытия, '+nm+' — клиент '+cn+', сервер '+sn+' (ждали '+wantN+')');}
+      /* (г) ключ шлема: надгробие и purged не применяются */
+      {const id='eqh-'+Date.now().toString(36);await post('teach-secret',{students:[mk('students',id,'H',10)]});
+        const hv=await post('dev-secret',{deleted:{[id]:u(99)},purged:{[id]:u(99)}});const x=hv.state.students.find(s=>s.id===id);
+        ok(x&&x.status==='active'&&x.updated===u(10)&&!(id in hv.state.deleted)&&!(id in hv.state.purged),'ключ шлема: надгробие и присланное purged ничего не меняют (ученик активен, updated прежний)');}
+      /* (д) purged не воскресает ни от нового, ни от старого клиента; присланное purged сервер игнорирует */
+      {const id='eqp-'+Date.now().toString(36),rid='eqpr-'+id;await post('teach-secret',{students:[mk('students',id,'P',10)]});purge(id);
+        const a1=await post('teach-secret',{students:[mk('students',id,'P2',500)],results:[{id:rid,sid:id,subj:'math',score:1,total:2,ts:Date.now()+9e6}],disc:{[id]:{'a:b':Date.now()+9e6}}});
+        ok(!a1.state.students.some(x=>x.id===id)&&!a1.state.results.some(r=>r.sid===id)&&!a1.state.disc[id]&&id in a1.state.purged&&id in a1.state.deleted,'purged: id не воскресает ни записью ученика, ни результатами и открытиями; в ответе он и в purged, и в deleted');
+        const a2=await post('teach-secret',{deleted:{[id]:u(900)},students:[mk('students',id,'P3',900)]});
+        ok(!a2.state.students.some(x=>x.id===id),'purged: надгробие и запись «старого клиента» тоже не воскрешают');
+        const fk='eqf-'+Date.now().toString(36);await post('teach-secret',{purged:{[fk]:1},deleted:{}});
+        const a3=await post('teach-secret',{});ok(!(fk in a3.state.purged),'сервер игнорирует присланное purged');
+        const loc=V0.Store.merge({students:[mk('students',id,'P',10)]},{purged:a1.state.purged,deleted:a1.state.deleted});
+        ok(!loc.students.some(x=>x.id===id)&&id in loc.purged,'purged: клиентский merge тоже отбрасывает и возвращает purged');}
     }
     ok(fs.readdirSync(dir).filter(f=>/^vrlesson\.db\.bak-/.test(f)).length===0,'свежая база: копий миграции нет');
   }finally{srv.kill();}
@@ -657,7 +715,7 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v3(c);c.close()`;
     const py=(code,...args)=>cp.execFileSync('python3',['-I','-c',code,...args]).toString().trim();
     const stateJson=`import sys,os,json;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
 import app,sqlite3
-c=sqlite3.connect(sys.argv[1]);s=app.state(c);s.pop('v');print(json.dumps(s,ensure_ascii=False,sort_keys=True))`;
+c=sqlite3.connect(sys.argv[1]);s=app.state(c);s.pop('v');s.pop('purged',None);print(json.dumps(s,ensure_ascii=False,sort_keys=True))`;
     const dumpDb=`import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps([c.execute('pragma user_version').fetchone()[0],sorted(r[0] for r in c.execute("select name from sqlite_master where type='table'")),[r[1] for r in c.execute('pragma table_info(classes)')],c.execute('select id,name,grade,updated,doc,school,year,status from students order by id').fetchall(),c.execute('select id,name,updated,doc,school,year,status from classes order by id').fetchall(),c.execute('select count(*) from results').fetchone()[0]],ensure_ascii=False))`;
     const newDir=src=>{const d=fs.mkdtempSync(path.join(os.tmpdir(),'vrl-mig4-'));fs.copyFileSync(src,path.join(d,'vrlesson.db'));return d;};
     const startOn=async(dir,port,script)=>{const p=cp.spawn('python3',['-I',script],{env:Object.assign({},process.env,{DATA_DIR:dir,PORT:String(port),TEACHER_KEY:'teach-secret',DEVICE_KEY:'dev-secret'}),stdio:'ignore'});

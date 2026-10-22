@@ -1,7 +1,8 @@
 /* store.js — ученики, результаты, открытия, тесты учителя, настройки.
    Данные лежат в localStorage этого браузера и (если указан сервер) синхронизируются с сервером на Raspberry Pi.
    Слияние: ученики, тесты и настройки — побеждает более свежая правка (updated); результаты и открытия — объединение;
-   удалённые записи помнятся в deleted, чтобы не вернулись с другого устройства. */
+   удалённые записи помнятся в deleted, чтобы не вернулись с другого устройства.
+   Ученик и класс не удаляются, а уходят в архив (старое надгробие от старого клиента тоже превращается в архив); окончательно стёртое — в purged (приходит только с сервера, обратно не уходит). */
 (function(){
 'use strict';
 const VR=window.VR=window.VR||{};
@@ -18,16 +19,19 @@ function adoptServerTeachers(d,st){VR.schema.adoptTeacher(d.classes,st&&st.class
 function merge(A,B){
   const SC=VR.schema;A=SC.db(A,{fill:false});B=SC.db(B,{fill:false});
   const del=Object.assign({},A.deleted);for(const k in B.deleted)del[k]=Math.max(del[k]||0,B.deleted[k]);
+  const hard=Object.assign({},A.purged);for(const k in B.purged)hard[k]=Math.max(hard[k]||0,B.purged[k]); // жёсткие надгробия: запись стёрта окончательно
   const settings=(B.settings.updated||0)>(A.settings.updated||0)?B.settings:A.settings;
   const reset=settings.resetAt||0;
-  /* kind: поля школа/год/статус (у классов ещё teacherId), которых нет у победителя (старый клиент их не знает), берутся у проигравшей версии; то же правило в server/app.py (fill_v3, fill_v4) */
-  const lww=(a,b,kind)=>{const m=new Map();for(const x of a.concat(b)){if(del[x.id])continue;const o=m.get(x.id);if(!o)m.set(x.id,x);else if((x.updated||0)>(o.updated||0))m.set(x.id,kind?SC.carry(x,o,kind):x);else if(kind)m.set(o.id,SC.carry(o,x,kind));}return[...m.values()];};
+  /* kind: поля школа/год/статус (у классов ещё teacherId), которых нет у победителя (старый клиент их не знает), берутся у проигравшей версии; то же правило в server/app.py (fill_v3, fill_v4).
+     Ученики и классы (kind): сначала lww, потом мягкое надгробие новее победителя превращает запись в архив (updated = время надгробия); у остальных видов надгробие скрывает запись. Правило то же в merge_in (А11) */
+  const lww=(a,b,kind)=>{const m=new Map();for(const x of a.concat(b)){if(hard[x.id]||(!kind&&del[x.id]))continue;const o=m.get(x.id);if(!o)m.set(x.id,x);else if((x.updated||0)>(o.updated||0))m.set(x.id,kind?SC.carry(x,o,kind):x);else if(kind)m.set(o.id,SC.carry(o,x,kind));}
+    return[...m.values()].map(x=>kind&&del[x.id]>(x.updated||0)&&x.status!=='archived'?Object.assign({},x,{status:'archived',updated:del[x.id]}):x);};
   const students=lww(A.students,B.students,'students').map(i=>SC.fill('students',i)),tests=lww(A.tests,B.tests),classes=lww(A.classes,B.classes,'classes').map(i=>SC.fill('classes',i));
-  const rm=new Map();for(const r of A.results.concat(B.results))if(!rm.has(r.id)&&!del[r.sid]&&!del[r.id]&&(r.ts||0)>=reset)rm.set(r.id,r);
+  const rm=new Map();for(const r of A.results.concat(B.results))if(!rm.has(r.id)&&!hard[r.sid]&&!del[r.id]&&!hard[r.id]&&(r.ts||0)>=reset)rm.set(r.id,r);
   const disc={};
-  for(const src of[A.disc,B.disc])for(const sid in src){if(del[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
-  const fm=new Map();for(const f of A.feedback.concat(B.feedback))if(!fm.has(f.id)&&!del[f.id])fm.set(f.id,f);
-  return{v:SC.VERSION,classes,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,settings};
+  for(const src of[A.disc,B.disc])for(const sid in src){if(hard[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
+  const fm=new Map();for(const f of A.feedback.concat(B.feedback))if(!fm.has(f.id)&&!del[f.id]&&!hard[f.id])fm.set(f.id,f);
+  return{v:SC.VERSION,classes,students,results:[...rm.values()],disc,tests,feedback:[...fm.values()],deleted:del,purged:hard,settings};
 }
 function load(){
   if(db)return db;
@@ -81,11 +85,7 @@ const Store=VR.Store={
     if(patch.pinView!==undefined){if(VR.schema.okPin(patch.pinView))s.pinView=patch.pinView;else delete s.pinView;}
     s.updated=now();save();Store.syncSoon();return s;
   },
-  removeStudent(id){
-    const d=load();d.deleted[id]=now();
-    d.students=d.students.filter(s=>s.id!==id);d.results=d.results.filter(r=>r.sid!==id);delete d.disc[id];
-    save();Store.syncSoon();
-  },
+  removeStudent(id){return Store.archiveStudent(id);}, // удаления нет: ученик уходит в архив, результаты сохраняются (Б74)
 
   /* классы: {id, grade 1–11, letter «А»} */
   classes(opt){return load().classes.filter(c=>(opt&&opt.all)||c.status!=='archived').sort((a,b)=>a.grade-b.grade||a.letter.localeCompare(b.letter,'ru'));},
@@ -96,11 +96,7 @@ const Store=VR.Store={
     if(load().classes.some(c=>c.status!=='archived'&&c.grade===grade&&c.letter===letter))return null;
     const t=now(),c={id:uid(),grade,letter,created:t,updated:t,school:VR.schema.DEFAULT_SCHOOL,year:VR.schema.acadYear(t),status:'active'};load().classes.push(c);save();Store.syncSoon();return c;
   },
-  removeClass(id){
-    const d=load();d.deleted[id]=now();d.classes=d.classes.filter(c=>c.id!==id);
-    for(const s of d.students)if(s.classId===id){s.classId=null;s.updated=now();}
-    save();Store.syncSoon();
-  },
+  removeClass(id){return Store.archiveClass(id);},
   /* мягкое архивирование: запись остаётся, результаты сохраняются; updated всегда растёт, чтобы правка победила при слиянии */
   _setStatus(list,id,status){
     const r=load()[list].find(x=>x.id===id);if(!r)return null;

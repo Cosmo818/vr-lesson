@@ -21,7 +21,7 @@ function acadYear(ts){
   const y=d.getUTCMonth()>=7?d.getUTCFullYear():d.getUTCFullYear()-1;
   return okYear(y)?y:null;
 }
-const blank=()=>({v:VERSION,classes:[],students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{minutes:8,resetAt:0,updated:0}});
+const blank=()=>({v:VERSION,classes:[],students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},purged:{},settings:{minutes:8,resetAt:0,updated:0}});
 const isObj=x=>!!x&&typeof x==='object';
 const RULES={
   students:{keep:s=>s&&s.id&&s.name,map:s=>({id:String(s.id),name:String(s.name).slice(0,40),grade:clampGrade(s.grade),classId:s.classId||null,pinHash:s.pinHash||null,created:s.created||0,updated:s.updated||s.created||0})},
@@ -117,6 +117,7 @@ function db(x,opt){
   o.feedback=validate('feedback',x.feedback).value;
   o.tests=validate('tests',x.tests).value;
   o.deleted=isObj(x.deleted)?x.deleted:{};
+  o.purged=isObj(x.purged)?x.purged:{};
   o.settings=validate('settings',x.settings).value;
   return o;
 }
