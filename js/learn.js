@@ -47,7 +47,7 @@ function lesson(teacher){
       const cur=()=>S.order[S.i];
       S.go=d=>{S.i=Math.max(0,Math.min(S.order.length-1,S.i+d));reset();S.main.dirty=true;if(S.diag)S.diag.dirty=true;for(const hi of[0,1])for(const k in S.lab[hi])S.lab[hi][k].dirty=true;E.beep(660,.06);};
       /* главная панель на дальней стене */
-      S.main=E.addPanel({w:3.4,h:2.4,pos:[0,1.75,-5.86],yaw:0,accent:teacher?'#a78bfa':'#22c55e',draw:(c,p)=>{
+      S.main=E.addPanel({w:3.4,h:2.4,pos:[0,1.65,-5.86],yaw:0,accent:teacher?'#a78bfa':'#22c55e',draw:(c,p)=>{
         const id=cur(),n=S.order.length-1;
         if(id==='end'){
           p.text(teacher?'Обучение пройдено!':'Ты прошёл обучение!',50,30,{size:66,bold:true,color:'#86efac'});
@@ -171,14 +171,14 @@ function drawDesk(c,p,id){
   key(x0-40,350,200,'Shift',on('walk'));key(x0+180,350,330,'Пробел',on('select'));
   key(x0+380,150,100,'E',on('grab'));key(x0+380,250,100,'M',on('menu'));key(x0+500,250,100,'F',false);
   /* подписи */
-  const L=[['ЛКМ или пробел — выбрать, нажать',on('select')],['ПКМ или E (держать) — взять · колесо: дальше/ближе',on('grab')],['W A S D — идти · Shift — быстрее',on('walk')],['M или Tab — меню · F — полный экран · Esc — освободить мышь',on('menu')]];
+  const L=[['ЛКМ или Enter — выбрать, нажать',on('select')],['ПКМ или E (держать) — взять · колесо: дальше/ближе',on('grab')],['W A S D — идти · Shift — быстрее',on('walk')],['M или Tab — меню · F — полный экран · Esc — освободить мышь',on('menu')]];
   L.forEach(([t,h],i)=>p.text(t,40,560+i*52,{size:34,color:h?'#86efac':'#cbd5e1',bold:h,maxW:W-80}));
 }
 ROOMS.learn=lesson(false);
 ROOMS.learnT=lesson(true);
-/* кнопки входа — маленькая панель в холле, на задней стене слева */
+/* кнопки входа — маленькая панель в холле, на задней стене между дверью информатики (x от -4.9 до -3.5) и панелью тестов учителя (от -1 до 1) */
 VR.learn={hallPanel(E){
-  E.addPanel({w:1.7,h:.9,pos:[-3.9,1.7,5.86],yaw:Math.PI,accent:'#22c55e',draw:(c,p)=>{
+  E.addPanel({w:1.7,h:.9,pos:[-2.3,1.7,5.86],yaw:Math.PI,accent:'#22c55e',draw:(c,p)=>{
     p.text('Обучение',30,18,{size:52,bold:true});
     p.button(30,96,p.W-60,76,'Первые шаги',()=>E.goRoom('learn'),{bg:'#16a34a',size:38});
     p.button(30,190,p.W-60,76,'Для учителя',()=>E.goRoom('learnT'),{bg:'#7c3aed',size:38});

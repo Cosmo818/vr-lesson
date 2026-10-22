@@ -442,7 +442,8 @@ void main(){
   /* ---------- игрок: мир = поворот(yaw)·реальная комната + сдвиг ---------- */
   let baseRef=null,refSpace=null,curFrame=null,moved=false;
   const P={yaw:0,tx:0,tz:0};
-  const D={x:0,z:1,yaw:0,pitch:-.08};
+  const D={x:0,z:1,yaw:0,pitch:-.08,h:1.6,jy:0,jv:0};/* h — высота глаз (присед ниже), jy — высота прыжка */
+  const eyeY=()=>D.h+D.jy;
   const R2=(yaw,x,z)=>[x*Math.cos(yaw)+z*Math.sin(yaw),-x*Math.sin(yaw)+z*Math.cos(yaw)];
   function applyPlayer(){
     if(!baseRef)return;
@@ -460,7 +461,7 @@ void main(){
     if(inside&&!E.boxes.some(b=>Math.abs(x-b.x)<b.hx+.3&&Math.abs(z-b.z)<b.hz+.3)){teleportTo(x,z);E.beep(420,.05,'sine',.03);}
   }
   function respawn(){
-    D.x=E.spawn.x;D.z=E.spawn.z;D.yaw=0;D.pitch=-.08;
+    D.x=E.spawn.x;D.z=E.spawn.z;D.yaw=0;D.pitch=-.08;D.h=1.6;D.jy=0;D.jv=0;
     if(E.session&&baseRef){P.yaw=0;teleportTo(E.spawn.x,E.spawn.z);}
   }
   E.respawn=respawn;E.player=P;E.deskCam=D;
@@ -469,7 +470,7 @@ void main(){
   E.setPose=(x,z,yaw)=>{if(E.session&&baseRef){P.yaw=yaw;teleportTo(x,z);}else{D.x=x;D.z=z;D.yaw=yaw;}};
   E.headPose=()=>{
     if(E.session&&curFrame&&refSpace){const vp=curFrame.getViewerPose(refSpace);if(vp){const m=vp.transform.matrix;const fx=-m[8],fz=-m[10],l=Math.hypot(fx,fz)||1;return{pos:[m[12],m[13],m[14]],f:[fx/l,fz/l]};}}
-    return{pos:[D.x,1.6,D.z],f:[-Math.sin(D.yaw),-Math.cos(D.yaw)]};
+    return{pos:[D.x,eyeY(),D.z],f:[-Math.sin(D.yaw),-Math.cos(D.yaw)]};
   };
   function placeFront(p,dist,dy){const h=E.headPose();p.setPose([h.pos[0]+h.f[0]*dist,h.pos[1]+dy,h.pos[2]+h.f[1]*dist],Math.atan2(-h.f[0],-h.f[1]));}
   E.placeFront=placeFront;
@@ -499,7 +500,7 @@ void main(){
   let deskClick=false,deskMenu=false,deskGrab=false,mouseL=false,mouseR=false,reach=.5;
   function readDesk(dt){
     H[0].has=false;
-    const cam=M.mul(M.trans(D.x,1.6,D.z),M.mul(M.rotY(D.yaw),M.rotX(D.pitch)));
+    const cam=M.mul(M.trans(D.x,eyeY(),D.z),M.mul(M.rotY(D.yaw),M.rotX(D.pitch)));
     deskPad.buttons[0].pressed=deskClick||mouseL;deskClick=false;
     deskPad.buttons[1].pressed=deskGrab||mouseR;
     if(!H[1].held)reach=.5;
@@ -520,7 +521,8 @@ void main(){
   }
   function release(h){
     const b=h.held;if(!b)return;
-    const v=h.vel||[0,0,0],sp=Math.hypot(v[0],v[1],v[2]),k=sp>10?10/sp:1;
+    /* с экрана (мышь) предмет не бросают рывком: скорость руки берётся от движения взгляда и была бы случайной — кладём мягко */
+    const v=h.vel||[0,0,0],sp=Math.hypot(v[0],v[1],v[2]),lim=E.session?10:1.2,k=sp>lim?lim/sp:1;
     b.v=[v[0]*k,v[1]*k,v[2]*k];b.held=null;h.held=null;E.beep(300,.05);
     if(E.room&&E.room.onRelease)try{E.room.onRelease(E,E.S,b,sp*k);}catch(e){}
   }
@@ -721,7 +723,13 @@ void main(){
   /* ---------- режим экрана (ПК / телефон / проверка без шлема) ---------- */
   const keys={};let drag=null,locked=false,lockFail=false,sens=.0022;
   /* сброс всех зажатых клавиш и кнопок: при потере фокуса, уходе со вкладки, отмене указателя */
-  const releaseAll=()=>{for(const k in keys)keys[k]=false;drag=null;deskGrab=false;mouseL=mouseR=false;};
+  const releaseAll=()=>{for(const k in keys)keys[k]=false;drag=null;deskGrab=false;mouseL=mouseR=false;acc.x=acc.y=0;};
+  /* накопленное движение мыши: применяется раз за кадр с плавностью, а не событием на каждый пиксель */
+  const acc={x:0,y:0},MC={sens:1,smooth:.35,invY:false};
+  E.mouseCfg=MC;
+  E.setMouseCfg=o=>{if(!o)return;if(typeof o.sens==='number'&&isFinite(o.sens))MC.sens=Math.max(.25,Math.min(3,o.sens));if(typeof o.smooth==='number'&&isFinite(o.smooth))MC.smooth=Math.max(0,Math.min(1,o.smooth));if(typeof o.invY==='boolean')MC.invY=o.invY;};
+  /* состояние кнопок берём из маски buttons: при зажатых двух кнопках браузер второго нажатия не присылает, а по маске видно всё */
+  const syncButtons=e=>{if(e.pointerType&&e.pointerType!=='mouse')return;if(typeof e.buttons!=='number')return;mouseL=!!(e.buttons&1);mouseR=!!(e.buttons&2);};
   E.releaseInput=releaseAll;
   /* ---- мышь как в шутерах: захват указателя (Pointer Lock), сырое движение, без упора в край экрана ----
      ЛКМ — выбрать / нажать / взять (держать), ПКМ или E — взять (держать), колесо — дальше/ближе, F — полный экран */
@@ -747,14 +755,23 @@ void main(){
     if(!locked||!E.deskInput)return;
     const dx=e.movementX||0,dy=e.movementY||0;
     if(Math.abs(dx)>600||Math.abs(dy)>600)return;/* редкие скачки драйвера */
-    D.yaw-=dx*sens;D.pitch=Math.max(-1.5,Math.min(1.5,D.pitch-dy*sens));
+    acc.x+=dx;acc.y+=dy;
   });
+  /* смена кнопки при другой уже зажатой приходит как pointermove с button>=0 (а не как pointerdown); обычное движение имеет button=-1 и состояние не трогает */
+  window.addEventListener('pointermove',e=>{if(e.button>=0)syncButtons(e);},true);
+  /* применить накопленное движение за кадр: доля копится по экспоненте, чем больше плавность, тем мягче догоняет взгляд */
+  function applyLook(dt){
+    if(!acc.x&&!acc.y)return;
+    const tau=MC.smooth*.14,k=tau<=0?1:1-Math.exp(-dt/tau),mx=acc.x*k,my=acc.y*k;acc.x-=mx;acc.y-=my;
+    if(Math.abs(acc.x)<.05)acc.x=0;if(Math.abs(acc.y)<.05)acc.y=0;
+    const s=sens*MC.sens;D.yaw-=mx*s;D.pitch=Math.max(-1.5,Math.min(1.5,D.pitch-(MC.invY?-my:my)*s));
+  }
   canvas.addEventListener('contextmenu',e=>e.preventDefault());
   canvas.addEventListener('wheel',e=>{if(!locked)return;e.preventDefault();if(H[1].held)reach=Math.max(.3,Math.min(2.2,reach-Math.sign(e.deltaY)*.12));},{passive:false});
   canvas.addEventListener('pointerdown',e=>{
     if(e.pointerType==='mouse'&&canLock&&!lockFail&&E.deskInput){
       if(!locked){if(e.button===0)E.lockMouse();return;}/* первый щелчок только захватывает мышь */
-      if(e.button===0)mouseL=true;else if(e.button===2)mouseR=true;
+      syncButtons(e);if(!e.buttons){if(e.button===0)mouseL=true;else if(e.button===2)mouseR=true;}
       e.preventDefault();return;
     }
     if(e.button!==0&&e.pointerType==='mouse')return;
@@ -770,7 +787,9 @@ void main(){
   });
   const up=()=>{if(drag&&!drag.moved&&E.deskInput)deskClick=true;drag=null;};
   canvas.addEventListener('pointerup',up);
-  window.addEventListener('pointerup',e=>{drag=null;if(e.button===0)mouseL=false;else if(e.button===2)mouseR=false;});
+  window.addEventListener('pointerup',e=>{drag=null;if(e.pointerType==='mouse'||!e.pointerType){mouseL=!!(e.buttons&1);mouseR=!!(e.buttons&2);}});
+  window.addEventListener('mouseup',e=>{mouseL=!!(e.buttons&1);mouseR=!!(e.buttons&2);},true);
+  window.addEventListener('mousedown',e=>{if(locked){mouseL=!!(e.buttons&1);mouseR=!!(e.buttons&2);}},true);
   for(const ev of['pointercancel','lostpointercapture'])canvas.addEventListener(ev,()=>{drag=null;});
   window.addEventListener('blur',releaseAll);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseAll();});
@@ -779,9 +798,10 @@ void main(){
     keys[e.code]=true;if(!E.deskInput)return;
     if(e.code==='KeyE')deskGrab=true;
     if(e.code==='KeyM'||e.code==='Tab'){deskMenu=true;e.preventDefault();}
-    if(e.code==='Space'){deskClick=true;e.preventDefault();}
+    if(e.code==='Space'||e.code==='ControlLeft'||e.code==='ControlRight')e.preventDefault();
+    if(e.code==='Enter'&&!e.repeat){deskClick=true;e.preventDefault();}
     if(e.code==='KeyF'&&!e.repeat){E.toggleFullscreen();e.preventDefault();}
-    if(e.code==='BracketLeft'||e.code==='BracketRight'){sens=Math.max(.0008,Math.min(.006,sens*(e.code==='BracketRight'?1.2:1/1.2)));E.toast('Чувствительность мыши: '+Math.round(sens/.0022*100)+'%');}
+    if(e.code==='BracketLeft'||e.code==='BracketRight'){E.setMouseCfg({sens:MC.sens*(e.code==='BracketRight'?1.2:1/1.2)});E.toast('Чувствительность мыши: '+Math.round(MC.sens*100)+'%');if(E.hooks.onMouseCfg)try{E.hooks.onMouseCfg(MC);}catch(_){}}
   });
   window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyE')deskGrab=false;if(e.key==='Meta'||e.key==='Alt')releaseAll();});
   const crossEl=document.getElementById('cross');let crossHot=false;
@@ -792,7 +812,13 @@ void main(){
       requestAnimationFrame(f);
       const dt=lt?Math.min(.05,(t-lt)/1000):.016;lt=t;
       if(E.deskInput){
-        const sp=(keys.ShiftLeft||keys.ShiftRight?3.6:2.2)*dt,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
+        applyLook(dt);
+        /* присед (Ctrl или C) и прыжок (пробел): высота глаз плавно меняется, прыжок — по параболе, в воздухе управлять нельзя только высотой */
+        const crouch=!!(keys.ControlLeft||keys.ControlRight||keys.KeyC);
+        D.h+=((crouch?1.0:1.6)-D.h)*(1-Math.exp(-dt/.07));
+        if(keys.Space&&D.jy<=.001&&!crouch)D.jv=3.1;
+        if(D.jy>0||D.jv>0){D.jv-=9.8*dt;D.jy=Math.max(0,D.jy+D.jv*dt);if(D.jy===0)D.jv=0;}
+        const sp=(crouch?1.1:keys.ShiftLeft||keys.ShiftRight?3.6:2.2)*dt,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
         if(keys.KeyW||keys.ArrowUp){D.x+=fx*sp;D.z+=fz*sp;}
         if(keys.KeyS||keys.ArrowDown){D.x-=fx*sp;D.z-=fz*sp;}
         if(keys.KeyD||keys.ArrowRight){D.x+=rx*sp;D.z+=rz*sp;}
@@ -807,7 +833,7 @@ void main(){
       if(w>0&&h>0&&(canvas.width!==w||canvas.height!==h)){canvas.width=w;canvas.height=h;}
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,canvas.width,canvas.height);gl.enable(gl.DEPTH_TEST);
       gl.clearColor(E.clear[0],E.clear[1],E.clear[2],1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-      const cam=[D.x,1.6,D.z],view=M.mul(M.rotX(-D.pitch),M.mul(M.rotY(-D.yaw),M.trans(-cam[0],-cam[1],-cam[2])));
+      const cam=[D.x,eyeY(),D.z],view=M.mul(M.rotX(-D.pitch),M.mul(M.rotY(-D.yaw),M.trans(-cam[0],-cam[1],-cam[2])));
       buildDraw(cam);render(M.persp(1.15,canvas.width/Math.max(1,canvas.height),.05,200),view,cam);
     };
     requestAnimationFrame(f);

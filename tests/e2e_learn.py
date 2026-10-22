@@ -30,15 +30,29 @@ try:
         if locked:
             ok(True, 'первый щелчок захватывает мышь')
             ok(not pg.is_visible('#lockHint'), 'подсказка скрыта после захвата')
+            ev('VR.app.E.setMouseCfg({smooth:0,sens:1,invY:false})')
             y0 = ev('VR.app.E.deskCam.yaw'); p0 = ev('VR.app.E.deskCam.pitch')
-            ev("document.dispatchEvent(new MouseEvent('mousemove',{movementX:100,movementY:50}))")
+            ev("document.dispatchEvent(new MouseEvent('mousemove',{movementX:100,movementY:50}))"); pg.wait_for_timeout(250)
             y1 = ev('VR.app.E.deskCam.yaw'); p1 = ev('VR.app.E.deskCam.pitch')
             ok(abs((y1 - y0) + 100 * .0022) < 1e-6 and p1 < p0, 'мышь без нажатия поворачивает взгляд (%.3f → %.3f)' % (y0, y1))
-            ev("document.dispatchEvent(new MouseEvent('mousemove',{movementX:5000,movementY:0}))")
+            # плавность: при высокой плавности взгляд догоняет мышь не сразу, но доходит до того же места
+            ev('VR.app.E.setMouseCfg({smooth:1})'); y2 = ev('VR.app.E.deskCam.yaw')
+            ev("document.dispatchEvent(new MouseEvent('mousemove',{movementX:200,movementY:0}))")
+            pg.wait_for_timeout(40); ya = ev('VR.app.E.deskCam.yaw')
+            ok(abs(ya - y2) < 200 * .0022 * .9, 'плавность 100%%: за первые кадры взгляд прошёл не всё (%.3f из %.3f)' % (abs(ya - y2), 200 * .0022))
+            for _ in range(30):  # кадров в безголовом браузере мало: ждём, пока взгляд дойдёт
+                pg.wait_for_timeout(300); yb = ev('VR.app.E.deskCam.yaw')
+                if abs((yb - y2) + 200 * .0022) < 1e-3: break
+            ok(abs((yb - y2) + 200 * .0022) < 1e-3, 'и в итоге доходит до того же угла, что без сглаживания')
+            ev('VR.app.E.setMouseCfg({smooth:0,sens:2})'); y3 = ev('VR.app.E.deskCam.yaw')
+            ev("document.dispatchEvent(new MouseEvent('mousemove',{movementX:50,movementY:0}))"); pg.wait_for_timeout(200)
+            ok(abs((ev('VR.app.E.deskCam.yaw') - y3) + 50 * .0022 * 2) < 1e-6, 'чувствительность 200% вдвое быстрее')
+            ev('VR.app.E.setMouseCfg({sens:1})'); y1 = ev('VR.app.E.deskCam.yaw')
+            ev("document.dispatchEvent(new MouseEvent('mousemove',{movementX:5000,movementY:0}))"); pg.wait_for_timeout(200)
             ok(ev('VR.app.E.deskCam.yaw') == y1, 'скачок драйвера (>600 px) игнорируется')
-            ev("for(let i=0;i<50;i++)document.dispatchEvent(new MouseEvent('mousemove',{movementX:0,movementY:-500}))")
+            ev("for(let i=0;i<50;i++)document.dispatchEvent(new MouseEvent('mousemove',{movementX:0,movementY:-500}))"); pg.wait_for_timeout(600)
             ok(ev('VR.app.E.deskCam.pitch') <= 1.5 and ev('VR.app.E.deskCam.pitch') >= 1.49, 'наклон взгляда упирается в предел 1.5 рад')
-            ev("for(let i=0;i<80;i++)document.dispatchEvent(new MouseEvent('mousemove',{movementX:0,movementY:500}))")
+            ev("for(let i=0;i<80;i++)document.dispatchEvent(new MouseEvent('mousemove',{movementX:0,movementY:500}))"); pg.wait_for_timeout(800)
             ok(ev('VR.app.E.deskCam.pitch') == -1.5, 'и вниз — предел -1.5 рад')
             ev('VR.app.E.deskCam.pitch=-.08')
             # ЛКМ в захвате: «курок» удерживается, пока кнопка зажата
@@ -49,10 +63,53 @@ try:
             pg.mouse.down(button='right'); pg.wait_for_timeout(150)
             ok(ev('VR.app.E.H[1].gp.buttons[1].pressed'), 'ПКМ зажата — хват нажат')
             pg.mouse.up(button='right'); pg.wait_for_timeout(100)
+            # обе кнопки сразу: состояние по маске buttons, ничего не залипает
+            pg.mouse.down(button='right'); pg.mouse.down(); pg.wait_for_timeout(200)
+            ok(ev('VR.app.E.H[1].gp.buttons[0].pressed&&VR.app.E.H[1].gp.buttons[1].pressed'), 'обе кнопки зажаты — курок и хват нажаты')
+            pg.mouse.up(); pg.wait_for_timeout(200)
+            ok(ev('!VR.app.E.H[1].gp.buttons[0].pressed&&VR.app.E.H[1].gp.buttons[1].pressed'), 'ЛКМ отпущена, ПКМ всё ещё держит')
+            pg.mouse.up(button='right'); pg.wait_for_timeout(200)
+            ok(ev('!VR.app.E.H[1].gp.buttons[0].pressed&&!VR.app.E.H[1].gp.buttons[1].pressed'), 'обе отпущены — ничего не залипло')
         else:
             ok(True, 'в безголовом браузере захват недоступен — проверяется запасной способ (зажатая кнопка)')
             y0 = ev('VR.app.E.deskCam.yaw'); pg.mouse.move(550, 350); pg.mouse.down(); pg.mouse.move(650, 350, steps=4); pg.mouse.up(); pg.wait_for_timeout(200)
             ok(ev('VR.app.E.deskCam.yaw') != y0, 'запасной способ: взгляд поворачивается при зажатой кнопке')
+        # ---- ни одна панель не выше потолка (2.9 м) ни в одной встроенной комнате
+        bad = []
+        for rid in ev("Object.keys(VR.app.E.rooms).filter(k=>!VR.app.E.rooms[k].custom)"):
+            ev("k=>VR.app.E.loadRoom(k)", rid); pg.wait_for_timeout(250)
+            for t in ev("VR.app.E.panels.filter(p=>!VR.app.E.open).map(p=>({y:p.pos[1],h:p.h,c:p.accent}))"):
+                if t['y'] + t['h'] / 2 > 2.92:
+                    bad.append((rid, round(t['y'] + t['h'] / 2, 2)))
+        ok(not bad, 'панели не выше потолка во всех комнатах (%s)' % bad[:4])
+        ev("VR.app.E.loadRoom('hall')"); pg.wait_for_timeout(250)
+        # ---- прыжок, присед, справка и настройки мыши
+        eye = lambda: ev('VR.app.E.headPose().pos[1]')
+        e0 = eye(); pg.keyboard.down('Control'); pg.wait_for_timeout(1200)
+        ok(eye() < 1.2, 'Ctrl: присед, глаза опустились (%.2f → %.2f)' % (e0, eye()))
+        pg.keyboard.up('Control')
+        for _ in range(20):  # в безголовом браузере около 5 кадров в секунду: ждём, пока рост вернётся
+            pg.wait_for_timeout(300)
+            if abs(eye() - 1.6) < .06: break
+        ok(abs(eye() - 1.6) < .06, 'Ctrl отпущен: рост вернулся')
+        pg.keyboard.down('Space'); mx = 0
+        for _ in range(8):
+            pg.wait_for_timeout(100); mx = max(mx, eye())
+        pg.keyboard.up('Space')
+        for _ in range(30):
+            pg.wait_for_timeout(300); mx = max(mx, eye())
+            if ev('VR.app.E.deskCam.jy') == 0 and abs(eye() - 1.6) < .02: break
+        ok(mx > 1.7 and abs(eye() - 1.6) < .02, 'Пробел: прыжок вверх (%.2f) и приземление' % mx)
+        ok(pg.is_visible('#helpBtn'), 'кнопка «? Управление» видна всегда')
+        pg.keyboard.press('KeyH'); pg.wait_for_timeout(300)  # при захваченной мыши клики уходят в сцену, поэтому окно открывает H
+        ok(pg.is_visible('#deskPanel') and 'Пробел' in pg.inner_text('#deskPanel') and 'Ctrl' in pg.inner_text('#deskPanel'), 'окно справки открывается и описывает прыжок и присед')
+        pg.fill('#mSens', '150') if False else pg.evaluate("()=>{const e=document.getElementById('mSens');e.value=150;e.dispatchEvent(new Event('input'))}")
+        pg.evaluate("()=>{const e=document.getElementById('mSmooth');e.value=60;e.dispatchEvent(new Event('input'))}")
+        ok(abs(ev('VR.app.E.mouseCfg.sens') - 1.5) < 1e-9 and abs(ev('VR.app.E.mouseCfg.smooth') - .6) < 1e-9, 'ползунки меняют чувствительность и плавность')
+        ok(ev("VR.Store.pref('mouse',{}).sens") == 1.5, 'настройки сохранены на устройстве')
+        pg.evaluate("()=>document.getElementById('helpClose').click()"); pg.wait_for_timeout(200)
+        ok(not pg.is_visible('#deskPanel'), 'кнопка «Закрыть» закрывает окно')
+        ev('VR.app.E.setMouseCfg({sens:1,smooth:0})')
         # ---- захват предмета из перекрестия (ПКМ / E)
         ev("(()=>{const E=VR.app.E;E.goRoom('learn');})()"); pg.wait_for_timeout(500)
         ev("(()=>{const E=VR.app.E,D=E.deskCam;D.x=2.4;D.z=-1.8;D.yaw=0;D.pitch=-.35;})()"); pg.wait_for_timeout(300)

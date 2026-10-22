@@ -86,7 +86,7 @@ function endSession(){
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
   try{sessionStorage.removeItem('vrl.editor');}catch(e){}
-  lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
+  lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);$('deskPanel').hidden=true;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
   $('summary').textContent=msg;$('summary').hidden=false;
@@ -114,7 +114,18 @@ function hooks(){
     if(!E.session){$('deskHud').textContent=E.hooks.hud().a+'  ·  '+E.hooks.hud().b+'  ·  '+(E.room?E.room.title:'');}
   };
   E.hooks.onXREnd=()=>endSession();
-  E.hooks.onLock=l=>showLockHint(!l);
+  E.hooks.onLock=l=>showLockHint(!l&&$('deskPanel').hidden);
+  /* настройки мыши и справка: окно доступно всегда (кнопка «? Управление» или клавиша H); пока оно открыто, мышь освобождена */
+  const mc=S.pref('mouse',{});E.setMouseCfg(mc);
+  const syncPanel=()=>{const c=E.mouseCfg;$('mSens').value=Math.round(c.sens*100);$('mSmooth').value=Math.round(c.smooth*100);$('mInv').checked=c.invY;$('mSensV').textContent=Math.round(c.sens*100)+'%';$('mSmoothV').textContent=Math.round(c.smooth*100)+'%';};
+  const saveCfg=()=>S.setPref('mouse',{sens:E.mouseCfg.sens,smooth:E.mouseCfg.smooth,invY:E.mouseCfg.invY});
+  const helpToggle=on=>{const p=$('deskPanel');const open=on===undefined?p.hidden:on;p.hidden=!open;if(open){syncPanel();if(E.unlockMouse)E.unlockMouse();showLockHint(false);}else if(E.deskInput){if(E.lockMouse)E.lockMouse();}};
+  $('helpBtn').onclick=()=>helpToggle();$('helpClose').onclick=()=>helpToggle(false);
+  $('mSens').oninput=()=>{E.setMouseCfg({sens:$('mSens').value/100});syncPanel();saveCfg();};
+  $('mSmooth').oninput=()=>{E.setMouseCfg({smooth:$('mSmooth').value/100});syncPanel();saveCfg();};
+  $('mInv').onchange=()=>{E.setMouseCfg({invY:$('mInv').checked});saveCfg();};
+  E.hooks.onMouseCfg=()=>{syncPanel();saveCfg();};
+  window.addEventListener('keydown',e=>{if(e.code==='KeyH'&&E.deskInput&&!(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))&&!e.repeat){helpToggle();e.preventDefault();}});
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});

@@ -220,6 +220,9 @@ const Store=VR.Store={
     if(!r||!RS)return[];
     return Object.keys(r).map(id=>RS.clean(r[id],v=>!!(Q&&Q[v])).spec).filter(s=>s&&s.id).sort((a,b)=>a.title.localeCompare(b.title,'ru'));
   },
+  /* настройки устройства (чувствительность мыши и т.п.): только в этом браузере, на сервер не уходят */
+  pref(k,d){try{const o=JSON.parse(localStorage.getItem('vrlesson.prefs')||'{}');return Object.prototype.hasOwnProperty.call(o,k)?o[k]:d;}catch(e){return d;}},
+  setPref(k,v){try{const o=JSON.parse(localStorage.getItem('vrlesson.prefs')||'{}');o[k]=v;localStorage.setItem('vrlesson.prefs',JSON.stringify(o));}catch(e){}},
   temp:{},/* открытые комнаты, загруженные с сервера на время сеанса: в память, не в хранилище */
   customRoom(id){return Store.temp[id]||Store.customRooms().find(s=>s.id===id)||null;},
   saveRoom(spec){

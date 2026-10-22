@@ -68,7 +68,29 @@
   <div id="deskHud"></div>
   <div id="cross"></div>
   <div id="lockHint" hidden>Щёлкни по экрану — мышь будет управлять взглядом без упора в край (Esc — освободить, F — полный экран)</div>
-  <div id="deskHelp">Мышь — взгляд · W A S D — ходьба (Shift — быстрее) · ЛКМ или пробел — выбрать · ПКМ или E (держать) — взять, колесо — дальше/ближе · M — меню · F — полный экран</div>
+  <button id="helpBtn" class="btn ghost" title="Управление и настройки мыши (H)">? Управление</button>
+  <div id="deskPanel" hidden>
+    <h3>Управление</h3>
+    <table class="keys">
+      <tr><td>Мышь</td><td>взгляд (первый щелчок захватывает мышь, Esc — освободить)</td></tr>
+      <tr><td>W A S D, стрелки</td><td>ходьба; Shift — быстрее; Q — поворот налево</td></tr>
+      <tr><td>ЛКМ или Enter</td><td>выбрать, нажать кнопку, открыть</td></tr>
+      <tr><td>Пробел</td><td>прыжок</td></tr>
+      <tr><td>Ctrl или C (держать)</td><td>присесть</td></tr>
+      <tr><td>ПКМ или E (держать)</td><td>взять предмет и держать; отпустить — положить</td></tr>
+      <tr><td>Колесо мыши</td><td>предмет дальше или ближе</td></tr>
+      <tr><td>M или Tab</td><td>меню</td></tr>
+      <tr><td>F</td><td>полный экран</td></tr>
+      <tr><td>H</td><td>это окно</td></tr>
+      <tr><td>[ и ]</td><td>чувствительность мыши меньше и больше</td></tr>
+    </table>
+    <h3>Мышь</h3>
+    <label>Чувствительность <b id="mSensV"></b><input id="mSens" type="range" min="25" max="300" step="5"></label>
+    <label>Плавность <b id="mSmoothV"></b><input id="mSmooth" type="range" min="0" max="100" step="5"></label>
+    <label class="chk"><input id="mInv" type="checkbox"> Перевернуть вертикаль</label>
+    <p class="muted small">Плавность сглаживает резкие рывки: чем она выше, тем мягче взгляд догоняет мышь. Настройки хранятся только на этом устройстве.</p>
+    <button id="helpClose" class="btn">Закрыть</button>
+  </div>
   <button id="deskExit" class="btn ghost">Завершить (Esc)</button>
 </div>
 

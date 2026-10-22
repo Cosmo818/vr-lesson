@@ -91,7 +91,7 @@ ROOMS.hall={
   title:'Холл',env:{floor:[.07,.1,.18],wall:[.12,.17,.3],trim:[.2,.7,1],grid:[.25,.55,.9]},
   hint:'Холл. Наведи луч на дверь или кнопку и нажми курок. Меню: кнопка A или X.',
   build(E,S){
-    E.addPanel({w:3.4,h:2.7,pos:[0,1.85,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
+    E.addPanel({w:3.4,h:2.7,pos:[0,1.5,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
       const st=E.student;
       p.text('Привет, '+(st?st.name:'гость')+'!',50,30,{size:64,bold:true});
       p.text((st&&st.grade?st.grade+' класс  ·  ':'')+'Выбери комнату, изучи её и пройди тест.',50,112,{size:34,color:'#b8c7ea'});

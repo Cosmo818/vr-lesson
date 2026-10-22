@@ -37,7 +37,15 @@ footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin-top:18
 #desk[hidden]{display:none}
 #deskHud{position:fixed;top:12px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:12px;background:rgba(0,0,0,.55);font-size:16px;z-index:3;white-space:nowrap;max-width:calc(100% - 32px);overflow:hidden;text-overflow:ellipsis}
 #cross{position:fixed;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border:2px solid #fff;border-radius:50%;z-index:3;pointer-events:none}
-#deskHelp{position:fixed;left:16px;right:16px;bottom:12px;text-align:center;font-size:13px;color:#cbd5e1;z-index:3;pointer-events:none}
+#helpBtn{position:fixed;left:16px;top:12px;z-index:5;padding:8px 14px;font-size:15px;background:rgba(0,0,0,.5)}
+#deskPanel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;background:rgba(11,16,32,.96);border:1px solid #3b82f6;border-radius:14px;padding:18px 22px;max-width:min(560px,94vw);max-height:90vh;overflow:auto;color:#e8efff}
+#deskPanel[hidden]{display:none}
+#deskPanel h3{margin:6px 0 8px}
+#deskPanel table.keys td{padding:3px 10px 3px 0;font-size:15px;vertical-align:top}
+#deskPanel table.keys td:first-child{white-space:nowrap;color:#fde68a}
+#deskPanel label{display:block;margin:10px 0;font-size:15px}
+#deskPanel label input[type=range]{display:block;width:100%}
+#deskPanel label.chk input{display:inline;margin-right:8px}
 #deskExit{position:fixed;right:16px;top:12px;z-index:3;padding:8px 14px;font-size:15px;background:rgba(0,0,0,.5)}
 @media (max-width:600px){.card{padding:16px}h1{font-size:24px}.grid{grid-template-columns:1fr}#deskHud{top:56px}}
 
