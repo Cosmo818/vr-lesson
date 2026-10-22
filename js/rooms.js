@@ -299,15 +299,16 @@ function bob(S){return[PIV[0]+S.L*Math.sin(S.th),PIV[1]-S.L*Math.cos(S.th),PIV[2
 const RX=-3.9,RTOP=.85,PLATE=[-3.9,1.3];
 const DISP=[['H',-1.25],['O',-.6],['C',.05],['N',.7]];
 ROOMS.chem={
-  title:'Химия',env:{floor:[.05,.14,.09],wall:[.1,.26,.17],trim:[.35,1,.6],grid:[.3,.9,.5]},
-  hint:'Химия: возьми атомы на столе слева и собери молекулу на светлом круге.',
+  title:'Химия',env:{floor:[.05,.14,.09],wall:[.1,.26,.17],trim:[.35,1,.6],grid:[.3,.9,.5]},spawn:{x:0,z:-.9},
+  hint:'Химия: наведи на элемент таблицы и нажми хват (ПКМ/E) — он прилетит в руку. Сосуд слева — слияние, справа — распад, посередине — склад. Атомы молекул — на столе слева.',
   build(E,S){
     backDoor(E);
-    S.el=-1;S.made=null;S.chk=0;S.comp={};S.hint=-1;
+    S.lab=null;if(VR.chemLab&&VR.flags.on('chemLab')){try{VR.chemLab.build(E,S);S.lab=true;}catch(e){S.lab=null;E.toast('Лаборатория временно недоступна','#fca5a5');}}
+    if(!S.lab){S.el=-1;}S.made=null;S.chk=0;S.comp={};S.hint=-1;
     S.found=new Set();
     if(E.student&&E.student.id)for(const k of VR.Store.discoveries(E.student.id))if(k.indexOf('chem:mol_')===0)S.found.add(k.slice(9));
     /* таблица Менделеева */
-    S.pt=E.addPanel({w:4.6,h:1.9,res:1600,pos:[0,1.75,-5.86],yaw:0,accent:'#4ade80',draw:(c,p)=>{
+    if(!S.lab)S.pt=E.addPanel({w:4.6,h:1.9,res:1600,pos:[0,1.75,-5.86],yaw:0,accent:'#4ade80',draw:(c,p)=>{
       p.text('Таблица Менделеева: первые 20 элементов',30,24,{size:50,bold:true});
       const R=VR.ui.rrect;
       for(const el of D.elements){
@@ -324,7 +325,7 @@ ROOMS.chem={
       const ix=1090;
       if(S.el<0){
         p.text('Нажми на элемент',ix,110,{size:42,bold:true,maxW:480});
-        let y=180;for(const k in D.elCats){c.fillStyle=D.elCats[k][1];c.fillRect(ix,y+6,28,28);p.text(D.elCats[k][0],ix+44,y,{size:30,maxW:440});y+=48;}
+        let y=180;for(const k in D.elCats){if(!D.elements.some(e=>e[6]===k))continue;c.fillStyle=D.elCats[k][1];c.fillRect(ix,y+6,28,28);p.text(D.elCats[k][0],ix+44,y,{size:30,maxW:440});y+=48;}
       }else{
         const [n,sym,name,mass,,,cat,fact]=D.elements[S.el];
         p.text(sym,ix,96,{size:150,bold:true,color:D.elCats[cat][1]});
@@ -355,7 +356,10 @@ ROOMS.chem={
     makeQuiz(E,'chem',[5.86,1.5,1.5],YR);
   },
   targets(E,S){return DISP.map(([el,z])=>({c:[RX,RTOP+.28,z],r:.2,id:'disp'+el,sel:()=>spawnAtom(E,el,z)}));},
+  pick(E,S,h,hit){return S.lab?VR.chemLab.pick(E,S,h,hit):null;},
+  onGrab(E,S,b){if(S.lab)VR.chemLab.onGrab(E,S,b);},
   update(E,S,dt){
+    if(S.lab)try{VR.chemLab.update(E,S,dt);}catch(e){}
     S.chk-=dt;if(S.chk>0)return;S.chk=.25;
     const comp={};for(const b of onPlate(E))comp[b.data.el]=(comp[b.data.el]||0)+1;
     const key=Object.keys(comp).sort().map(k=>k+comp[k]).join('');
@@ -368,6 +372,7 @@ ROOMS.chem={
     }
   },
   draw(E,S,add){
+    if(S.lab)try{VR.chemLab.draw(E,S,add);}catch(e){}
     for(const [el,z] of DISP){const k=el==='H'?.08:.11;add(E.mesh.sphere,TRS(RX,RTOP+.28+Math.sin(E.t*2+z)*.03,z,k,k,k),D.atoms[el].col,.25);}
     if(S.made){
       const m=D.molecules.find(x=>x.key===S.made),base=M.mul(M.trans(PLATE[0],RTOP+.6,PLATE[1]),M.rotY(E.t*.8)),sc=2.2;

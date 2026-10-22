@@ -212,7 +212,7 @@ void main(){
     const cv=document.createElement('canvas');cv.width=W;cv.height=H;
     const p={w:o.w,h:o.h,pos:(o.pos||[0,1.5,-2]).slice(),yaw:o.yaw||0,W,H,cv,ctx:cv.getContext('2d'),tex:gl.createTexture(),
       draw:o.draw||(()=>{}),show:o.show!==false,btns:[],hover:-1,dirty:true,accent:o.accent||'#3b82f6',bg:o.bg||'#0f1830',
-      over:[],noBg:!!o.noBg,noHit:!!o.noHit,attach:o.attach||null,model:null,data:o.data||{}};
+      over:[],keepTex:!!o.keepTex,noBg:!!o.noBg,noHit:!!o.noHit,attach:o.attach||null,model:null,data:o.data||{}};
     p.text=(str,x,y,t)=>{
       t=t||{};const c=p.ctx,size=t.size||40;c.font=(t.bold?'bold ':'')+size+'px sans-serif';c.fillStyle=t.color||'#e8efff';
       c.textAlign=t.align||'left';c.textBaseline='top';const lh=t.lh||Math.round(size*1.25);
@@ -251,6 +251,23 @@ void main(){
     p.dirty=false;
   }
   E.paint=paint;
+  /* плашки-текстуры 128x128 с кэшем (Б65): E.labelTex(ключ, draw(ctx,128)) -> WebGL-текстура или null */
+  const labelCache={};let labelN=0;
+  E.labelTex=(key,draw)=>{
+    if(Object.prototype.hasOwnProperty.call(labelCache,key))return labelCache[key];
+    if(labelN>=160)return null;
+    let t=null;
+    try{
+      const cv=document.createElement('canvas');cv.width=128;cv.height=128;const c=cv.getContext('2d');
+      draw(c,128);
+      t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cv);gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    }catch(e){t=null;}
+    labelCache[key]=t;labelN++;return t;
+  };
   /* ---------- текстуры и модели (Б51) ---------- */
   const texCache={},modelCache={};
   function glTex(src,repeat){
@@ -596,7 +613,7 @@ void main(){
       pts.push([o[0]+st.d[0]*ARC_SPEED*t+ex*u*u-st.v[0]/vl*w,Math.max(.02,o[1]+vy*t-4.9*t*t-st.v[1]/vl*w),o[2]+st.d[2]*ARC_SPEED*t+ez*u*u-st.v[2]/vl*w]);
     }
   }
-  function handleInput(){
+  function handleInput(dt){
     for(let hi=0;hi<2;hi++){
       const h=H[hi];
       if(!h.has){if(h.held)release(h);h.aim=false;h.tp=null;h.arc=null;h.hov=null;h.hit=null;continue;}
@@ -610,7 +627,7 @@ void main(){
         let b=nearestBody(gpos,E.session?.22:.42),pull=false;
         if(!b&&!E.session&&hi===1&&trigDown)b=bodyOnRay(h,3);
         /* хват издалека: луч на предмет + «держать» (боковая кнопка, ПКМ или E) — предмет прилетает в руку */
-        if(!b&&sqDown){b=bodyOnRay(h,10);pull=!!b;}
+        if(!b&&sqDown){b=bodyOnRay(h,10);if(!b&&E.room&&E.room.pick){const r=rayHit(h);if(r&&r.kind==='panel'&&r.t<10){try{b=E.room.pick(E,E.S,h,r)||null;}catch(e){b=null;}}}pull=!!b;}
         if(b){b.held=hi;b.by=sqDown?'sq':'trig';
           if(pull){const o=M.mul(M.inv(h.g),b.m);o[12]=0;o[13]=0;o[14]=E.session?0:-.3;b.off=o;b.pull=0;b.pullFrom=b.p.slice();}
           else{b.off=M.mul(M.inv(h.g),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),b.m));b.pull=null;}
@@ -625,10 +642,11 @@ void main(){
       h.hov=null;
       if(!h.held&&!h.aim){const hb=bodyOnRay(h,10,h.hit)||nearestBody(gpos,E.session?.22:.42);if(hb)h.hov={b:hb};else if(h.hit&&h.hit.kind==='target')h.hov={tg:h.hit.tg};}
       if(trigDown&&!used&&!h.aim&&h.hit){
-        if(h.hit.kind==='panel'){if(h.hit.bi>=0){const p=h.hit.p,b=p.btns[h.hit.bi];E.beep(880,.04,'square',.03);E.buzz(h,.3,25);p.dirty=true;try{b.fn(h);}catch(e){try{console.log('button error',e);}catch(_){}}}}
+        if(h.hit.kind==='panel'){if(h.hit.bi>=0){const p=h.hit.p,b=p.btns[h.hit.bi];E.beep(880,.04,'square',.03);E.buzz(h,.3,25);if(!p.keepTex)p.dirty=true;try{b.fn(h);}catch(e){try{console.log('button error',e);}catch(_){}}}}
         else{try{h.hit.tg.sel(h);}catch(e){try{console.log('target error',e);}catch(_){}}}
       }
       if(!E.session)continue;
+      if(h.held&&h.held.off&&Math.abs(ay)>.25){const o=h.held.off;o[14]=Math.max(-6,Math.min(0,o[14]+ay*dt*1.5));}
       if(!h.held){
         if(ay<-.6){h.aim=true;aimTeleport(h,E.dt||.016);}
         else if(h.aim&&ay>-.25){if(h.tp&&h.tp.valid){teleportTo(h.tp.x,h.tp.z);E.beep(660,.08);E.buzz(h,.3,30);}h.aim=false;h.tp=null;h.arc=null;}
@@ -677,7 +695,7 @@ void main(){
   let hudT=0;
   function step(dt){
     E.t+=dt;E.dt=dt;
-    if(E.deskInput||E.session)handleInput();
+    if(E.deskInput||E.session)handleInput(dt);
     else for(const h of H){h.hit=null;h.hov=null;}
     E.targets=E.room&&E.room.targets?E.staticTargets.concat(E.room.targets(E,E.S)):E.staticTargets;
     if(E.room&&E.room.update)try{E.room.update(E,E.S,dt);}catch(e){try{console.log('room update error',e);}catch(_){}}
@@ -693,7 +711,7 @@ void main(){
     const all=E.panels.concat(E.ui);
     for(const p of all)p._h=-1;
     for(const h of H)if(h.has&&h.hit&&h.hit.kind==='panel')h.hit.p._h=h.hit.bi;
-    for(const p of all)if(p._h!==p.hover){p.hover=p._h;p.dirty=true;}
+    for(const p of all)if(p._h!==p.hover){p.hover=p._h;if(!p.keepTex)p.dirty=true;}
     let budget=E.session?2:4;
     for(const p of E.ui)if(p.dirty&&p.show&&budget>0&&!(p.attach&&!E.session)){paint(p);budget--;}
     for(const p of E.panels)if(p.dirty&&p.show&&budget>0){paint(p);budget--;}
