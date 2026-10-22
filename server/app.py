@@ -26,7 +26,7 @@ SESSION_MIN_DEFAULT, SESSION_MIN_LO, SESSION_MIN_HI = 15, 5, 300
 LOGIN_FREE_TRIES = 5  # ошибок подряд без паузы; дальше пауза 30 с, растёт вдвое до 15 мин
 IP_PER_MIN = 20
 RESERVED_LOGINS = ('admin', 'root', 'superadmin', 'director', 'teacher')
-ROLES = ('superadmin', 'region_admin', 'director', 'teacher', 'expert')
+ROLES = ('superadmin', 'region_admin', 'district_admin', 'director', 'teacher', 'expert')
 LOGIN_RE = re.compile(r'^[A-Za-z0-9._-]{3,32}$')
 COMMON_PW = frozenset('''1234567890 0123456789 12345678910 1q2w3e4r5t 1qaz2wsx3edc qwertyuiop qwerty1234 qwerty12345 qwertyuiop1 asdfghjkl1 password12 password123 password1234
 password12345 passw0rd123 iloveyou123 administrator qazwsxedc12 zaq12wsxcde 9876543210 1234554321 abcdefghij abcd123456 123456789a 1234567890q admin12345 admin123456 adminadmin
@@ -811,28 +811,45 @@ def user_create(c, login, name, password, who):
     return uid
 
 
-def scope_key(region):
-    """Ключ области регионального администратора: r:<регион>; None — если названия нет или в нём лишнее."""
-    region = str(region or '')[:60]
-    return None if not region or '|' in region else 'r:' + region
+def scope_key(role, region, district=''):
+    """Ключ области администратора региона или района; None — если не хватает данных или в названии есть «|»."""
+    region, district = str(region or '')[:60], str(district or '')[:60]
+    if not region or '|' in region or '|' in district:
+        return None
+    if role == 'region_admin':
+        return 'r:' + region
+    return 'd:%s|%s' % (region, district) if role == 'district_admin' and district else None
 
 
-def key_region(key):
+def key_parts(key):
+    """'r:Рег' -> ('Рег', None); 'd:Рег|Рай' -> ('Рег', 'Рай'); иначе None."""
     key = str(key or '')
-    return key[2:] if key.startswith('r:') and len(key) > 2 else None
+    if key.startswith('r:') and len(key) > 2:
+        return key[2:], None
+    if key.startswith('d:') and '|' in key[2:]:
+        rg, _, ds = key[2:].partition('|')
+        return (rg, ds) if rg and ds else None
+    return None
 
 
 def key_schools(c, key, archived=False):
-    rg = key_region(key)
-    if rg is None:
+    kp = key_parts(key)
+    if not kp:
         return set()
-    return {r[0] for r in c.execute('SELECT id FROM schools WHERE region = ?' + ('' if archived else " AND status != 'archived'"), (rg,))}
+    q, a = 'SELECT id FROM schools WHERE region = ?', [kp[0]]
+    if kp[1] is not None:
+        q += ' AND district = ?'
+        a.append(kp[1])
+    if not archived:
+        q += " AND status != 'archived'"
+    return {r[0] for r in c.execute(q, a)}
 
 
 def scope_alive(c, role, school, archived=False):
-    """Есть ли куда выдавать роль: для регионального администратора — хотя бы одна школа в регионе, для остальных — школа."""
+    """Есть ли куда выдавать роль: для администратора области — хотя бы одна школа в ней, для остальных — школа."""
     if role in SCOPE_ROLES:
-        return bool(key_schools(c, school, archived))
+        kp = key_parts(school)
+        return bool(kp) and (role == 'region_admin') == (kp[1] is None) and bool(key_schools(c, school, archived))
     return bool(c.execute('SELECT 1 FROM schools WHERE id = ?' + ('' if archived else " AND status != 'archived'"), (school,)).fetchone())
 
 
@@ -1092,9 +1109,9 @@ class AdminError(Exception):
         self.code, self.msg = code, msg
 
 
-RANK = {'superadmin': 6, 'region_admin': 5, 'director': 3, 'teacher': 2, 'expert': 1}
+RANK = {'superadmin': 6, 'region_admin': 5, 'district_admin': 4, 'director': 3, 'teacher': 2, 'expert': 1}
 SUPER = 6  # ранг суперадмина: всё и везде
-SCOPE_ROLES = ('region_admin',)  # у него в user_roles.school лежит ключ области r:<регион>; район у школы отменён владельцем (поле в базе спит)
+SCOPE_ROLES = ('region_admin', 'district_admin')  # у них в user_roles.school лежит ключ области: r:<регион> или d:<регион>|<район>
 CODE_ALPHA = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
 SCHOOL_RE = re.compile(r'^s-[a-z0-9-]{2,30}$')
 RESET_TTL = 24 * 3600 * 1000
@@ -1141,8 +1158,12 @@ def manageable(c, p, target):
         return True
     ds = dir_schools(p)
     roles = [r for r in all_roles(c, target['id']) if r['status'] == 'active']
-    allowed = ('teacher', 'director', 'expert') if rank >= RANK['region_admin'] else ('teacher',)
+    allowed = ('teacher', 'director', 'expert') if rank >= RANK['district_admin'] else ('teacher',)
     return bool(ds) and bool(roles) and all(r['role'] in allowed and r['school'] in ds for r in roles)
+
+
+def region_keys(p):
+    return {key_parts(r['school'])[0] for r in p.get('roles') or [] if r['role'] == 'region_admin' and key_parts(r['school'])}
 
 
 def grant_ok(p, role, school, invite=False):
@@ -1152,7 +1173,7 @@ def grant_ok(p, role, school, invite=False):
         return False
     if rank >= SUPER:
         return True
-    return school in dir_schools(p) and (invite or rank >= RANK['region_admin'] or role == 'teacher')
+    return (school in dir_schools(p) or (role == 'district_admin' and rank >= RANK['region_admin'] and (key_parts(school) or ('',))[0] in region_keys(p))) and (invite or rank >= RANK['district_admin'] or role == 'teacher')
 
 
 def active_directors(c, school, exclude=None):
@@ -1214,21 +1235,21 @@ def admin_action(c, p, act, b, ip):
         return {'ok': True}
     if act in ('role.assign', 'role.remove'):
         role, school, uid = S('role', 20), S('school', 40), S('user_id', 40)
-        if role == 'region_admin':
-            school = scope_key(S('region', 60)) or ''
+        if role in SCOPE_ROLES:
+            school = scope_key(role, S('region', 60), S('district', 60)) or ''
         t = user_row(c, uid)
         if not t or t['status'] != 'active':
             raise AdminError(404, 'Пользователя нет.')
         if uid == p['id']:
             audit(c, who, 'admin.denied', 'user', uid, None, {'why': 'self', 'action': act})
             raise AdminError(403, 'Свои роли менять нельзя.')
-        if role not in ('region_admin', 'director', 'teacher', 'expert'):
+        if role not in ('region_admin', 'district_admin', 'director', 'teacher', 'expert'):
             raise AdminError(403 if role == 'superadmin' else 400, 'Эту роль выдать нельзя.')
         if not grant_ok(p, role, school):
             audit(c, who, 'admin.denied', 'user', uid, school or None, {'why': 'role', 'role': role, 'action': act})
             raise AdminError(403, 'Эту роль вы выдать не можете.')
         if not scope_alive(c, role, school):
-            raise AdminError(400, 'Такого региона нет.' if role == 'region_admin' else 'Такой школы нет.')
+            raise AdminError(400, 'Такой области нет.' if role in SCOPE_ROLES else 'Такой школы нет.')
         if act == 'role.assign':
             c.execute("INSERT INTO user_roles(user_id, role, school, status, created, created_by) VALUES(?, ?, ?, 'active', ?, ?) ON CONFLICT(user_id, role, school) DO UPDATE SET status = 'active'", (uid, role, school, now, p['id']))
             audit(c, who, 'role.assign', 'user', uid, school or None, {'role': role})
@@ -1277,15 +1298,15 @@ def admin_action(c, p, act, b, ip):
             audit(c, who, 'invite.revoke', 'invite', S('id', 12), None, {})
             return {'ok': True}
         role, school = S('role', 20), S('school', 40)
-        if role == 'region_admin':
-            school = scope_key(S('region', 60)) or ''
-        if role not in ('region_admin', 'director', 'teacher', 'expert'):
+        if role in SCOPE_ROLES:
+            school = scope_key(role, S('region', 60), S('district', 60)) or ''
+        if role not in ('region_admin', 'district_admin', 'director', 'teacher', 'expert'):
             raise AdminError(400, 'Приглашать можно регионального администратора, директора, учителя или специалиста.')
         if not grant_ok(p, role, school, invite=True):
             audit(c, who, 'admin.denied', 'invite', None, school or None, {'why': 'role', 'role': role, 'action': act})
             raise AdminError(403, 'Эту роль вы выдать не можете.')
         if not scope_alive(c, role, school):
-            raise AdminError(400, 'Такого региона нет.' if role == 'region_admin' else 'Такой школы нет.')
+            raise AdminError(400, 'Такой области нет.' if role in SCOPE_ROLES else 'Такой школы нет.')
         code = new_code()
         c.execute('INSERT INTO invites(code_hash, kind, role, school, user_id, created_by, created, expires, used_at, used_by) VALUES(?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL)',
                   (thash(code), 'join', role, school, p['id'], now, now + INVITE_TTL))
@@ -1609,20 +1630,23 @@ def accounts_api(c, p, q):
         return {'items': [dict(k, students=cnt.get(k['id'], 0), teacherName=tn.get(k['teacherId'], '')) for k in part], 'total': tot, 'page': page, 'size': size}
     if kind == 'admins':
         rank = my_rank(p)
-        if rank < RANK['region_admin']:
-            raise AdminError(403, 'Список администраторов доступен суперадмину и региональному администратору.')
+        if rank < RANK['district_admin']:
+            raise AdminError(403, 'Список администраторов доступен администраторам региона и района и суперадмину.')
         want = q.get('role') or ''
         by_user = {}
-        for uid, role, sch in c.execute("SELECT ur.user_id, ur.role, ur.school FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.status = 'active' AND ur.role IN ('superadmin', 'region_admin', 'director')"):
+        for uid, role, sch in c.execute("SELECT ur.user_id, ur.role, ur.school FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.status = 'active' AND ur.role IN ('superadmin', 'region_admin', 'district_admin', 'director')"):
             if want and role != want:
                 continue
             if role == 'director' and sch not in schools:
                 continue
-            if role == 'region_admin' and (rank < SUPER or want_school or (q.get('region') and key_region(sch) != q['region'][:60])):
+            kp = key_parts(sch) if role in SCOPE_ROLES else None
+            if role == 'region_admin' and (rank < SUPER or want_school or (q.get('region') and kp[0] != q['region'][:60])):
+                continue
+            if role == 'district_admin' and (rank < RANK['region_admin'] or want_school or (rank < SUPER and kp[0] not in region_keys(p)) or (q.get('region') and kp[0] != q['region'][:60]) or (q.get('district') and kp[1] != q['district'][:60])):
                 continue
             if role == 'superadmin' and (rank < SUPER or want_school or q.get('region')):
                 continue
-            by_user.setdefault(uid, []).append({'role': role, 'school': sch, 'region': key_region(sch) if role == 'region_admin' else None})
+            by_user.setdefault(uid, []).append({'role': role, 'school': sch, 'region': kp[0] if kp else None, 'district': kp[1] if kp else None})
         rows = []
         for uid, rl in by_user.items():
             u = user_row(c, uid)
@@ -2186,7 +2210,7 @@ class H(BaseHTTPRequestHandler):
             if u:
                 roles = principal_roles(c, u['id'])
                 stored = c.execute('SELECT pw FROM users WHERE id = ?', (u['id'],)).fetchone()[0]
-                need_pw = act in ('role.assign', 'role.remove', 'invite.create') and body.get('role') in ('director', 'region_admin')
+                need_pw = act in ('role.assign', 'role.remove', 'invite.create') and body.get('role') in ('director', 'region_admin', 'district_admin')
                 wait = throttle(c, 'adm:' + u['login'], ip, now) if need_pw else 0
         if not u:
             return self.reply(401, {'error': 'no session'})

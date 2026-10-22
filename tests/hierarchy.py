@@ -19,14 +19,14 @@ def ok(c, m):
 
 NOW = int(time.time() * 1000)
 WHO = ('cli', 'test', '')
-LOGIN = {'sup': 'super.one', 'regA': 'reg.north', 'dirN1': 'dir.n1', 'tN1': 't.n1', 'dirS': 'dir.s', 'tS1': 't.s1'}
+LOGIN = {'sup': 'super.one', 'regA': 'reg.north', 'disA': 'dis.center', 'dirN1': 'dir.n1', 'tN1': 't.n1', 'dirS': 'dir.s', 'tS1': 't.s1'}
 PW = {u: 'Pass-%s-2026-Zq' % u for u in LOGIN}
 UID = {}
 app.init_db()
 with app.db() as c:
     for sid, name, reg in (('s-n1', 'Школа С1', 'Север'), ('s-n2', 'Школа С2', 'Север'), ('s-s1', 'Школа Ю1', 'Юг')):
-        c.execute("INSERT INTO schools(id, name, region, status, network, created, updated) VALUES(?, ?, ?, 'active', '', ?, ?)", (sid, name, reg, NOW, NOW))
-    for k, roles in (('sup', [('superadmin', '')]), ('regA', [('region_admin', 'r:Север')]), ('dirN1', [('director', 's-n1')]), ('tN1', [('teacher', 's-n1')]),
+        c.execute("INSERT INTO schools(id, name, region, district, status, network, created, updated) VALUES(?, ?, ?, ?, 'active', '', ?, ?)", (sid, name, reg, 'Центр' if sid == 's-n1' else 'Окраина', NOW, NOW))
+    for k, roles in (('sup', [('superadmin', '')]), ('regA', [('region_admin', 'r:Север')]), ('disA', [('district_admin', 'd:Север|Центр')]), ('dirN1', [('director', 's-n1')]), ('tN1', [('teacher', 's-n1')]),
                      ('dirS', [('director', 's-s1')]), ('tS1', [('teacher', 's-s1')])):
         UID[k] = app.user_create(c, LOGIN[k], 'Фамилия %s Имя' % k, PW[k], WHO)
         for r, s in roles:
@@ -92,17 +92,27 @@ try:
     st, b = adm('sup', 'role.assign', {'user_id': UID['tN1'], 'role': 'region_admin', 'region': 'Север'}); ok(st == 200, 'суперадмин назначает регионального админа')
     ok(sql("select count(*) from user_roles where role='region_admin' and school='r:Север' and status='active'")[0][0] == 2, 'в базе роль хранится с ключом области r:Север')
     st, b = adm('sup', 'role.remove', {'user_id': UID['tN1'], 'role': 'region_admin', 'region': 'Север'}); ok(st == 200, 'и снимает')
+    # --- администратор района: только школы района
+    st, b = adm('disA', 'invite.create', {'role': 'director', 'school': 's-n1'}); ok(st == 200, 'администратор района приглашает директора в школу района')
+    st, b = adm('disA', 'invite.create', {'role': 'director', 'school': 's-n2'}); ok(st == 403, 'но не в школу другого района')
+    st, b = adm('disA', 'invite.create', {'role': 'district_admin', 'region': 'Север', 'district': 'Центр'}); ok(st == 403, 'равных себе не создаёт')
+    st, b = adm('regA', 'role.assign', {'user_id': UID['tN1'], 'role': 'district_admin', 'region': 'Север', 'district': 'Окраина'}); ok(st == 200, 'региональный админ назначает администратора района своего региона')
+    st, b = adm('regA', 'role.assign', {'user_id': UID['tS1'], 'role': 'district_admin', 'region': 'Юг', 'district': 'Окраина'}); ok(st == 403, 'в чужом регионе — нет')
+    st, b = adm('regA', 'role.assign', {'user_id': UID['tN1'], 'role': 'district_admin', 'region': 'Север', 'district': 'Нет такого'}); ok(st == 400, 'района без школ нет')
+    st, b = adm('disA', 'class.create', {'grade': 6, 'letter': 'А', 'school_id': 's-n1'}); ok(st == 200, 'администратор района создаёт класс в школе района')
+    st, b = adm('disA', 'class.create', {'grade': 6, 'letter': 'Б', 'school_id': 's-n2'}); ok(st == 403, 'в школе другого района — нет')
+    st, b = adm('regA', 'role.remove', {'user_id': UID['tN1'], 'role': 'district_admin', 'region': 'Север', 'district': 'Окраина'}); ok(st == 200, 'и снимает')
     # --- видимость
     st, b = get('regA', '/api/accounts?kind=classes&size=50'); sch = {x['school'] for x in b['items']}
     ok(st == 200 and sch == {'s-n1'}, 'региональный админ видит классы только своего региона: ' + str(sch))
     st, b = get('regA', '/api/options?level=school'); ok(sorted(x['id'] for x in b['items']) == ['s-n1', 's-n2'], 'в списке школ — только регион')
     # --- список администраторов
-    st, b = get('sup', '/api/accounts?kind=admins'); ok(st == 200 and b['total'] == 4, 'суперадмин видит всех администраторов (4): ' + str(b.get('total')))
+    st, b = get('sup', '/api/accounts?kind=admins'); ok(st == 200 and b['total'] == 5, 'суперадмин видит всех администраторов (5): ' + str(b.get('total')))
     st, b = get('sup', '/api/accounts?kind=admins&role=director'); ok(b['total'] == 2, 'фильтр по роли: два директора')
-    st, b = get('sup', '/api/accounts?kind=admins&region=' + urllib.parse.quote('Север')); ok(b['total'] == 2 and 'dir.n1' in [x['login'] for x in b['items']], 'фильтр по региону: региональный админ и директор Севера')
+    st, b = get('sup', '/api/accounts?kind=admins&region=' + urllib.parse.quote('Север')); ok(b['total'] == 3 and 'dir.n1' in [x['login'] for x in b['items']], 'фильтр по региону: региональный админ, администратор района и директор Севера')
     st, b = get('sup', '/api/accounts?kind=admins&school=s-s1'); ok(b['total'] == 1 and b['items'][0]['login'] == 'dir.s', 'фильтр по школе')
     st, b = get('sup', '/api/accounts?kind=admins&q=reg.north'); ok(b['total'] == 1, 'поиск по логину')
-    st, b = get('regA', '/api/accounts?kind=admins'); ok(st == 200 and [x['login'] for x in b['items']] == ['dir.n1'], 'региональный админ видит директоров своего региона')
+    st, b = get('regA', '/api/accounts?kind=admins'); ok(st == 200 and sorted(x['login'] for x in b['items']) == ['dir.n1', 'dis.center'], 'региональный админ видит директоров и администраторов района своего региона')
     st, b = get('dirN1', '/api/accounts?kind=admins'); ok(st == 403, 'директору список администраторов закрыт')
     st, b = get('tS1', '/api/accounts?kind=admins'); ok(st == 403, 'учителю тоже')
     ok(sql("select count(*) from audit_log where action in ('role.assign','role.remove','invite.create','class.create')")[0][0] >= 6, 'действия в журнале')
