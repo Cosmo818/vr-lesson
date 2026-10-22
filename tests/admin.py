@@ -302,6 +302,12 @@ try:
     st, b = get('dirA', '/api/accounts?kind=classes&status=archived'); ok(st == 200 and all(x['status'] == 'archived' for x in b['items']), 'accounts classes status=archived')
     st, b = get('dirA', '/api/accounts?kind=classes&status=active'); ok(st == 200 and b['items'] and all(x['status'] == 'active' for x in b['items']), 'accounts classes status=active')
     st, b = get('dirA', '/api/accounts?kind=teachers&status=all'); ok(st == 200 and b['total'] >= 2, 'accounts teachers status=all')
+    adm('dirA', 'user.archive', {'user_id': UID['tA2']})  # архивная учётка: роль осталась active, статус — в users.status
+    st, ba = get('dirA', '/api/accounts?kind=teachers&status=archived'); st2, bc = get('dirA', '/api/accounts?kind=teachers&status=active'); st3, bd = get('dirA', '/api/accounts?kind=teachers')
+    ok(st == 200 and [i['id'] for i in ba['items']] == [UID['tA2']] and ba['total'] == 1 and all(i['status'] == 'archived' for i in ba['items']), 'accounts teachers status=archived — по статусу учётки, total точный')
+    ok(st2 == 200 and UID['tA2'] not in [i['id'] for i in bc['items']] and bc['items'] and all(i['status'] == 'active' for i in bc['items']) and UID['tA2'] not in [i['id'] for i in bd['items']], 'accounts teachers active и по умолчанию без архивных')
+    adm('dirA', 'user.restore', {'user_id': UID['tA2']}); login('tA2')  # сессии при архивации отозваны — входим заново
+    st, b = get('sup', '/api/accounts?kind=admins&status=archived'); ok(st == 200 and all(i['status'] == 'archived' for i in b['items']), 'accounts admins status=archived')
     st, b = get('dirA', '/api/accounts?kind=classes&status=zzz'); ok(st == 400, 'неверный status — 400')
     # автор теста
     tq = lambda i, t=None, **kw: dict({'id': i, 'title': t or 'Тест ' + i, 'subj': 'math', 'qs': [{'id': 'q1', 'q': '2+2', 'a': ['4', '5'], 'e': ''}], 'created': NOW, 'updated': NOW}, **kw)  # noqa: E731

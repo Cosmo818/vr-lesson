@@ -368,6 +368,7 @@ const Store=VR.Store={
   qs(o){return Object.keys(o||{}).filter(k=>o[k]!==undefined&&o[k]!==''&&o[k]!==null).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(o[k])).join('&');},
   options(q){return Store.call('GET','/api/options?'+Store.qs(q));},
   accounts(q){return Store.call('GET','/api/accounts?'+Store.qs(q));},
+  history(q){return Store.call('GET','/api/history?'+Store.qs(q));},/* журнал школы (Б74): school, kind, from, page, size */
   async activate(b){
     const r=await Store.call('POST','/api/auth/activate',b,true);
     if(r.status===200&&r.data.token)try{sessionStorage.setItem('vrl.token',r.data.token);sessionStorage.setItem('vrl.user',(r.data.user&&r.data.user.login)||'');sessionStorage.setItem('vrl.roles',JSON.stringify(r.data.roles||[]));}catch(e){}

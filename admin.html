@@ -36,6 +36,9 @@ th{color:var(--muted);font-weight:600;font-size:13px}
 .code{font:700 34px ui-monospace,Menlo,Consolas,monospace;letter-spacing:6px;text-align:center;background:#0e1730;border:1px dashed var(--line);border-radius:12px;padding:14px;margin:10px 0;user-select:all}
 .shade{position:fixed;inset:0;background:rgba(5,8,18,.7);display:flex;align-items:center;justify-content:center;z-index:9;padding:16px}
 .dlg{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:460px;width:100%}
+@media (min-width:900px){.wrap:has(#app:not([hidden])){max-width:1400px}#app:not([hidden]){display:grid;grid-template-columns:200px minmax(0,1fr);column-gap:18px;align-items:start}#app>header{grid-column:1/-1}#app>.tabs{grid-column:1;grid-row:2/span 30;flex-direction:column;flex-wrap:nowrap;position:sticky;top:12px;margin-top:0}#app>.tabs .tab{text-align:left}#app>section,#app>#msg{grid-column:2;min-width:0}}
+@media (max-width:899px){#app>.tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}#app>.tabs .tab{flex:0 0 auto;white-space:nowrap}}
+.tab.sm{padding:6px 12px;font-size:14px}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -51,6 +54,7 @@ th{color:var(--muted);font-weight:600;font-size:13px}
   <div id="app" hidden>
     <header><h1>VR-урок: администрирование</h1><span style="display:flex;gap:16px;align-items:center"><span id="who" class="muted small"></span><a href="teacher.html">Кабинет учителя</a><a href="#" id="out">Выйти</a></span></header>
     <div id="msg" class="note" hidden></div>
+    <div class="tabs" id="tabs"><button class="tab on" data-t="people">Люди и классы</button><button class="tab" data-t="invites">Приглашения</button><button class="tab" data-t="devices">Шлемы</button><button class="tab" data-t="closed" id="tabClosed" hidden>Закрытые результаты</button><button class="tab" data-t="schools" id="tabSchools" hidden>Школы</button><button class="tab" data-t="trash" id="tabTrash" hidden>Корзина</button><button class="tab" data-t="history" id="tabHistory" hidden>История</button></div>
 
     <section id="s-people">
       <h2>Люди и классы</h2>
@@ -65,6 +69,7 @@ th{color:var(--muted);font-weight:600;font-size:13px}
           <label class="small muted">Поиск по имени<br><input id="fQ" maxlength="40" placeholder="часть имени"></label>
         </div>
         <div class="tabs" id="kinds"><button class="tab on" data-k="students">Ученики</button><button class="tab" data-k="teachers">Учителя</button><button class="tab" data-k="classes">Классы</button><button class="tab" data-k="admins" id="tabAdm" hidden>Администраторы</button></div>
+        <div class="tabs" id="stSw"><button class="tab sm on" data-s="active">Действующие</button><button class="tab sm" data-s="archived">Архив</button></div>
         <p><button class="btn" id="clsNew" hidden>＋ Создать класс</button></p>
         <div id="peopleErr" class="note err" hidden></div>
         <div class="scroll"><table id="tbl"></table></div>
@@ -108,8 +113,30 @@ th{color:var(--muted);font-weight:600;font-size:13px}
       <h2>Школы</h2>
       <div class="card">
         <div class="row"><label class="small muted">Название<br><input id="shName" maxlength="80"></label><label class="small muted">Регион<br><input id="shReg" maxlength="60"></label><label class="small muted">Район<br><input id="shDist" maxlength="60"></label><button class="btn" id="shGo">Добавить школу</button></div>
+        <div class="tabs" id="shSw"><button class="tab sm on" data-s="active">Действующие</button><button class="tab sm" data-s="archived">Архив</button></div>
         <div id="shErr" class="note err" hidden></div>
         <div class="scroll"><table id="shTbl"></table></div>
+      </div>
+    </section>
+
+    <section id="s-trash" hidden>
+      <h2>Корзина</h2>
+      <div class="card">
+        <p class="muted small">Удалённые тесты, отзывы и комнаты. «Вернуть копию» создаёт новую запись; уже возвращённое помечено. Результаты и открытые комнаты здесь только для просмотра.</p>
+        <div class="row"><label class="small muted">Вид<br><select id="trKind"><option value="">Все</option><option value="test">Тесты</option><option value="feedback">Отзывы</option><option value="room">Комнаты</option><option value="result">Результаты</option><option value="open_room">Открытые комнаты</option></select></label><label class="small muted">Школа<br><select id="trSchool"></select></label></div>
+        <div id="trErr" class="note err" hidden></div>
+        <div class="scroll"><table id="trTbl"></table></div>
+        <div class="row"><button class="btn ghost" id="trMore" hidden>Показать ещё</button></div>
+      </div>
+    </section>
+
+    <section id="s-history" hidden>
+      <h2>История</h2>
+      <div class="card">
+        <div class="row"><label class="small muted">Школа<br><select id="hiSchool"></select></label><label class="small muted">Что показывать<br><select id="hiKind"><option value="all">Всё</option><option value="user">Люди: директора и учителя</option><option value="student">Ученики</option><option value="class">Классы</option></select></label><label class="small muted">Период<br><select id="hiPeriod"><option value="">Всё время</option><option value="1">Сутки</option><option value="7">7 дней</option><option value="30">30 дней</option></select></label></div>
+        <div id="hiErr" class="note err" hidden></div>
+        <div class="scroll"><table id="hiTbl"></table></div>
+        <div class="row"><button class="btn ghost" id="hiMore" hidden>Показать ещё</button></div>
       </div>
     </section>
   </div>

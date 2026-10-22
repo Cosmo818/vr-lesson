@@ -1915,7 +1915,7 @@ def history_api(c, p, q):
 
 
 def role_status_sql(st):
-    """Список статусов роли для фильтра status (константы, не ввод): по умолчанию только действующие."""
+    """Список статусов учётки (users.status) для фильтра status (константы, не ввод): по умолчанию только действующие. user.archive меняет только users.status, роли остаются active."""
     return "'active', 'archived'" if st == 'all' else "'archived'" if st == 'archived' else "'active'"
 
 
@@ -1961,7 +1961,7 @@ def accounts_api(c, p, q):
             raise AdminError(403, 'Список администраторов доступен администраторам региона и района и суперадмину.')
         want = q.get('role') or ''
         by_user = {}
-        for uid, role, sch in c.execute("SELECT ur.user_id, ur.role, ur.school FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.status IN (%s) AND ur.role IN ('superadmin', 'region_admin', 'district_admin', 'director')" % role_status_sql(st_q)):
+        for uid, role, sch in c.execute("SELECT ur.user_id, ur.role, ur.school FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.status = 'active' AND u.status IN (%s) AND ur.role IN ('superadmin', 'region_admin', 'district_admin', 'director')" % role_status_sql(st_q)):
             if want and role != want:
                 continue
             if role == 'director' and sch not in schools:
@@ -1988,7 +1988,7 @@ def accounts_api(c, p, q):
         if not ok_sch:
             return {'items': [], 'total': 0, 'page': page, 'size': size}
         ph = ','.join('?' * len(ok_sch))
-        where = "ur.role = 'teacher' AND ur.status IN (%s) AND ur.school IN (%s)" % (role_status_sql(st_q), ph)
+        where = "ur.role = 'teacher' AND ur.status = 'active' AND u.status IN (%s) AND ur.school IN (%s)" % (role_status_sql(st_q), ph)
         args = list(ok_sch)
         if text:
             where += " AND (u.name LIKE ? ESCAPE '\\' OR u.login LIKE ? ESCAPE '\\')"

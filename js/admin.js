@@ -12,7 +12,7 @@ const isDir=()=>S.account.roles().some(r=>r.role==='director'||r.role==='region_
 const ROLE_RU={superadmin:'суперадмин',region_admin:'региональный администратор',district_admin:'администратор района',director:'директор',teacher:'учитель',expert:'специалист'};
 const roleText=x=>(ROLE_RU[x.role]||x.role)+(x.school?' · '+schoolName(x.school):'');
 const isExp=()=>S.account.roles().some(r=>r.role==='expert');
-let tab='students',page=1,total=0;const SIZE=50;let casc=null,schoolsCache=[];
+let tab='students',view='active',shView='active',page=1,total=0;const SIZE=50;let casc=null,schoolsCache=[];
 const fmt=ts=>ts?new Date(ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
 
 /* ---------- общие помощники ---------- */
@@ -50,31 +50,36 @@ const schoolName=id=>String(id||'').startsWith('r:')?'регион «'+id.slice(
 function actions(td,list){for(const [t,fn,cls] of list){const b=el('button',t,{class:'btn '+(cls||'ghost')});b.onclick=fn;td.appendChild(b);td.appendChild(document.createTextNode(' '));}}
 async function loadPeople(){
   await safe('Люди','peopleErr',async()=>{
-    secErr('peopleErr','');$('clsNew').hidden=tab!=='classes';$('fRoleL').hidden=tab!=='admins';
-    const f=casc.get(),r=await S.accounts({kind:tab,role:tab==='admins'?$('fRole').value:'',region:f.region,school:f.school,class:f.class,teacher:f.teacher,q:$('fQ').value.trim(),page,size:SIZE});
+    secErr('peopleErr','');$('clsNew').hidden=tab!=='classes'||view!=='active';$('fRoleL').hidden=tab!=='admins';
+    const f=casc.get(),r=await S.accounts({kind:tab,role:tab==='admins'?$('fRole').value:'',region:f.region,school:f.school,class:f.class,teacher:f.teacher,q:$('fQ').value.trim(),status:view,page,size:SIZE});
     if(bad(r,'peopleErr')){head(COLS[tab]);total=0;pager();return;}
     const t=head(COLS[tab]);total=r.data.total;
     for(const it of r.data.items){
       const tr=el('tr');
       if(tab==='students'){
         tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.className||'—'));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.hasPin?'есть':'нет'));
-        const td=el('td');actions(td,[['Перенести',()=>moveStudent(it)],['Сбросить код',()=>resetPin(it)]]);tr.appendChild(td);
+        const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreStudent(it)]]:[['Перенести',()=>moveStudent(it)],['Сбросить код',()=>resetPin(it)],['В архив',()=>archiveStudent(it),'red']]);tr.appendChild(td);
       }else if(tab==='teachers'||tab==='admins'){
         tr.appendChild(el('td',it.name||it.login));tr.appendChild(el('td',it.login));tr.appendChild(el('td',it.roles.map(roleText).join(', ')));
-        const td=el('td');actions(td,[['Сбросить пароль',()=>resetPw(it)],['В архив',()=>archive(it),'red']]);tr.appendChild(td);
+        const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreUser(it)]]:[['Сбросить пароль',()=>resetPw(it)],['В архив',()=>archive(it),'red']]);tr.appendChild(td);
       }else{
         tr.appendChild(el('td',it.name));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.teacherName||'— не назначен —'));tr.appendChild(el('td',it.students));
-        const td=el('td');actions(td,[['Передать / перенести',()=>assignClass(it)]]);tr.appendChild(td);
+        const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreClass(it)]]:[['Передать / перенести',()=>assignClass(it)],['В архив',()=>archiveClass(it),'red']]);tr.appendChild(td);
       }
       t.appendChild(tr);
     }
-    if(!r.data.items.length){const tr=el('tr'),td=el('td','Ничего не найдено.',{colspan:String(COLS[tab].length),class:'muted'});tr.appendChild(td);t.appendChild(tr);}
+    if(!r.data.items.length){const tr=el('tr'),td=el('td',view==='archived'?'В архиве пусто.':'Ничего не найдено.',{colspan:String(COLS[tab].length),class:'muted'});tr.appendChild(td);t.appendChild(tr);}
     pager();
   });
 }
 function pager(){const pages=Math.max(1,Math.ceil(total/SIZE));$('pager').textContent='Страница '+page+' из '+pages+' · всего '+total;$('prev').disabled=page<=1;$('next').disabled=page>=pages;}
 async function act(name,body,okText,errId){const r=await S.admin(name,body);if(bad(r,errId))return null;if(okText)say(okText);return r.data;}
 async function resetPin(it){if(!ask('Сбросить код входа ученика «'+it.name+'»? Ученик задаст новый при следующем входе.'))return;if(await act('student.pin',{student_id:it.id},'Код ученика сброшен.'))loadPeople();}
+async function archiveStudent(it){if(!ask('Убрать ученика «'+it.name+'» в архив? Результаты сохранятся, из списков класса он пропадёт. Вернуть можно в разделе «Архив».'))return;if(await act('student.archive',{student_id:it.id},'Ученик в архиве.'))loadPeople();}
+async function restoreStudent(it){if(!ask('Вернуть ученика «'+it.name+'» из архива?'))return;const d=await act('student.restore',{student_id:it.id},'Ученик возвращён.');if(d){if(d.warning==='class_archived')say('Ученик возвращён, но его класс в архиве: верните и класс.');loadPeople();}}
+async function archiveClass(it){if(!ask('Убрать класс «'+it.name+'» в архив? Ученики и результаты сохранятся.'))return;if(await act('class.archive',{class_id:it.id},'Класс в архиве.'))loadPeople();}
+async function restoreClass(it){if(!ask('Вернуть класс «'+it.name+'» из архива?'))return;if(await act('class.restore',{class_id:it.id},'Класс возвращён.'))loadPeople();}
+async function restoreUser(it){if(!ask('Вернуть учётную запись «'+(it.name||it.login)+'» из архива?'))return;if(await act('user.restore',{user_id:it.id},'Учётная запись возвращена.'))loadPeople();}
 async function archive(it){if(!ask('Убрать в архив учётную запись «'+(it.name||it.login)+'»? Вход будет закрыт, данные сохранятся.'))return;if(await act('user.archive',{user_id:it.id},'Учётная запись в архиве.'))loadPeople();}
 async function resetPw(it){
   if(!ask('Сбросить пароль «'+(it.name||it.login)+'»? Все его сессии закроются.'))return;
@@ -180,12 +185,22 @@ async function loadSchools(){
   await safe('Школы','shErr',async()=>{
     secErr('shErr','');const o=await S.options({level:'school'});if(bad(o,'shErr'))return;schoolsCache=o.data.items;
     const t=$('shTbl');t.textContent='';const h=el('tr');for(const c of['Школа','Регион','Район','Код',''])h.appendChild(el('th',c));t.appendChild(h);
-    for(const it of o.data.items){const tr=el('tr');tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.region||'—'));tr.appendChild(el('td',it.district||'—'));tr.appendChild(el('td',it.id));
-      const td=el('td');if(isSuper()){const b=el('button','Изменить',{class:'btn ghost'});b.onclick=()=>editSchool(it);td.appendChild(b);}tr.appendChild(td);t.appendChild(tr);}
+    const shown=o.data.items.filter(x=>shView==='archived'?x.status==='archived':x.status!=='archived');
+    for(const it of shown){const tr=el('tr');tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.region||'—'));tr.appendChild(el('td',it.district||'—'));tr.appendChild(el('td',it.id));
+      const td=el('td');if(isSuper()){
+        if(shView==='archived')actions(td,[['Вернуть',()=>setSchoolStatus(it,'active')]]);
+        else{actions(td,[['Изменить',()=>editSchool(it)]]);if(it.id!=='school-default')actions(td,[['В архив',()=>setSchoolStatus(it,'archived'),'red']]);}
+      }tr.appendChild(td);t.appendChild(tr);}
+    if(!shown.length){const tr=el('tr'),td=el('td',shView==='archived'?'В архиве пусто.':'Школ нет.',{colspan:'5',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
     for(const id of['invSchool','devSchool'])VR.regions.fill($(id),o.data.items,'— выберите школу —',true);
     if(o.data.items.length===1){for(const id of['invSchool','devSchool'])$(id).value=o.data.items[0].id;}
-    if(!$('app').hidden)fillClosedSchools();
+    if(!$('app').hidden){fillClosedSchools();fillHistSchools();}
   });
+}
+async function setSchoolStatus(it,status){
+  if(!ask(status==='archived'?'Убрать школу «'+it.name+'» в архив? Вход шлемов и учителей школы закроется, данные сохранятся.':'Вернуть школу «'+it.name+'» из архива?'))return;
+  const r=await S.admin('school.update',{id:it.id,status});if(bad(r,'shErr'))return;
+  say(status==='archived'?'Школа в архиве.':'Школа возвращена.');await refreshAll();
 }
 async function editSchool(it){
   const n=el('input',null,{maxlength:'80',value:it.name}),rg=el('input',null,{maxlength:'60',value:it.region||''}),ds=el('input',null,{maxlength:'60',value:it.district||''});
@@ -229,6 +244,96 @@ function fillClosedSchools(){
   if(old&&ids.some(x=>x[0]===old))s.value=old;
 }
 
+/* ---------- корзина (директор и выше) ---------- */
+const TRASH_RU={test:'Тест',feedback:'Отзыв',result:'Результат',room:'Комната',open_room:'Открытая комната'},TRASH_BACK=['test','feedback','room'];
+let trPage=1;
+async function loadTrash(more){
+  await safe('Корзина','trErr',async()=>{
+    secErr('trErr','');if(!more)trPage=1;else trPage++;
+    const t=$('trTbl');
+    const r=await S.admin('trash.list',{kind:$('trKind').value,school:$('trSchool').value,page:trPage,size:50});
+    if(r.data&&r.data.expired){lock('Сессия закончилась. Войдите снова.');return;}
+    if(r.status!==200){if(!more){t.textContent='';}$('trMore').hidden=true;secErr('trErr','Раздел «Корзина» временно недоступен.');return;}
+    if(!more){t.textContent='';const h=el('tr');for(const c of['Вид','Название','Школа','Удалено','Кем',''])h.appendChild(el('th',c));t.appendChild(h);}
+    for(const it of r.data.items){
+      const tr=el('tr');tr.appendChild(el('td',TRASH_RU[it.kind]||it.kind));tr.appendChild(el('td',it.title||'—'));tr.appendChild(el('td',it.school?schoolName(it.school):'—'));tr.appendChild(el('td',fmt(it.ts)));tr.appendChild(el('td',it.by==='user'?'пользователь':it.by==='device'?'шлем':it.by||'—'));
+      const td=el('td');
+      if(it.restored_at)td.appendChild(el('span','возвращено '+fmt(it.restored_at),{class:'muted small'}));
+      else if(TRASH_BACK.includes(it.kind))actions(td,[['Вернуть копию',()=>restoreTrash(it)]]);
+      tr.appendChild(td);t.appendChild(tr);
+    }
+    if(!more&&!r.data.items.length){const tr=el('tr'),td=el('td','Корзина пуста.',{colspan:'6',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
+    $('trMore').hidden=!r.data.more;
+  });
+}
+async function restoreTrash(it){
+  if(!ask('Вернуть копию «'+(it.title||TRASH_RU[it.kind]||it.kind)+'»? Появится новая запись, в корзине она останется отмеченной как возвращённая.'))return;
+  const r=await S.admin('trash.restore',{kind:it.kind,id:it.id});if(bad(r,'trErr'))return;
+  say('Копия возвращена.');loadTrash();
+}
+
+/* ---------- история школы (Б74.2, Б74.8): сервер сам режет выдачу по роли; ip приходит только суперадмину ---------- */
+const ACT_RU={'auth.login':'вход в систему','student.create':'добавлен ученик','student.archive':'ученик отправлен в архив','student.restore':'ученик возвращён из архива','student.move':'ученик перенесён','student.pin_reset':'сброшен код входа ученика','student.pin_change':'ученик сменил код входа',
+  'class.create':'создан класс','class.archive':'класс отправлен в архив','class.restore':'класс возвращён из архива','class.assign':'класс передан учителю','class.move':'класс перенесён в другую школу',
+  'user.create':'создана учётная запись','user.archive':'учётная запись в архиве','user.restore':'учётная запись возвращена','role.add':'добавлена роль','role.assign':'назначена роль','role.remove':'роль снята','password.reset_issue':'выдан код сброса пароля',
+  'invite.create':'создано приглашение','invite.revoke':'приглашение отозвано','device.code':'выпущен код привязки шлема','device.revoke':'шлем отозван',
+  'school.create':'создана школа','school.update':'школа изменена','trash.restore':'возвращена копия из корзины','upload.create':'загружен файл','upload.archive':'файл в архиве','upload.restore':'файл возвращён','upload.approve':'файл одобрен','upload.reject':'файл отклонён','upload.delete':'файл удалён','room.publish':'комната опубликована','closed.view':'просмотр закрытых результатов','admin.denied':'отказ в доступе'};
+const actRu=a=>ACT_RU[a]||a;
+let hiPage=1;
+function fillHistSchools(){
+  const s=$('hiSchool'),old=s.value;s.textContent='';
+  const items=schoolsCache.filter(x=>isSuper()||x.status!=='archived');
+  for(const x of items)s.appendChild(el('option',x.name+(x.status==='archived'?' (архив)':''),{value:x.id}));
+  if(isSuper())s.appendChild(el('option','Без школы',{value:'-'}));
+  if(old&&Array.from(s.options).some(o=>o.value===old))s.value=old;
+  const tr=$('trSchool'),o2=tr.value;tr.textContent='';tr.appendChild(el('option','Все',{value:''}));for(const x of schoolsCache)tr.appendChild(el('option',x.name,{value:x.id}));if(o2&&Array.from(tr.options).some(o=>o.value===o2))tr.value=o2;
+}
+function histTarget(it){
+  const k={user:'пользователь',student:'ученик',class:'класс',school:'школа',device:'шлем',upload:'файл',room:'комната'}[it.kind]||it.kind||'';
+  if(!it.kind)return '—';
+  const d=it.detail||{};
+  if(['user','student','class','school'].includes(it.kind))return k+' '+(it.name||(it.kind==='class'&&d.name)||'стёрто');
+  return k+(d.title||d.name?' «'+(d.title||d.name)+'»':'');
+}
+function histRows(items,more){
+  const t=$('hiTbl'),withIp=items.some(i=>i.ip!==undefined)||t.dataset.ip==='1';
+  if(!more){t.textContent='';t.dataset.ip=withIp?'1':'';const h=el('tr');for(const c of['Когда','Кто','Что','Над кем'].concat(withIp?['IP']:[]))h.appendChild(el('th',c));t.appendChild(h);}
+  for(const it of items){
+    const tr=el('tr');tr.appendChild(el('td',fmt(it.ts)));tr.appendChild(el('td',it.actor||'—'));
+    const d=it.detail||{},extra=[];if(d.name&&it.kind!=='class')extra.push(d.name);if(d.role)extra.push(ROLE_RU[d.role]||d.role);if(d.status)extra.push(d.status==='archived'?'архив':d.status==='active'?'действует':d.status);
+    tr.appendChild(el('td',actRu(it.action)+(extra.length&&['role.add','role.assign','role.remove','school.update','invite.create'].includes(it.action)?' ('+extra.join(', ')+')':'')));
+    tr.appendChild(el('td',histTarget(it)));
+    if(t.dataset.ip==='1')tr.appendChild(el('td',it.ip||'—'));
+    t.appendChild(tr);
+  }
+}
+async function loadHistory(more){
+  await safe('История','hiErr',async()=>{
+    secErr('hiErr','');if(!more)hiPage=1;else hiPage++;
+    const school=$('hiSchool').value,t=$('hiTbl');
+    if(!school){t.textContent='';$('hiMore').hidden=true;secErr('hiErr','Выберите школу.');return;}
+    const days=parseInt($('hiPeriod').value,10),q={school,kind:$('hiKind').value,page:hiPage,size:50};
+    if(days)q.from=Date.now()-days*86400000;
+    const r=await S.history(q);
+    if(r.data&&r.data.expired){lock('Сессия закончилась. Войдите снова.');return;}
+    if(r.status!==200||!r.data||!Array.isArray(r.data.items)){if(!more)t.textContent='';$('hiMore').hidden=true;if(more)hiPage--;secErr('hiErr','Раздел «История» временно недоступен.');return;}
+    histRows(r.data.items,more);
+    if(!more&&!r.data.items.length){const tr=el('tr'),td=el('td','Событий нет.',{colspan:'5',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
+    $('hiMore').hidden=!r.data.more;
+  });
+}
+
+/* ---------- разделы ---------- */
+const SECS=['people','invites','devices','closed','schools','trash','history'];
+function openTab(name){
+  for(const b of $('tabs').children)b.classList.toggle('on',b.dataset.t===name);
+  for(const x of SECS)$('s-'+x).hidden=x!==name;
+  if(name==='trash')loadTrash();else if(name==='history')loadHistory();
+}
+function switchBar(id,get,set){
+  $(id).onclick=e=>{const b=e.target.closest('[data-s]');if(!b||b.dataset.s===get())return;set(b.dataset.s);for(const x of $(id).children)x.classList.toggle('on',x===b);};
+}
+
 /* ---------- вход и запуск ---------- */
 function show(){
   $('lock').hidden=true;$('app').hidden=false;
@@ -237,9 +342,9 @@ function show(){
   const onlyExp=!isSuper()&&!isDir();
   $('who').textContent=(S.account.who()||'')+' · '+(isSuper()?'администратор':S.account.roles().some(r=>r.role==='region_admin')?'региональный администратор':isReg()?'администратор района':isDir()?'директор':'специалист');
   $('tabAdm').hidden=!(isSuper()||isReg());
-  for(const id of['s-people','s-invites','s-devices'])$(id).hidden=onlyExp;
-  $('s-closed').hidden=!(isSuper()||isExp());
-  $('s-schools').hidden=!isSuper();
+  const tabOk={people:!onlyExp,invites:!onlyExp,devices:!onlyExp,closed:isSuper()||isExp(),schools:isSuper(),trash:!onlyExp&&(isSuper()||isDir()),history:!onlyExp&&(isSuper()||isDir())};
+  for(const b of $('tabs').children)b.hidden=!tabOk[b.dataset.t];
+  openTab(onlyExp?'closed':'people');
   const roleSel=$('invRole');roleSel.textContent='';for(const [v,t] of isSuper()?[['teacher','Учитель'],['director','Директор'],['expert','Специалист'],['region_admin','Региональный администратор'],['district_admin','Администратор района']]:[['teacher','Учитель'],['expert','Специалист']])roleSel.appendChild(el('option',t,{value:v}));
   say('');
   if(onlyExp){fillClosedSchools();return;}
@@ -251,6 +356,10 @@ function bind(){
   $('clsNew').onclick=createClass;$('fRole').onchange=()=>{page=1;loadPeople();};
   $('prev').onclick=()=>{if(page>1){page--;loadPeople();}};$('next').onclick=()=>{page++;loadPeople();};
   let tm=null;$('fQ').oninput=()=>{clearTimeout(tm);tm=setTimeout(()=>{page=1;loadPeople();},300);};
+  $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(b)openTab(b.dataset.t);};
+  switchBar('stSw',()=>view,v=>{view=v;page=1;loadPeople();});switchBar('shSw',()=>shView,v=>{shView=v;loadSchools();});
+  $('trKind').onchange=$('trSchool').onchange=()=>loadTrash();$('trMore').onclick=()=>loadTrash(true);
+  $('hiSchool').onchange=$('hiKind').onchange=$('hiPeriod').onchange=()=>loadHistory();$('hiMore').onclick=()=>loadHistory(true);
   $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
   $('devLimGo').onclick=async()=>{const r=await S.admin('school.update',{id:$('devSchool').value,device_limit:$('devLim').value});if(!bad(r,'devErr')){say('Лимит сохранён.');loadDevices();}};
   casc=VR.regions.cascade({region:$('fRegion'),district:$('fDistrict'),school:$('fSchool'),cls:$('fClass'),teacher:$('fTeacher')},()=>{page=1;loadPeople();});
