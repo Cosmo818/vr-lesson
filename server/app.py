@@ -437,8 +437,8 @@ def migrate_b74(c):
         if 'archived_by' not in cols:
             c.execute('ALTER TABLE uploads ADD COLUMN archived_by TEXT')
         # всё, удалённое до Б74, стёрто физически: это жёсткие надгробия
-        c.execute("INSERT OR IGNORE INTO purged(id, ts, kind) SELECT id, ts, 'legacy' FROM deleted")
-        if c.execute('PRAGMA user_version').fetchone()[0] < 6:
+        if c.execute('PRAGMA user_version').fetchone()[0] < 6:  # только при переходе: позже в deleted лежат мягкие надгробия
+            c.execute("INSERT OR IGNORE INTO purged(id, ts, kind) SELECT id, ts, 'legacy' FROM deleted")
             c.execute('PRAGMA user_version = 6')
         c.execute('COMMIT')
     except BaseException:
@@ -448,10 +448,10 @@ def migrate_b74(c):
 
 
 def to_trash(c, kind, rid, school, doc, who):
-    """Кладёт копию записи в корзину (kind: test, feedback, result, room, open_room) перед удалением; повтор не перезаписывает. who = (вид, id, ip) как в audit."""
+    """Кладёт копию записи в корзину (kind: test, feedback, result, room, open_room) перед удалением; повтор не перезаписывает (кроме комнат: последняя версия). who = (вид, id, ip) как в audit."""
     if not isinstance(doc, str):
         doc = json.dumps(doc, ensure_ascii=False)
-    c.execute('INSERT OR IGNORE INTO trash(kind, id, school, doc, ts, actor_kind, actor_id) VALUES(?, ?, ?, ?, ?, ?, ?)',
+    c.execute('INSERT OR %s INTO trash(kind, id, school, doc, ts, actor_kind, actor_id) VALUES(?, ?, ?, ?, ?, ?, ?)' % ('REPLACE' if kind == 'room' else 'IGNORE'),
               (kind, str(rid), school or DEFAULT_SCHOOL, doc, int(time.time() * 1000), who[0], who[1]))
 
 
@@ -599,14 +599,14 @@ def merge_in(c, inc, role, ip='', principal=None):
             continue
         for k, ts in m.items():
             if num(ts) >= reset:
-                c.execute('INSERT INTO disc(sid, k, ts) VALUES(?, ?, ?) ON CONFLICT(sid, k) DO UPDATE SET ts = min(ts, excluded.ts)', (sid, k, num(ts)))
+                c.execute('INSERT INTO disc(sid, k, ts) VALUES(?, ?, ?) ON CONFLICT(sid, k) DO UPDATE SET ts = CASE WHEN ts < ? THEN excluded.ts ELSE min(ts, excluded.ts) END', (sid, k, num(ts), reset))
     # подчистить удалённое и сброшенное
-    c.execute('DELETE FROM students WHERE id IN (SELECT id FROM deleted)')
     for t, kind in (('tests', 'test'), ('feedback', 'feedback')):  # в корзину и удалить — в одной транзакции со слиянием
         for rid, doc in c.execute('SELECT id, doc FROM %s WHERE id IN (SELECT id FROM deleted)' % t).fetchall():
             to_trash(c, kind, rid, DEFAULT_SCHOOL, doc, who)
-    for rid, doc, sch in c.execute('SELECT r.id, r.doc, s.school FROM results r LEFT JOIN students s ON s.id = r.sid WHERE r.id IN (SELECT id FROM deleted)').fetchall():
+    for rid, doc, sch in c.execute('SELECT r.id, r.doc, s.school FROM results r LEFT JOIN students s ON s.id = r.sid WHERE r.id IN (SELECT id FROM deleted) OR r.sid IN (SELECT id FROM deleted)').fetchall():
         to_trash(c, 'result', rid, sch, doc, who)
+    c.execute('DELETE FROM students WHERE id IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM tests WHERE id IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM classes WHERE id IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM deleted) OR id IN (SELECT id FROM deleted)')
@@ -687,8 +687,8 @@ def state(c, hide_pins=False, principal=None):
             for n in range(0, len(ids), 500):
                 part = ids[n:n + 500]
                 q = ','.join('?' * len(part))
-                rows += c.execute('SELECT ts, doc FROM results WHERE sid IN (%s) AND ts >= ? AND %s' % (q, open_results_sql(c)), part + [reset]).fetchall()
-                for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc WHERE sid IN (%s) AND ts >= ?' % q, part + [reset]):
+                rows += c.execute('SELECT ts, doc FROM results WHERE sid IN (%s) AND +ts >= ? AND %s' % (q, open_results_sql(c)), part + [reset]).fetchall()
+                for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc WHERE sid IN (%s) AND +ts >= ?' % q, part + [reset]):
                     disc.setdefault(sid, {})[k] = ts
             rows.sort(key=lambda r: r[0] or 0)
             results = [json.loads(r[1]) for r in rows]
@@ -1402,7 +1402,7 @@ def admin_action(c, p, act, b, ip):
             if rank >= SUPER and not sch or d.get('school') == sch:
                 studs[sid] = d
         out = []
-        for sid, raw in c.execute("SELECT sid, doc FROM results WHERE closed = 1 ORDER BY ts DESC LIMIT 1000"):
+        for sid, raw in c.execute("SELECT sid, doc FROM results WHERE closed = 1 AND ts >= ? ORDER BY ts DESC LIMIT 1000", (num(get_settings(c).get('resetAt')),)):
             if sid in studs:
                 r = json.loads(raw)
                 out.append({'student': studs[sid].get('name', ''), 'grade': studs[sid].get('grade'), 'test': r.get('testTitle') or '', 'score': r.get('score'), 'total': r.get('total'), 'ts': r.get('ts')})
