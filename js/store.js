@@ -42,7 +42,10 @@ function load(){
   db=norm(x);return db;
 }
 const listeners=[];
-function save(){try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){return false;}for(const f of listeners)try{f();}catch(e){}return true;}
+/* индекс результатов по ученику: кабинет учителя считал results(sid) перебором всех результатов для каждого ученика по нескольку раз (сек. на сотне учеников в шлеме). Сбрасывается при каждом save() и при замене db/массива. */
+let saveSeq=0,rc=null;
+function resIndex(){const d=load();if(rc&&rc.d===d&&rc.r===d.results&&rc.n===d.results.length&&rc.seq===saveSeq)return rc;const m=new Map(),all=[];for(const x of d.results){if(x.closed)continue;all.push(x);let a=m.get(x.sid);if(!a)m.set(x.sid,a=[]);a.push(x);}rc={d,r:d.results,n:d.results.length,seq:saveSeq,m,all};return rc;}
+function save(){saveSeq++;try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){return false;}for(const f of listeners)try{f();}catch(e){}return true;}
 
 const Store=VR.Store={
   SUBJ,merge,norm,
@@ -147,7 +150,7 @@ const Store=VR.Store={
   /* результаты и открытия */
   addResult(r){const x=Object.assign({id:uid(),ts:now()},r);load().results.push(x);save();Store.syncSoon();return x;},
   /* закрытые результаты (Б56) не попадают ни в рейтинг, ни в баллы, ни в отчёты кабинета: их видит только специалист через сервер */
-  results(sid){const r=load().results.filter(x=>!x.closed);return sid?r.filter(x=>x.sid===sid):r;},
+  results(sid){const i=resIndex();return sid?(i.m.get(sid)||[]).slice():i.all.slice();},
   addDiscovery(sid,subj,key){
     if(!sid)return false;
     const d=load(),m=d.disc[sid]=d.disc[sid]||{},k=subj+':'+key;
