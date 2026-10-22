@@ -14,7 +14,7 @@ const STEPS={
   look:{t:'Осмотрись',d:'Двигай мышью — взгляд поворачивается сам, курсор не упирается в край экрана. Если мышь не захвачена, щёлкни по экрану.',desk:1},
   walk:{t:'Иди',d:'Нажимай W A S D (стрелки тоже работают). С зажатым Shift — быстрее. Пройди несколько шагов.',desk:1},
   select:{t:'Выбери',v:'Наведи луч на зелёный шар и нажми КУРОК (указательный палец). Курок выбирает кнопки и двери.',d:'Наведи перекрестие на зелёный шар и щёлкни левой кнопкой мыши (или пробел).',hot:'trigger'},
-  grab:{t:'Возьми предмет',v:'Поднеси руку к кубику на столе справа, зажми ХВАТ (средний палец) и подними. Отпусти хват — кубик упадёт. Брось его!',d:'Наведи перекрестие на кубик на столе справа, держи правую кнопку мыши (или E) — предмет у тебя в руке. Колесо — дальше/ближе. Отпусти — бросок.',hot:'grip'},
+  grab:{t:'Возьми предмет',v:'Поднеси руку к кубику на столе справа, зажми ХВАТ (средний палец) и подними. Издалека: наведи луч и зажми хват — кубик прилетит в руку. Пока держишь, КУРОК — выстрел по лучу. Отпусти хват — кубик упадёт.',d:'Наведи перекрестие на кубик на столе справа и держи правую кнопку мыши (или E) — кубик прилетит в руку. Колесо — дальше/ближе. Пока держишь, ЛКМ — выстрел. Отпусти — бросок.',hot:'grip'},
   teleport:{t:'Телепорт',v:'Потяни СТИК вперёд и держи — появится дуга. Выбери место на полу и отпусти стик.',hot:'stick',vr:1},
   turn:{t:'Поворот',v:'Отклони СТИК вбок — ты повернёшься на 30°. Так удобно осматриваться, не крутя шею.',hot:'stick',vr:1},
   back:{t:'Шаг назад',v:'Нажми СТИК назад (вниз) — шаг назад. Удобно, если подошёл слишком близко.',hot:'stick',vr:1},
@@ -47,27 +47,27 @@ function lesson(teacher){
       const cur=()=>S.order[S.i];
       S.go=d=>{S.i=Math.max(0,Math.min(S.order.length-1,S.i+d));reset();S.main.dirty=true;if(S.diag)S.diag.dirty=true;for(const hi of[0,1])for(const k in S.lab[hi])S.lab[hi][k].dirty=true;E.beep(660,.06);};
       /* главная панель на дальней стене */
-      S.main=E.addPanel({w:3.4,h:2.4,pos:[0,1.65,-5.86],yaw:0,accent:teacher?'#a78bfa':'#22c55e',draw:(c,p)=>{
+      S.main=E.addPanel({w:3.4,h:2.4,res:1280,pos:[0,1.65,-5.86],yaw:0,accent:teacher?'#a78bfa':'#22c55e',draw:(c,p)=>{
         const id=cur(),n=S.order.length-1;
         if(id==='end'){
-          p.text(teacher?'Обучение пройдено!':'Ты прошёл обучение!',50,30,{size:66,bold:true,color:'#86efac'});
-          p.text(vr?'Курок — выбрать · Хват — взять · Стик — идти и поворачиваться · X / A — меню.':'Мышь — взгляд · ЛКМ — выбрать · ПКМ или E — взять · WASD — идти · M — меню · F — полный экран.',50,130,{size:38,color:'#cbd5e1'});
-          if(teacher)p.text('Дальше: кабинет учителя на компьютере. Эти семь экранов можно перечитать, нажав «Назад».',50,300,{size:34,color:'#b8c7ea'});
-          p.button(50,560,420,100,'В холл',()=>E.goRoom('hall'),{bg:'#2563eb',size:44});
-          p.button(500,560,420,100,'Заново',()=>{S.i=0;S.reset();S.go(0);},{bg:'#475569',size:44});
-          p.button(950,560,260,100,'‹ Назад',()=>S.go(-1),{bg:'#334155',size:40});return;
+          p.text(teacher?'Обучение пройдено!':'Ты прошёл обучение!',50,40,{size:80,bold:true,color:'#86efac'});
+          p.text(vr?'Курок — выбрать · Хват — взять · Стик — идти и поворачиваться · X / A — меню.':'Мышь — взгляд · ЛКМ — выбрать · ПКМ или E — взять · WASD — идти · M — меню · F — полный экран.',50,170,{size:48,color:'#cbd5e1'});
+          if(teacher)p.text('Дальше: кабинет учителя на компьютере. Эти семь экранов можно перечитать, нажав «Назад».',50,400,{size:44,color:'#b8c7ea'});
+          p.button(50,p.H-130,420,100,'В холл',()=>E.goRoom('hall'),{bg:'#2563eb',size:44});
+          p.button(500,p.H-130,420,100,'Заново',()=>{S.i=0;S.reset();S.go(0);},{bg:'#475569',size:44});
+          p.button(950,p.H-130,280,100,'‹ Назад',()=>S.go(-1),{bg:'#334155',size:40});return;
         }
         const isPage=id.indexOf('page')===0,st=isPage?null:STEPS[id],pg=isPage?PAGES[+id.slice(4)]:null,man=isPage||st.manual;
-        p.text('Шаг '+(S.i+1)+' из '+n+(isPage?'  ·  Как устроена платформа':''),50,26,{size:34,color:'#9fb0d6'});
-        p.text(isPage?pg[0]:st.t,50,74,{size:68,bold:true,color:isPage?'#c4b5fd':'#fde68a'});
-        p.text(isPage?pg[1]:(vr?st.v:st.d),50,172,{size:40,color:'#e2e8f0',maxY:480});
+        p.text('Шаг '+(S.i+1)+' из '+n+(isPage?'  ·  Как устроена платформа':''),50,30,{size:40,color:'#9fb0d6'});
+        const ty=p.text(isPage?pg[0]:st.t,50,88,{size:80,bold:true,color:isPage?'#c4b5fd':'#fde68a',lh:92});
+        p.text(isPage?pg[1]:(vr?st.v:st.d),50,Math.max(210,ty+22),{size:52,color:'#e2e8f0',maxY:p.H-270});
         if(!man){
-          c.fillStyle=S.ok?'rgba(34,197,94,.25)':'rgba(255,255,255,.07)';c.fillRect(50,470,1100,64);
-          p.text(S.ok?'✓ Получилось! Идём дальше…':'Жду, когда ты это сделаешь…',70,482,{size:38,bold:true,color:S.ok?'#86efac':'#9fb0d6'});
+          c.fillStyle=S.ok?'rgba(34,197,94,.25)':'rgba(255,255,255,.07)';c.fillRect(50,p.H-250,p.W-100,64);
+          p.text(S.ok?'✓ Получилось! Идём дальше…':'Жду, когда ты это сделаешь…',70,p.H-238,{size:38,bold:true,color:S.ok?'#86efac':'#9fb0d6'});
         }
-        for(let k=0;k<n;k++){c.fillStyle=k<S.i?'#22c55e':k===S.i?'#fde68a':'#334155';c.beginPath();c.arc(70+k*38,580,11,0,7);c.fill();}
-        p.button(50,620,300,86,'‹ Назад',()=>S.go(-1),{bg:'#334155',size:38,disabled:S.i===0});
-        p.button(850,620,300,86,man?'Дальше ›':'Пропустить ›',()=>S.go(1),{bg:man?(isPage?'#7c3aed':'#16a34a'):'#475569',size:38});
+        for(let k=0;k<n;k++){c.fillStyle=k<S.i?'#22c55e':k===S.i?'#fde68a':'#334155';c.beginPath();c.arc(70+k*38,p.H-150,11,0,7);c.fill();}
+        p.button(50,p.H-116,300,86,'‹ Назад',()=>S.go(-1),{bg:'#334155',size:38,disabled:S.i===0});
+        p.button(p.W-350,p.H-116,300,86,man?'Дальше ›':'Пропустить ›',()=>S.go(1),{bg:man?(isPage?'#7c3aed':'#16a34a'):'#475569',size:38});
       }});
       /* предметы для упражнений */
       S.ball=[-2.4,1.35,-4.2];
@@ -78,7 +78,7 @@ function lesson(teacher){
       backDoor(E);
       /* схема мыши и клавиатуры (на компьютере) */
       if(!vr){
-        S.diag=E.addPanel({w:2.6,h:2.1,pos:[5.86,1.75,-1.2],yaw:YR,accent:'#38bdf8',draw:(c,p)=>drawDesk(c,p,cur())});
+        S.diag=E.addPanel({w:2.6,h:2.1,res:1280,pos:[5.86,1.75,-1.2],yaw:YR,accent:'#38bdf8',draw:(c,p)=>drawDesk(c,p,cur())});
       }
     },
     targets(E,S){return[{c:S.ball,r:.34,id:'ball',sel:()=>{if(S.sel)return;S.sel=true;E.burst(S.ball,30);E.beep(780,.1);}}];},
@@ -171,17 +171,17 @@ function drawDesk(c,p,id){
   key(x0-40,350,200,'Shift',on('walk'));key(x0+180,350,330,'Пробел',on('select'));
   key(x0+380,150,100,'E',on('grab'));key(x0+380,250,100,'M',on('menu'));key(x0+500,250,100,'F',false);
   /* подписи */
-  const L=[['ЛКМ или Enter — выбрать, нажать',on('select')],['ПКМ или E (держать) — взять · колесо: дальше/ближе',on('grab')],['W A S D — идти · Shift — быстрее',on('walk')],['M или Tab — меню · F — полный экран · Esc — освободить мышь',on('menu')]];
-  L.forEach(([t,h],i)=>p.text(t,40,560+i*52,{size:34,color:h?'#86efac':'#cbd5e1',bold:h,maxW:W-80}));
+  const L=[['ЛКМ или Enter — выбрать, нажать',on('select')],['ПКМ или E (держать) — взять · колесо: дальше/ближе',on('grab')],['W A S D — идти · Shift — быстрее',on('walk')],['M или Tab — меню · F — полный экран · Esc — отпустить мышь',on('menu')]];
+  L.forEach(([t,h],i)=>p.text(t,40,p.H-290+i*62,{size:38,color:h?'#86efac':'#cbd5e1',bold:h,maxW:W-80}));
 }
 ROOMS.learn=lesson(false);
 ROOMS.learnT=lesson(true);
 /* кнопки входа — маленькая панель в холле, на задней стене между дверью информатики (x от -4.9 до -3.5) и панелью тестов учителя (от -1 до 1) */
 VR.learn={hallPanel(E){
   E.addPanel({w:1.7,h:.9,pos:[-2.3,1.7,5.86],yaw:Math.PI,accent:'#22c55e',draw:(c,p)=>{
-    p.text('Обучение',30,18,{size:52,bold:true});
-    p.button(30,96,p.W-60,76,'Первые шаги',()=>E.goRoom('learn'),{bg:'#16a34a',size:38});
-    p.button(30,190,p.W-60,76,'Для учителя',()=>E.goRoom('learnT'),{bg:'#7c3aed',size:38});
+    p.text('Обучение',30,24,{size:64,bold:true});
+    p.button(30,110,p.W-60,130,'Первые шаги',()=>E.goRoom('learn'),{bg:'#16a34a',size:54});
+    p.button(30,270,p.W-60,130,'Для учителя',()=>E.goRoom('learnT'),{bg:'#7c3aed',size:54});
   }});
 }};
 })();

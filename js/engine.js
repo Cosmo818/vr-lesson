@@ -212,17 +212,17 @@ void main(){
     const cv=document.createElement('canvas');cv.width=W;cv.height=H;
     const p={w:o.w,h:o.h,pos:(o.pos||[0,1.5,-2]).slice(),yaw:o.yaw||0,W,H,cv,ctx:cv.getContext('2d'),tex:gl.createTexture(),
       draw:o.draw||(()=>{}),show:o.show!==false,btns:[],hover:-1,dirty:true,accent:o.accent||'#3b82f6',bg:o.bg||'#0f1830',
-      noBg:!!o.noBg,noHit:!!o.noHit,attach:o.attach||null,model:null,data:o.data||{}};
+      over:[],noBg:!!o.noBg,noHit:!!o.noHit,attach:o.attach||null,model:null,data:o.data||{}};
     p.text=(str,x,y,t)=>{
       t=t||{};const c=p.ctx,size=t.size||40;c.font=(t.bold?'bold ':'')+size+'px sans-serif';c.fillStyle=t.color||'#e8efff';
       c.textAlign=t.align||'left';c.textBaseline='top';const lh=t.lh||Math.round(size*1.25);
       const maxW=t.maxW||(t.align==='center'?p.W-60:p.W-x-36);let yy=y;
-      for(const para of String(str).split('\n')){for(const ln of wrap(c,para,maxW)){if(t.maxY&&yy+lh>t.maxY)break;c.fillText(ln,x,yy);yy+=lh;}}
+      for(const para of String(str).split('\n')){for(const ln of wrap(c,para,maxW)){if(t.maxY&&yy+lh>t.maxY){p.over.push('обрезан: '+ln.slice(0,30));break;}const lw=c.measureText(ln).width,l=c.textAlign==='center'?x-lw/2:c.textAlign==='right'?x-lw:x;if(l<-1||l+lw>p.W+1||yy+size>p.H+1)p.over.push('за краем: '+ln.slice(0,30));c.fillText(ln,x,yy);yy+=lh;}}
       c.textAlign='left';return yy;
     };
     p.area=(x,y,w,h,fn,dis)=>{const i=p.btns.length;p.btns.push({x,y,w,h,fn,disabled:!!dis});return p.hover===i&&!dis;};
     p.button=(x,y,w,h,label,fn,t)=>{
-      t=t||{};const c=p.ctx,hov=p.area(x,y,w,h,fn,t.disabled);
+      t=t||{};const c=p.ctx,hov=p.area(x,y,w,h,fn,t.disabled);if(x<0||y<0||x+w>p.W+1||y+h>p.H+1)p.over.push('кнопка за краем: '+label);
       c.fillStyle=t.disabled?'#283250':(t.active?(t.activeBg||'#16a34a'):(t.bg||'#2563eb'));rrect(c,x,y,w,h,t.r||18);c.fill();
       if(hov){c.fillStyle='rgba(255,255,255,.22)';rrect(c,x,y,w,h,t.r||18);c.fill();c.lineWidth=6;c.strokeStyle='#fff';rrect(c,x+3,y+3,w-6,h-6,t.r||18);c.stroke();}
       let size=t.size||40,lines;
@@ -236,7 +236,7 @@ void main(){
     return p;
   }
   function paint(p){
-    const c=p.ctx;p.btns=[];
+    const c=p.ctx;p.btns=[];p.over=[];
     c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,p.W,p.H);c.textBaseline='top';
     if(!p.noBg){c.fillStyle=p.bg;rrect(c,0,0,p.W,p.H,34);c.fill();c.lineWidth=8;c.strokeStyle=p.accent;rrect(c,4,4,p.W-8,p.H-8,30);c.stroke();}
     try{p.draw(c,p);}catch(e){try{console.log('panel draw error',e);}catch(_){}}
@@ -319,6 +319,7 @@ void main(){
     else{l.setPosition(h.pos[0],h.pos[1],h.pos[2]);l.setOrientation(h.f[0],0,h.f[1],0,1,0);}}catch(e){}
   }
   E.addPanel=o=>{const p=makePanel(o);E.panels.push(p);return p;};
+  E.paintPanel=paint;/* для проверки рендером: p.over — строки и кнопки за краем текстуры */
   E.addUi=o=>{const p=makePanel(o);E.ui.push(p);return p;};
   const panelModel=p=>p.model||(p.model=TRS(p.pos[0],p.pos[1],p.pos[2],p.w,p.h,1,p.yaw));
   function rayPanel(p,o,d){
@@ -372,10 +373,19 @@ void main(){
     E.tables.push({x,z,hx,hz,top});
     return E.addBox({x,z,hx,hz,top});
   };
-  /* кнопка «Сбросить стенд» стоит на каждом столе у переднего края, чтобы предметы, улетевшие со стола, возвращались одним нажатием */
+  /* кнопка «Сбросить стенд» стоит на каждом столе у края, ближнего к точке появления игрока, и повёрнута к этой точке лицом (не 0 и не спиной) */
+  E.resetPose=t=>{
+    const sp=E.spawn||{x:0,z:0},dx=sp.x-t.x,dz=sp.z-t.z;
+    /* какой край ближе к игроку: сравниваем направление на точку появления с размерами стола */
+    const side=Math.abs(dx)/Math.max(t.hx,.01)>Math.abs(dz)/Math.max(t.hz,.01)&&t.hz>=.3||t.hx<.3;
+    const nx=side?Math.sign(dx)||1:0,nz=side?0:Math.sign(dz)||1,half=side?t.hz:t.hx;
+    /* по краю — правее середины, если смотреть со стороны игрока: правая рука игрока = (nz,-nx) */
+    const off=Math.max(0,half-.22),x=t.x+nx*(t.hx-.06)+nz*off,z=t.z+nz*(t.hz-.06)-nx*off;
+    return{pos:[x,t.top+.055,z],yaw:Math.atan2(sp.x-x,sp.z-z)};
+  };
   function addResetButtons(){
-    for(const t of E.tables.slice(0,3)){if(t.hx<.3)continue;
-      E.addPanel({w:.34,h:.1,res:340,pos:[t.x+t.hx-.2,t.top+.055,t.z+t.hz-.04],yaw:0,accent:'#64748b',draw:(c,p)=>{p.button(4,4,p.W-8,p.H-8,'Сбросить стенд',()=>E.resetStand(),{bg:'#475569',size:30});}});}
+    for(const t of E.tables.slice(0,3)){if(t.hx<.3&&t.hz<.3)continue;const rp=E.resetPose(t);
+      E.addPanel({w:.34,h:.1,res:340,pos:rp.pos,yaw:rp.yaw,accent:'#64748b',data:{reset:1},draw:(c,p)=>{p.button(4,4,p.W-8,p.H-8,'Сбросить стенд',()=>E.resetStand(),{bg:'#475569',size:30});}});}
   }
   E.burst=(pos,n,cols,sp)=>{
     sp=sp||1;cols=cols||[[1,.3,.3],[.3,1,.4],[.3,.5,1],[1,.85,.2],[.9,.4,1]];
@@ -533,8 +543,15 @@ void main(){
     const b=h.held;if(!b)return;
     /* с экрана (мышь) предмет не бросают рывком: скорость руки берётся от движения взгляда и была бы случайной — кладём мягко */
     const v=h.vel||[0,0,0],sp=Math.hypot(v[0],v[1],v[2]),lim=E.session?10:1.2,k=sp>lim?lim/sp:1;
-    b.v=[v[0]*k,v[1]*k,v[2]*k];b.held=null;h.held=null;E.beep(300,.05);
+    b.v=[v[0]*k,v[1]*k,v[2]*k];b.held=null;b.pull=null;h.held=null;E.beep(300,.05);
     if(E.room&&E.room.onRelease)try{E.room.onRelease(E,E.S,b,sp*k);}catch(e){}
+  }
+  E.shotSpeed=9;
+  function shoot(h){
+    const b=h.held;if(!b)return;const d=h.rd,sp=E.shotSpeed;
+    b.p=[b.p[0]+d[0]*.05,b.p[1]+d[1]*.05,b.p[2]+d[2]*.05];b.v=[d[0]*sp,d[1]*sp,d[2]*sp];b.held=null;b.pull=null;h.held=null;
+    E.beep(980,.05,'square',.04);E.beep(520,.09,'triangle',.04);E.buzz(h,.7,45);
+    if(E.room&&E.room.onRelease)try{E.room.onRelease(E,E.S,b,sp);}catch(e){}
   }
   function raySphere(o,d,c,r){
     const ox=o[0]-c[0],oy=o[1]-c[1],oz=o[2]-c[2],b=ox*d[0]+oy*d[1]+oz*d[2],cc=ox*ox+oy*oy+oz*oz-r*r,disc=b*b-cc;
@@ -565,11 +582,18 @@ void main(){
       if(mbDown)E.toggleMenu();
       const gpos=[h.g[12],h.g[13],h.g[14]];let used=false;
       if(!h.held&&(trigDown||sqDown)){
-        let b=nearestBody(gpos,E.session?.22:.42);
-        if(!b&&!E.session&&hi===1)b=bodyOnRay(h,3);
-        if(b){b.held=hi;b.by=sqDown?'sq':'trig';b.off=M.mul(M.inv(h.g),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),b.m));h.held=b;used=true;E.buzz(h,.4,30);E.beep(520,.06);
+        let b=nearestBody(gpos,E.session?.22:.42),pull=false;
+        if(!b&&!E.session&&hi===1&&trigDown)b=bodyOnRay(h,3);
+        /* хват издалека: луч на предмет + «держать» (боковая кнопка, ПКМ или E) — предмет прилетает в руку */
+        if(!b&&sqDown){b=bodyOnRay(h,10);pull=!!b;}
+        if(b){b.held=hi;b.by=sqDown?'sq':'trig';
+          if(pull){const o=M.mul(M.inv(h.g),b.m);o[12]=0;o[13]=0;o[14]=E.session?0:-.3;b.off=o;b.pull=0;b.pullFrom=b.p.slice();}
+          else{b.off=M.mul(M.inv(h.g),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),b.m));b.pull=null;}
+          h.held=b;used=true;E.buzz(h,.4,30);E.beep(pull?620:520,.06);
           if(E.room&&E.room.onGrab)try{E.room.onGrab(E,E.S,b);}catch(e){}}
       }
+      /* выстрел: предмет держат хватом, курок (ЛКМ) запускает его по лучу; если держат курком — курок только отпускает, хват не ломается */
+      if(h.held&&h.held.by==='sq'&&trigDown){shoot(h);used=true;}
       if(h.held&&!(h.held.by==='sq'?sq:trig))release(h);
       h.hit=(h.held||h.aim)?null:rayHit(h);
       if(trigDown&&!used&&!h.aim&&h.hit){
@@ -592,7 +616,8 @@ void main(){
     if(b.fixed)return;
     if(b.held!==null){
       const h=H[b.held];
-      if(h&&h.has){const m=M.mul(h.g,b.off);b.p=[m[12],m[13],m[14]];m[12]=m[13]=m[14]=0;b.m=m;b.v=[0,0,0];}
+      if(h&&h.has){const m=M.mul(h.g,b.off);b.p=[m[12],m[13],m[14]];m[12]=m[13]=m[14]=0;b.m=m;b.v=[0,0,0];
+        if(b.pull!=null&&b.pull<1){b.pull=Math.min(1,b.pull+dt/.25);const k=1-Math.pow(1-b.pull,3),f=b.pullFrom;b.p=[f[0]+(b.p[0]-f[0])*k,f[1]+(b.p[1]-f[1])*k,f[2]+(b.p[2]-f[2])*k];}}
       return;
     }
     const hs=b.s/2,prevY=b.p[1],g=E.gravity;
@@ -741,7 +766,8 @@ void main(){
   E.setPerf=o=>{if(!o)return;if(typeof o.scale==='number'&&isFinite(o.scale))PF.scale=Math.max(.5,Math.min(1.5,o.scale));if(typeof o.fov==='number'&&isFinite(o.fov))PF.fov=Math.max(40,Math.min(100,o.fov));if(typeof o.fps==='boolean')PF.fps=o.fps;if(typeof o.walk==='number'&&isFinite(o.walk))PF.walk=Math.max(.4,Math.min(1.5,o.walk));if(typeof o.ease==='boolean')PF.ease=o.ease;if(E.hooks.onPerf)E.hooks.onPerf();};
   const fpsEl=document.getElementById('fpsBox');let fpsN=0,fpsT=0,fpsMax=0,dtS=.016;
   /* сброс стенда: комната собирается заново (предметы на столе как в начале), игрок остаётся на месте */
-  E.resetStand=()=>{if(!E.roomId)return;const keep={x:D.x,z:D.z,yaw:D.yaw,pitch:D.pitch};E.loadRoom(E.roomId);if(E.deskInput&&!E.session)Object.assign(D,keep);E.toast('Стенд сброшен');};
+  /* сброс стенда пересобирает комнату, но игрок остаётся там, где стоял, и смотрит туда же — и за столом, и в шлеме */
+  E.resetStand=()=>{if(!E.roomId)return;const pose=E.poseNow(),keep={pitch:D.pitch,h:D.h};E.loadRoom(E.roomId);E.setPose(pose.x,pose.z,pose.yaw);Object.assign(D,keep);E.toast('Стенд сброшен');};
   E.mouseCfg=MC;
   E.setMouseCfg=o=>{if(!o)return;if(typeof o.sens==='number'&&isFinite(o.sens))MC.sens=Math.max(.25,Math.min(3,o.sens));if(typeof o.smooth==='number'&&isFinite(o.smooth))MC.smooth=Math.max(0,Math.min(1,o.smooth));if(typeof o.invY==='boolean')MC.invY=o.invY;};
   /* состояние кнопок берём из маски buttons: при зажатых двух кнопках браузер второго нажатия не присылает, а по маске видно всё */

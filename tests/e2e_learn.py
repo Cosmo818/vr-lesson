@@ -142,6 +142,25 @@ try:
         pg.keyboard.up('KeyE'); pg.wait_for_timeout(200)
         ok(held, 'предмет под перекрестием берётся по E (луч, не только рядом с рукой)')
         ok(not ev('VR.app.E.bodies.some(b=>b.held!==null)'), 'отпустил — предмет отпущен')
+        # ---- хват издалека: предмет в 4 м по лучу, E — прилетает в руку; курок (Enter/ЛКМ) при удержании — выстрел по лучу
+        ev("(()=>{const E=VR.app.E,h=E.H[1],b=E.bodies[0];E.bodies.forEach((o,i)=>{if(i)o.fixed=true;});b.p=[h.ro[0]+h.rd[0]*4,h.ro[1]+h.rd[1]*4,h.ro[2]+h.rd[2]*4];b.v=[0,0,0];})()")
+        pg.keyboard.down('KeyE')
+        try:
+            pg.wait_for_function('VR.app.E.bodies[0].pull===1', timeout=5000)
+        except Exception:
+            pass
+        r = ev("(()=>{const E=VR.app.E,h=E.H[1],b=E.bodies[0];return{held:b.held,d:Math.hypot(b.p[0]-h.ro[0],b.p[1]-h.ro[1],b.p[2]-h.ro[2])}})()")
+        ok(r['held'] == 1 and r['d'] < 1.0, 'хват издалека: предмет с 4 м прилетел в руку (%.2f м от глаз)' % r['d'])
+        ev("(()=>{const E=VR.app.E;window._shot=null;const f=E.room.onRelease;E.room.onRelease=(e,S,b,sp)=>{window._shot={v:b.v.slice(),rd:E.H[1].rd.slice()};if(f)f(e,S,b,sp);};})()")
+        pg.keyboard.press('Enter'); pg.wait_for_function('window._shot', timeout=5000)
+        r = ev("(()=>{const s=window._shot,v=s.v,d=s.rd;return{held:VR.app.E.bodies[0].held,dot:v[0]*d[0]+v[1]*d[1]+v[2]*d[2],sp:Math.hypot(...v)}})()")
+        pg.keyboard.up('KeyE'); pg.wait_for_timeout(100)
+        ok(r['held'] is None and r['dot'] > 8 and abs(r['dot'] - r['sp']) < .5, 'курок при удержании — выстрел по лучу (%s)' % r)
+        # курок без хвата по-прежнему берёт и отпускает (держат курком — курок не стреляет)
+        ev("(()=>{const E=VR.app.E,h=E.H[1],b=E.bodies[0];b.p=[h.ro[0]+h.rd[0]*1.5,h.ro[1]+h.rd[1]*1.5,h.ro[2]+h.rd[2]*1.5];b.v=[0,0,0];})()")
+        r = ev("(()=>{const E=VR.app.E,h=E.H[1];const b=E.bodies[0];h.held=null;b.held=1;b.by='trig';h.held=b;return 1})()")
+        pg.keyboard.press('Enter'); pg.wait_for_timeout(100)
+        ok(ev("VR.app.E.bodies[0].held===null&&Math.hypot(...VR.app.E.bodies[0].v)<2"), 'предмет, взятый курком, курок только отпускает (без выстрела)')
         ev('VR.app.E.gravity=9.8')
         # ---- обучающие шаги на компьютере: проходим действиями
         ev("(()=>{const E=VR.app.E;E.goRoom('learn');E.deskCam.x=0;E.deskCam.z=1.2;E.deskCam.yaw=0;})()"); pg.wait_for_timeout(400)
@@ -170,6 +189,28 @@ try:
         ok(ev('VR.app.E.S.order.length') == 5 + 7 + 1, 'обучение учителя: 5 шагов управления + 7 страниц + финал (%s)' % ev('VR.app.E.S.order.length'))
         ev("(()=>{const E=VR.app.E;E.S.i=5;E.S.reset();E.S.main.dirty=true;})()"); pg.wait_for_timeout(300)
         ok(ev("VR.app.E.S.order[VR.app.E.S.i]") == 'page0', 'страницы платформы идут после управления')
+        # ---- рендер панелей обучения: ни одна строка и кнопка не выходит за край текстуры (шлем, компьютер, учитель, холл)
+        over = []
+        for room, vr in (('learn', 0), ('learn', 1), ('learnT', 0)):
+            over += ev("""(([room,vr])=>{const E=VR.app.E,out=[];if(vr)E.session={};E.loadRoom(room);if(vr)E.session=null;
+              for(let k=0;k<E.S.order.length;k++){E.S.i=k;for(const p of E.panels)if(p.show){E.paintPanel(p);for(const o of p.over)out.push(room+(vr?'/шлем':'')+' '+E.S.order[k]+': '+o);}}
+              return out})""", [room, vr])
+        ev("VR.app.E.loadRoom('hall')")
+        over += ev("VR.app.E.panels.filter(p=>p.w===1.7&&p.accent==='#22c55e').map(p=>{VR.app.E.paintPanel(p);return p.over.join()}).filter(Boolean)")
+        ok(not over, 'панели обучения: текст и кнопки в пределах текстуры (%s)' % over[:3])
+        ok(ev("(()=>{const E=VR.app.E;E.loadRoom('learn');return E.S.main.W>=1280&&E.S.main.H>=900})()"), 'главная панель обучения рисуется в 1280 px по ширине — разметка под этот размер')
+        # ---- кнопка «Сбросить стенд»: во всех комнатах лицом к точке появления, на столе; сброс не двигает игрока
+        r = ev("""(()=>{const E=VR.app.E,bad=[];let n=0;
+          for(const id in E.rooms){try{E.loadRoom(id);}catch(e){continue;}
+            for(const p of E.panels){if(!p.data||!p.data.reset)continue;n++;
+              const sp=E.spawn,dx=sp.x-p.pos[0],dz=sp.z-p.pos[2],L=Math.hypot(dx,dz)||1,c=(Math.sin(p.yaw)*dx+Math.cos(p.yaw)*dz)/L;
+              const t=E.tables.find(t=>Math.abs(p.pos[0]-t.x)<=t.hx&&Math.abs(p.pos[2]-t.z)<=t.hz&&Math.abs(p.pos[1]-t.top-.055)<1e-6);
+              if(c<.999||!t)bad.push(id+' cos='+c.toFixed(3)+(t?'':' не на столе'));}}
+          return{n,bad}})()""")
+        ok(r['n'] > 0 and not r['bad'], 'кнопки сброса (%d) смотрят на игрока и стоят на столе (%s)' % (r['n'], r['bad'][:3]))
+        r = ev("""(()=>{const E=VR.app.E;E.loadRoom('phys');E.setPose(1.3,-.7,.8);E.deskCam.pitch=-.3;E.resetStand();const q=E.poseNow();
+          return{x:q.x,z:q.z,yaw:q.yaw,p:E.deskCam.pitch,room:E.roomId}})()""")
+        ok(abs(r['x'] - 1.3) < 1e-9 and abs(r['z'] + .7) < 1e-9 and abs(r['yaw'] - .8) < 1e-9 and abs(r['p'] + .3) < 1e-9 and r['room'] == 'phys', 'сброс стенда оставляет игрока на месте и с тем же взглядом (%s)' % r)
         # ---- модель контроллера
         r = ev("""(()=>{const C=VR.controllers,M=VR.M,E=VR.app.E;const out={};
           const mk=(pr)=>({g:M.id(),gp:{buttons:[{pressed:false},{pressed:false},{},{pressed:false},{pressed:false},{pressed:false}],axes:[0,0,0,0]},src:{profiles:pr}});
