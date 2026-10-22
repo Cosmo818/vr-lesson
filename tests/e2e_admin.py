@@ -97,7 +97,7 @@ try:
         pg2.evaluate('()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem("vrlesson.server",JSON.stringify({url:"http://127.0.0.1:8777",key:""}))}')
         pg2.goto('http://127.0.0.1:8776/admin.html'); pg2.wait_for_timeout(600); clear_throttle()
         pg2.click('#toAct'); pg2.fill('#acode', code); pg2.fill('#alog', 'new.teacher'); pg2.fill('#aname', 'Новая'); pg2.fill('#apw', 'Long-Pass-2026-Xy'); pg2.click('#actForm .btn'); pg2.wait_for_timeout(1500)
-        ok(pg2.is_visible('#lock') and 'директора и администратора' in pg2.inner_text('#lockErr'), 'учитель по приглашению активирован, но админку не получает')
+        ok(pg2.is_visible('#lock') and 'администратора' in pg2.inner_text('#lockErr'), 'учитель по приглашению активирован, но админку не получает')
         ok(sqlite3.connect(os.path.join(tmp, 'vrlesson.db')).execute("SELECT COUNT(*) FROM users WHERE login = 'new.teacher'").fetchone()[0] == 1, 'учётка создана по коду')
         pg2.close()
         # суперадмин

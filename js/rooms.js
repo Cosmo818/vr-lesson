@@ -37,7 +37,7 @@ function makeQuiz(E,subj,pos,yaw,opt){
     if(Q.phase!=='fb')return;
     Q.i++;if(Q.i<Q.qs.length){Q.phase='q';return;}
     Q.phase='res';const st=E.student;
-    if(st&&st.id){VR.Store.addResult({sid:st.id,subj,band:band(),grade:grade(),test:Q.test?Q.test.id:null,testTitle:Q.test?Q.test.title:null,score:Q.score,total:Q.qs.length,dur:Math.round((Date.now()-Q.t0)/1000),ans:Q.ans});Q.saved=true;}
+    if(st&&st.id){VR.Store.addResult({sid:st.id,subj,band:band(),grade:grade(),test:Q.test?Q.test.id:null,testTitle:Q.test?Q.test.title:null,closed:Q.test&&Q.test.closed?1:undefined,score:Q.score,total:Q.qs.length,dur:Math.round((Date.now()-Q.t0)/1000),ans:Q.ans});Q.saved=true;}
     else Q.saved=false;
     const r=Q.score/Q.qs.length;
     if(r===1){E.fanfare();E.burst([pos[0],pos[1]+.8,pos[2]],60);}else if(r>=.6)E.chime();

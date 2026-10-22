@@ -134,7 +134,8 @@ const Store=VR.Store={
 
   /* результаты и открытия */
   addResult(r){const x=Object.assign({id:uid(),ts:now()},r);load().results.push(x);save();Store.syncSoon();return x;},
-  results(sid){const r=load().results;return sid?r.filter(x=>x.sid===sid):r.slice();},
+  /* закрытые результаты (Б56) не попадают ни в рейтинг, ни в баллы, ни в отчёты кабинета: их видит только специалист через сервер */
+  results(sid){const r=load().results.filter(x=>!x.closed);return sid?r.filter(x=>x.sid===sid):r;},
   addDiscovery(sid,subj,key){
     if(!sid)return false;
     const d=load(),m=d.disc[sid]=d.disc[sid]||{},k=subj+':'+key;
@@ -170,7 +171,7 @@ const Store=VR.Store={
   testsFor(subj,grade){grade=clampGrade(grade);return Store.tests().filter(t=>t.active!==false&&t.subj===subj&&grade>=(t.gmin||1)&&grade<=(t.gmax||11)&&t.qs.length);},
   saveTest(t){
     const d=load(),x=Object.assign({},t);
-    x.id=x.id||uid();x.updated=now();x.created=x.created||x.updated;
+    x.id=x.id||uid();x.updated=now();x.created=x.created||x.updated;if(x.closed)x.closed=true;else delete x.closed;
     x.gmin=clampGrade(x.gmin||1);x.gmax=Math.max(x.gmin,clampGrade(x.gmax||11));
     x.qs=(x.qs||[]).map(q=>({id:q.id||uid(),q:String(q.q||'').trim(),a:(q.a||[]).map(s=>String(s).trim()).filter(Boolean),e:String(q.e||'').trim()})).filter(q=>q.q&&q.a.length>=2);
     d.tests=d.tests.filter(o=>o.id!==x.id);d.tests.push(x);save();Store.syncSoon();return x;
@@ -219,7 +220,8 @@ const Store=VR.Store={
     if(!r||!RS)return[];
     return Object.keys(r).map(id=>RS.clean(r[id],v=>!!(Q&&Q[v])).spec).filter(s=>s&&s.id).sort((a,b)=>a.title.localeCompare(b.title,'ru'));
   },
-  customRoom(id){return Store.customRooms().find(s=>s.id===id)||null;},
+  temp:{},/* открытые комнаты, загруженные с сервера на время сеанса: в память, не в хранилище */
+  customRoom(id){return Store.temp[id]||Store.customRooms().find(s=>s.id===id)||null;},
   saveRoom(spec){
     const RS=VR.roomspec,Q=VR.DATA&&VR.DATA.Q,d=load();
     const c=RS.clean(spec,v=>!!(Q&&Q[v]));
@@ -294,6 +296,19 @@ const Store=VR.Store={
   /* ---------- вызовы серверного API учёток (шаги 8–12): весь сетевой код — здесь (закон А2) ---------- */
   base(){const sv=Store.server();if(sv)return sv.url;return /(^|\.)github\.io$/.test(location.hostname)?'':location.origin;},
   me(){return Store.call('GET','/api/auth/me');},
+  /* открытые комнаты (Б54): список и описание без входа; публикация и одобрение — через учётную запись */
+  openList(){return Store.call('GET','/api/open/rooms',undefined,true);},
+  async openRoom(id){
+    const r=await Store.call('GET','/api/open/room/'+encodeURIComponent(id),undefined,true);
+    if(r.status!==200)return null;
+    const RS=VR.roomspec,c=RS.clean(r.data.spec,v=>!!(VR.DATA.Q&&VR.DATA.Q[v]));
+    if(!c.spec)return null;
+    c.spec.id='c-open'+String(id).replace(/[^a-f0-9]/g,'').slice(0,12);Store.temp[c.spec.id]=c.spec;return c.spec;
+  },
+  publishRoom(school,src,spec){return Store.admin('room.publish',{school,src,spec});},
+  roomList(school){return Store.admin('room.list',{school:school||''});},
+  roomAct(act,id){return Store.admin(act,{id});},
+  closedList(school){return Store.admin('closed.list',{school:school||''});},
   authHeaders(){const t=Store.account.token(),sv=Store.server();return t?{Authorization:'Bearer '+t}:sv&&sv.key?{'X-Key':sv.key}:{};},
   /* файлы учителей (Б51, этап 2): kind = model | sound | texture; тип и размер проверяет сервер */
   async upload(kind,name,file,school){

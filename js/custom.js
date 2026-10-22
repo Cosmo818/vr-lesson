@@ -224,8 +224,10 @@ function register(id){
 /* приводит VR.ROOMS в соответствие с настройками: добавляет новые комнаты конструктора, убирает удалённые */
 function refresh(){
   const list=VR.Store.customRooms(),ids=new Set(list.map(s=>s.id));
+  for(const k of Object.keys(VR.Store.temp))ids.add(k);
   for(const id of Object.keys(ROOMS))if(ROOMS[id].custom&&!ids.has(id))delete ROOMS[id];
   for(const s of list)register(s.id);
+  for(const k of Object.keys(VR.Store.temp))register(k);
   return list;
 }
 

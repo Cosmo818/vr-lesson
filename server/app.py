@@ -255,6 +255,9 @@ def migrate_v4(c):
             created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER, used_by TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, school TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, name TEXT, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'revoked')),
             created INTEGER, created_by TEXT, last_seen INTEGER)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS open_rooms(id TEXT PRIMARY KEY, school TEXT NOT NULL, owner TEXT, src TEXT, title TEXT, spec TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')), created INTEGER, updated INTEGER, decided_by TEXT, decided INTEGER)''')
+        c.execute('CREATE INDEX IF NOT EXISTS open_rooms_status ON open_rooms(status)')
         c.execute('''CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY, school TEXT NOT NULL, owner TEXT, kind TEXT NOT NULL, name TEXT, size INTEGER, ext TEXT, sha TEXT,
             status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')), created INTEGER, decided_by TEXT, decided INTEGER)''')
         c.execute('CREATE INDEX IF NOT EXISTS uploads_school ON uploads(school, status)')
@@ -576,7 +579,7 @@ def state(c, hide_pins=False, principal=None):
     if sc['all']:
         classes = [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')]
         students = [stud(r[0]) for r in c.execute('SELECT doc FROM students')]
-        results = [json.loads(r[0]) for r in c.execute('SELECT doc FROM results ORDER BY ts')]
+        results = [json.loads(r[0]) for r in c.execute("SELECT doc FROM results WHERE COALESCE(json_extract(doc, '$.closed'), 0) = 0 ORDER BY ts")]
         disc = {}
         for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
             disc.setdefault(sid, {})[k] = ts
@@ -594,7 +597,7 @@ def state(c, hide_pins=False, principal=None):
                 ok_st.add(sid)
                 students.append(stud(raw))
         results = []
-        for sid, raw in c.execute('SELECT sid, doc FROM results ORDER BY ts'):
+        for sid, raw in c.execute("SELECT sid, doc FROM results WHERE COALESCE(json_extract(doc, '$.closed'), 0) = 0 ORDER BY ts"):
             if sid in ok_st:
                 results.append(json.loads(raw))
         disc = {}
@@ -643,13 +646,15 @@ def role_of(key):
 def load_config():
     """/data/config.json: accounts (по умолчанию false — новые эндпоинты отвечают 404), legacyTeacher (true), sessionMinutes (15). Читается на каждый запрос: выключатель действует без перезапуска.
     Это НЕ settings.flags: те синхронизируются и меняются ключом teacher, а флаг безопасности старым ключом включаться не должен."""
-    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT}
+    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False}
     try:
         with open(CONFIG_PATH, encoding='utf-8') as f:
             raw = json.load(f)
         if isinstance(raw, dict):
             if isinstance(raw.get('accounts'), bool):
                 cfg['accounts'] = raw['accounts']
+            if isinstance(raw.get('openRooms'), bool):
+                cfg['openRooms'] = raw['openRooms']
             if isinstance(raw.get('legacyTeacher'), bool):
                 cfg['legacyTeacher'] = raw['legacyTeacher']
             m = raw.get('sessionMinutes')
@@ -1054,8 +1059,8 @@ def admin_action(c, p, act, b, ip):
     rank = my_rank(p)
     sc = scope(c, p)
     S = lambda k, n=80: str(b.get(k) or '')[:n]  # noqa: E731
-    need_dir = act not in ('student.pin', 'student.move', 'upload.list', 'upload.delete')
-    if rank < (3 if need_dir else 2):
+    need_dir = act not in ('student.pin', 'student.move', 'upload.list', 'upload.delete', 'room.publish', 'room.list', 'room.unpublish')
+    if rank < (3 if need_dir else 2) and not (act == 'closed.list' and rank >= 1):
         audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
         raise AdminError(403, 'Недостаточно прав.')
     if act == 'school.create':
@@ -1102,11 +1107,10 @@ def admin_action(c, p, act, b, ip):
             raise AdminError(403, 'Свои роли менять нельзя.')
         if role not in ('director', 'teacher', 'expert'):
             raise AdminError(403 if role == 'superadmin' else 400, 'Эту роль выдать нельзя.')
-        school = '' if role == 'expert' else school
         if RANK[role] >= rank or (rank < 4 and (role != 'teacher' or school not in dir_schools(p))):
             audit(c, who, 'admin.denied', 'user', uid, school or None, {'why': 'role', 'role': role, 'action': act})
             raise AdminError(403, 'Эту роль вы выдать не можете.')
-        if role != 'expert' and not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone():
+        if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone():
             raise AdminError(400, 'Такой школы нет.')
         if act == 'role.assign':
             c.execute("INSERT INTO user_roles(user_id, role, school, status, created, created_by) VALUES(?, ?, ?, 'active', ?, ?) ON CONFLICT(user_id, role, school) DO UPDATE SET status = 'active'", (uid, role, school, now, p['id']))
@@ -1156,8 +1160,8 @@ def admin_action(c, p, act, b, ip):
             audit(c, who, 'invite.revoke', 'invite', S('id', 12), None, {})
             return {'ok': True}
         role, school = S('role', 20), S('school', 40)
-        if role not in ('director', 'teacher'):
-            raise AdminError(400, 'Приглашать можно директора или учителя.')
+        if role not in ('director', 'teacher', 'expert'):
+            raise AdminError(400, 'Приглашать можно директора, учителя или специалиста.')
         if RANK[role] >= rank or (rank < 4 and school not in dir_schools(p)):
             audit(c, who, 'admin.denied', 'invite', None, school or None, {'why': 'role', 'role': role, 'action': act})
             raise AdminError(403, 'Эту роль вы выдать не можете.')
@@ -1198,6 +1202,68 @@ def admin_action(c, p, act, b, ip):
         c.execute('INSERT INTO pair_codes(code_hash, school, name, created_by, created, expires, used_at) VALUES(?, ?, ?, ?, ?, ?, NULL)', (thash(code), sch, S('name', 40), p['id'], now, now + PAIR_TTL))
         audit(c, who, 'device.code', 'school', sch, sch, {})
         return {'ok': True, 'code': code, 'expires': now + PAIR_TTL}
+    if act == 'closed.list':
+        # закрытые результаты: только специалист (роль expert) своей школы и администратор; директор и учитель их не видят
+        sch = S('school', 40)
+        if rank < 4 and not any(r['role'] == 'expert' and r['school'] == sch for r in p['roles']):
+            audit(c, who, 'admin.denied', 'closed', sch or None, sch or None, {'why': 'role', 'action': act})
+            raise AdminError(403, 'Закрытые результаты видит только специалист школы.')
+        studs = {}
+        for sid, raw in c.execute('SELECT id, doc FROM students'):
+            d = json.loads(raw)
+            if rank >= 4 and not sch or d.get('school') == sch:
+                studs[sid] = d
+        out = []
+        for sid, raw in c.execute("SELECT sid, doc FROM results WHERE COALESCE(json_extract(doc, '$.closed'), 0) = 1 ORDER BY ts DESC LIMIT 1000"):
+            if sid in studs:
+                r = json.loads(raw)
+                out.append({'student': studs[sid].get('name', ''), 'grade': studs[sid].get('grade'), 'test': r.get('testTitle') or '', 'score': r.get('score'), 'total': r.get('total'), 'ts': r.get('ts')})
+        audit(c, who, 'closed.view', 'closed', sch or None, sch or None, {'count': len(out)})
+        return {'items': out}
+    if act in ('room.publish', 'room.list', 'room.approve', 'room.reject', 'room.unpublish'):
+        if act == 'room.publish':
+            sch = S('school', 40)
+            spec = b.get('spec')
+            if not isinstance(spec, dict) or str(spec.get('schema') or spec.get('v')) != 'room/1' or not isinstance(spec.get('blocks'), list):
+                raise AdminError(400, 'Это не описание комнаты.')
+            blob = json.dumps(spec, ensure_ascii=False)
+            if len(blob) > 60000:
+                raise AdminError(413, 'Комната слишком большая для публикации.')
+            if 'up:' in blob:
+                raise AdminError(400, 'В открытой комнате пока можно использовать только встроенные модели, звуки и текстуры. Уберите свои файлы.')
+            if rank < 4 and sch not in {r['school'] for r in p['roles'] if r['role'] in ('teacher', 'director')}:
+                raise AdminError(403, 'Это чужая школа.')
+            if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status = 'active'", (sch,)).fetchone():
+                raise AdminError(404, 'Школы нет.')
+            src = S('src', 60)
+            title = str(spec.get('title') or 'Комната')[:80]
+            auto = rank >= 3
+            if c.execute('SELECT COUNT(*) FROM open_rooms WHERE school = ?', (sch,)).fetchone()[0] >= 50 and not c.execute('SELECT 1 FROM open_rooms WHERE school = ? AND src = ? AND owner = ?', (sch, src, p['id'])).fetchone():
+                raise AdminError(413, 'В школе уже 50 открытых комнат: уберите ненужные.')
+            row = c.execute('SELECT id FROM open_rooms WHERE school = ? AND src = ? AND owner = ?', (sch, src, p['id'])).fetchone()
+            rid = row[0] if row else 'o-' + secrets.token_hex(6)
+            c.execute('INSERT OR REPLACE INTO open_rooms(id, school, owner, src, title, spec, status, created, updated, decided_by, decided) VALUES(?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created FROM open_rooms WHERE id = ?), ?), ?, ?, ?)',
+                      (rid, sch, p['id'], src, title, blob, 'approved' if auto else 'pending', rid, now, now, p['id'] if auto else None, now if auto else None))
+            audit(c, who, 'room.publish', 'room', rid, sch, {'title': title, 'auto': auto})
+            return {'id': rid, 'status': 'approved' if auto else 'pending'}
+        if act == 'room.list':
+            sch = S('school', 40)
+            rows = c.execute('SELECT r.id, r.school, r.owner, r.src, r.title, r.status, r.updated, COALESCE(NULLIF(u.name, \'\'), u.login) FROM open_rooms r LEFT JOIN users u ON u.id = r.owner WHERE (? = \'\' OR r.school = ?) ORDER BY r.updated DESC LIMIT 300', (sch, sch)).fetchall()
+            sees = lambda school, owner, st: rank >= 4 or school in dir_schools(p) or owner == p['id'] or (st == 'approved' and school in {r['school'] for r in p['roles']})  # noqa: E731
+            return {'items': [{'id': i, 'school': sc_, 'src': sr, 'title': t, 'status': st, 'updated': up, 'owner': ow or '', 'mine': o == p['id']} for i, sc_, o, sr, t, st, up, ow in rows if sees(sc_, o, st)]}
+        row = c.execute('SELECT school, owner FROM open_rooms WHERE id = ?', (S('id', 20),)).fetchone()
+        if not row:
+            raise AdminError(404, 'Комнаты нет.')
+        own = row[1] == p['id'] and act == 'room.unpublish'
+        if not own and rank < 4 and row[0] not in dir_schools(p):
+            audit(c, who, 'admin.denied', 'room', S('id', 20), row[0], {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это комната чужой школы.')
+        if act == 'room.unpublish':
+            c.execute('DELETE FROM open_rooms WHERE id = ?', (S('id', 20),))
+        else:
+            c.execute('UPDATE open_rooms SET status = ?, decided_by = ?, decided = ? WHERE id = ?', ('approved' if act == 'room.approve' else 'rejected', p['id'], now, S('id', 20)))
+        audit(c, who, act, 'room', S('id', 20), row[0], {})
+        return {'ok': True}
     if act in ('upload.list', 'upload.approve', 'upload.reject', 'upload.delete'):
         if act == 'upload.list':
             sch = S('school', 40)
@@ -1451,7 +1517,16 @@ def cli(argv):
             audit(c, who, 'config.accounts', 'config', 'accounts', None, {'from': old, 'to': cfg['accounts']})
         print('Учётки %s.' % ('включены' if cfg['accounts'] else 'выключены'))
         return 0
-    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off', file=sys.stderr)
+    if cmd == 'open-rooms' and len(argv) == 2 and argv[1] in ('on', 'off'):
+        cfg = load_config()
+        old = cfg['openRooms']
+        cfg['openRooms'] = argv[1] == 'on'
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.openRooms', 'config', 'openRooms', None, {'from': old, 'to': cfg['openRooms']})
+        print('Открытые комнаты %s.' % ('включены' if cfg['openRooms'] else 'выключены'))
+        return 0
+    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off', file=sys.stderr)
     return 2
 
 
@@ -1530,6 +1605,8 @@ class H(BaseHTTPRequestHandler):
             with lock, db() as c:
                 st = state(c, False, p)
             return self.reply(200, st)
+        if self.path.startswith('/api/open/'):
+            return self.open_get()
         if self.path.startswith('/api/asset/'):
             return self.asset_get()
         if self.path.startswith('/api/auth/'):
@@ -1676,6 +1753,31 @@ class H(BaseHTTPRequestHandler):
                     out = (200, {'key': key, 'school': row[0], 'id': did})
         return self.reply(*out)
 
+    OPEN_HITS = {}
+
+    def open_get(self):
+        """Публичные открытые комнаты: без входа и без записи результатов. Только одобренные; лимит 60 запросов в минуту с адреса."""
+        if not load_config()['openRooms']:
+            return self.reply(404, {'error': 'not found'})
+        ip, now = client_ip(self), time.time()
+        hits = [t for t in H.OPEN_HITS.get(ip, []) if now - t < 60]
+        if len(hits) >= 60:
+            return self.reply(429, {'error': 'Слишком часто. Подождите минуту.'})
+        hits.append(now)
+        H.OPEN_HITS[ip] = hits
+        if len(H.OPEN_HITS) > 5000:
+            H.OPEN_HITS.clear()
+        path = self.path.split('?')[0]
+        with lock, db() as c:
+            if path == '/api/open/rooms':
+                rows = c.execute("SELECT id, title, json_extract(spec, '$.hint'), json_extract(spec, '$.grades') FROM open_rooms WHERE status = 'approved' ORDER BY updated DESC LIMIT 200").fetchall()
+                return self.reply(200, {'items': [{'id': i, 'title': t, 'hint': str(h or '')[:200]} for i, t, h, g in rows]})
+            rid = path[len('/api/open/room/'):] if path.startswith('/api/open/room/') else ''
+            row = c.execute("SELECT spec FROM open_rooms WHERE id = ? AND status = 'approved'", (rid,)).fetchone() if re.fullmatch(r'o-[0-9a-f]{12}', rid) else None
+        if not row:
+            return self.reply(404, {'error': 'not found'})
+        self.reply(200, {'id': rid, 'spec': json.loads(row[0])})
+
     def asset_get(self):
         """GET /api/asset/<id>: файл, загруженный учителем. Одобренный видит вся школа и её шлемы, неодобренный — автор и директор."""
         uid = self.path.split('?')[0][len('/api/asset/'):]
@@ -1734,7 +1836,7 @@ class H(BaseHTTPRequestHandler):
             return self.reply(404, {'error': 'not found'})
         ip = client_ip(self)
         n = num(self.headers.get('Content-Length'))
-        if n <= 0 or n > 4096:
+        if n <= 0 or n > (70000 if self.path.endswith('/room.publish') else 4096):
             return self.reply(413, {'error': 'body size'})
         try:
             body = json.loads(self.rfile.read(n).decode('utf-8'))

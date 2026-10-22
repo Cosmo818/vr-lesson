@@ -8,6 +8,7 @@ const $=id=>document.getElementById(id);
 function el(tag,text,attrs){const e=document.createElement(tag);if(text!==undefined&&text!==null)e.textContent=String(text);for(const k in attrs||{})e.setAttribute(k,attrs[k]);return e;}
 const isSuper=()=>S.account.roles().some(r=>r.role==='superadmin');
 const isDir=()=>S.account.roles().some(r=>r.role==='director');
+const isExp=()=>S.account.roles().some(r=>r.role==='expert');
 let tab='students',page=1,total=0;const SIZE=50;let casc=null,schoolsCache=[];
 const fmt=ts=>ts?new Date(ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
 
@@ -94,7 +95,7 @@ async function loadInvites(){
     const r=await S.admin('invite.list',{});if(bad(r,'invErr'))return;
     const t=$('invTbl');t.textContent='';const h=el('tr');for(const c of['Кого','Школа','Действует до',''])h.appendChild(el('th',c));t.appendChild(h);
     for(const it of r.data.items){
-      const tr=el('tr');tr.appendChild(el('td',it.role==='director'?'Директор':'Учитель'));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',fmt(it.expires)));
+      const tr=el('tr');tr.appendChild(el('td',it.role==='director'?'Директор':it.role==='expert'?'Специалист':'Учитель'));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',fmt(it.expires)));
       const td=el('td'),b=el('button','Отозвать',{class:'btn red'});b.onclick=async()=>{if(!ask('Отозвать приглашение? Код перестанет работать.'))return;const x=await S.admin('invite.revoke',{id:it.id});if(!bad(x,'invErr'))loadInvites();};td.appendChild(b);tr.appendChild(td);t.appendChild(tr);
     }
     if(!r.data.items.length){const tr=el('tr'),td=el('td','Действующих приглашений нет.',{colspan:'4',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
@@ -153,16 +154,37 @@ async function addSchool(){
   });
 }
 
+/* ---------- закрытые результаты (Б56): только специалист школы и администратор ---------- */
+async function loadClosed(){
+  await safe('Закрытые результаты','clErr',async()=>{
+    secErr('clErr','');
+    const t=$('clTbl');t.textContent='';
+    const r=await S.closedList($('clSchool').value);if(bad(r,'clErr'))return;
+    const h=el('tr');for(const c of['Ученик','Класс','Тест','Результат','Когда'])h.appendChild(el('th',c));t.appendChild(h);
+    for(const it of r.data.items){const tr=el('tr');tr.appendChild(el('td',it.student));tr.appendChild(el('td',it.grade));tr.appendChild(el('td',it.test));tr.appendChild(el('td',it.score+' из '+it.total));tr.appendChild(el('td',fmt(it.ts)));t.appendChild(tr);}
+    if(!r.data.items.length){const tr=el('tr'),td=el('td','Закрытых результатов пока нет.',{colspan:'5',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
+  });
+}
+function fillClosedSchools(){
+  const s=$('clSchool');s.textContent='';
+  const ids=isSuper()?schoolsCache.map(x=>[x.id,x.name]):S.account.roles().filter(r=>r.role==='expert').map(r=>[r.school,schoolName(r.school)]);
+  for(const [v,n] of ids)s.appendChild(el('option',n,{value:v}));
+}
+
 /* ---------- вход и запуск ---------- */
 function show(){
   $('lock').hidden=true;$('app').hidden=false;
   const roles=S.account.roles();
-  if(!isSuper()&&!isDir()){lock('Эта страница для директора и администратора. Откройте кабинет учителя.');return;}
-  $('who').textContent=(S.account.who()||'')+' · '+(isSuper()?'администратор':'директор');
+  if(!isSuper()&&!isDir()&&!isExp()){lock('Эта страница для директора, специалиста и администратора. Откройте кабинет учителя.');return;}
+  const onlyExp=!isSuper()&&!isDir();
+  $('who').textContent=(S.account.who()||'')+' · '+(isSuper()?'администратор':isDir()?'директор':'специалист');
+  for(const id of['s-people','s-invites','s-devices'])$(id).hidden=onlyExp;
+  $('s-closed').hidden=!(isSuper()||isExp());
   $('s-schools').hidden=!isSuper();
-  const roleSel=$('invRole');roleSel.textContent='';for(const [v,t] of isSuper()?[['teacher','Учитель'],['director','Директор']]:[['teacher','Учитель']])roleSel.appendChild(el('option',t,{value:v}));
+  const roleSel=$('invRole');roleSel.textContent='';for(const [v,t] of isSuper()?[['teacher','Учитель'],['director','Директор'],['expert','Специалист']]:[['teacher','Учитель'],['expert','Специалист']])roleSel.appendChild(el('option',t,{value:v}));
   say('');
-  loadSchools().then(()=>safe('Фильтр','peopleErr',async()=>{await casc.init();})).then(()=>{loadInvites();loadDevices();});
+  if(onlyExp){fillClosedSchools();return;}
+  loadSchools().then(()=>safe('Фильтр','peopleErr',async()=>{await casc.init();})).then(()=>{loadInvites();loadDevices();fillClosedSchools();});
 }
 async function enter(r,errEl){
   if(r.ok||r.status===200){show();}else $(errEl).textContent=r.msg||(r.data&&r.data.error)||'Не получилось.';
@@ -176,7 +198,7 @@ function bind(){
   $('kinds').onclick=e=>{const b=e.target.closest('[data-k]');if(!b)return;tab=b.dataset.k;page=1;for(const x of $('kinds').children)x.classList.toggle('on',x===b);loadPeople();};
   $('prev').onclick=()=>{if(page>1){page--;loadPeople();}};$('next').onclick=()=>{page++;loadPeople();};
   let tm=null;$('fQ').oninput=()=>{clearTimeout(tm);tm=setTimeout(()=>{page=1;loadPeople();},300);};
-  $('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
+  $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
   $('devLimGo').onclick=async()=>{const r=await S.admin('school.update',{id:$('devSchool').value,device_limit:$('devLim').value});if(!bad(r,'devErr')){say('Лимит сохранён.');loadDevices();}};
   casc=VR.regions.cascade({region:$('fRegion'),school:$('fSchool'),cls:$('fClass'),teacher:$('fTeacher')},()=>{page=1;loadPeople();});
 }

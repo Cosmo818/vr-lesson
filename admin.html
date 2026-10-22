@@ -93,6 +93,16 @@ th{color:var(--muted);font-weight:600;font-size:13px}
       </div>
     </section>
 
+    <section id="s-closed" hidden>
+      <h2>Закрытые результаты</h2>
+      <div class="card">
+        <p class="muted small">Результаты закрытых тестов (психологических и других). Их видит только специалист школы и администратор; директору и учителю они недоступны. Каждый просмотр записывается в журнал.</p>
+        <div class="row"><label class="small muted">Школа<br><select id="clSchool"></select></label><button class="btn" id="clGo">Показать</button></div>
+        <div id="clErr" class="note err" hidden></div>
+        <div class="scroll"><table id="clTbl"></table></div>
+      </div>
+    </section>
+
     <section id="s-schools" hidden>
       <h2>Школы</h2>
       <div class="card">

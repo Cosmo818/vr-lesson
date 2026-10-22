@@ -746,7 +746,7 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
     }
   }
   /* учётки (шаги 4–7…): отдельные Python-файлы с живым сервером; их строки ok/FAIL входят в общий счёт */
-  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы']]){
+  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы'],['open.py','открытые']]){
     if(!fs.existsSync(path.join(ROOT,'tests',file)))continue;
     let out='';
     try{out=cp.execFileSync('python3',['-I',path.join(ROOT,'tests',file)],{encoding:'utf-8',timeout:240000});}

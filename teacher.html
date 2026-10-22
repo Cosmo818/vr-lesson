@@ -428,7 +428,7 @@ $('tplSubj').innerHTML=Object.keys(D.Q).map(k=>`<option value="${k}">${D.subject
 $('tplBand').innerHTML=Object.keys(D.bands).map(k=>`<option value="${k}">${D.bands[k]}</option>`).join('');
 const bandRange={a:[1,4],b:[5,6],c:[7,8],d:[9,11]};
 const blankQ=()=>({q:'',a:['','','',''],e:'',c:0});
-const toEd=t=>({id:t.id,created:t.created,title:t.title,subj:t.subj,gmin:t.gmin,gmax:t.gmax,active:t.active!==false,qs:t.qs.map(q=>({id:q.id,q:q.q,a:q.a.concat(['','','','']).slice(0,4),e:q.e||'',c:0}))});
+const toEd=t=>({id:t.id,created:t.created,title:t.title,subj:t.subj,gmin:t.gmin,gmax:t.gmax,active:t.active!==false,closed:!!t.closed,qs:t.qs.map(q=>({id:q.id,q:q.q,a:q.a.concat(['','','','']).slice(0,4),e:q.e||'',c:0}))});
 $('newTest').onclick=()=>{ed={title:'',subj:'math',gmin:5,gmax:6,active:true,qs:[blankQ()]};edErr='';renderEditor();};
 $('fromBank').onclick=()=>{
   const sj=$('tplSubj').value,b=$('tplBand').value,qs=D.Q[sj][b];
@@ -436,7 +436,7 @@ $('fromBank').onclick=()=>{
 };
 function renderTests(){
   const L=S.tests();
-  $('tTable').innerHTML=L.length?'<tr><th>Тест</th><th>Где</th><th>Классы</th><th>Вопросов</th><th>Включён</th><th></th></tr>'+L.map(t=>`<tr data-id="${t.id}"><td><b>${esc(t.title)}</b></td><td>${D.subjects[t.subj]?D.subjects[t.subj].title:''}</td><td>${t.gmin}–${t.gmax}</td><td>${t.qs.length}</td><td><input type="checkbox" class="act"${t.active!==false?' checked':''}></td><td style="white-space:nowrap"><button class="btn ed">Изменить</button> <button class="btn ghost cp">Копия</button> <button class="btn red del">Удалить</button></td></tr>`).join(''):'<tr><td class="muted">Своих тестов пока нет. Нажми «+ Новый тест» или создай копию встроенных вопросов и отредактируй.</td></tr>';
+  $('tTable').innerHTML=L.length?'<tr><th>Тест</th><th>Где</th><th>Классы</th><th>Вопросов</th><th>Включён</th><th></th></tr>'+L.map(t=>`<tr data-id="${t.id}"><td><b>${esc(t.title)}</b>${t.closed?' <span class="muted">🔒 закрытый</span>':''}</td><td>${D.subjects[t.subj]?D.subjects[t.subj].title:''}</td><td>${t.gmin}–${t.gmax}</td><td>${t.qs.length}</td><td><input type="checkbox" class="act"${t.active!==false?' checked':''}></td><td style="white-space:nowrap"><button class="btn ed">Изменить</button> <button class="btn ghost cp">Копия</button> <button class="btn red del">Удалить</button></td></tr>`).join(''):'<tr><td class="muted">Своих тестов пока нет. Нажми «+ Новый тест» или создай копию встроенных вопросов и отредактируй.</td></tr>';
   renderEditor();
 }
 $('tTable').onclick=e=>{
@@ -452,7 +452,8 @@ function renderEditor(){
    <div class="row"><input id="eTitle" placeholder="Название, например «Дроби, 5 класс»" value="${esc(ed.title)}" style="flex:1 1 300px" maxlength="120"></div>
    <div class="row"><label>Где показать: <select id="eSubj">${subjOpts(ed.subj)}</select></label>
      <label>Классы: с <select id="eMin">${gOpts(ed.gmin)}</select> по <select id="eMax">${gOpts(ed.gmax)}</select></label>
-     <label><input type="checkbox" id="eAct"${ed.active?' checked':''}> включён</label></div>
+     <label><input type="checkbox" id="eAct"${ed.active?' checked':''}> включён</label>
+     <label title="Результаты такого теста не попадают в рейтинг и баллы и не видны учителю и директору — их видит только специалист школы"><input type="checkbox" id="eClosed"${ed.closed?' checked':''}> закрытый (результаты видит только специалист)</label></div>
    <p class="muted small">В VR показываются до 15 вопросов в случайном порядке; варианты ответов перемешиваются.</p>
    <div id="eQs">${ed.qs.map((q,i)=>`<div class="card" data-i="${i}" style="background:#0e1730">
      <div class="row" style="justify-content:space-between"><b>Вопрос ${i+1}</b><span><button class="btn ghost up" type="button">↑</button> <button class="btn ghost dn" type="button">↓</button> <button class="btn red rm" type="button">Удалить</button></span></div>
@@ -464,7 +465,7 @@ function renderEditor(){
 }
 function collect(){
   if(!ed)return;
-  ed.title=$('eTitle').value;ed.subj=$('eSubj').value;ed.gmin=parseInt($('eMin').value,10);ed.gmax=parseInt($('eMax').value,10);ed.active=$('eAct').checked;
+  ed.title=$('eTitle').value;ed.subj=$('eSubj').value;ed.gmin=parseInt($('eMin').value,10);ed.gmax=parseInt($('eMax').value,10);ed.active=$('eAct').checked;ed.closed=$('eClosed').checked;
   for(const card of $('eQs').querySelectorAll('[data-i]')){
     const q=ed.qs[+card.dataset.i];q.q=card.querySelector('.qq').value;q.e=card.querySelector('.qe').value;
     for(const inp of card.querySelectorAll('.qa'))q.a[+inp.dataset.k]=inp.value;

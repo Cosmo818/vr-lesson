@@ -8,7 +8,7 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const BANDS=['a','b','c','d'],BS={a:'1–4',b:'5–6',c:'7–8',d:'9–11'};
 const ICON={text:'Т',item:'●',table:'▭',question:'?',quiz:'✓',portal:'⇨',model:'▲',sound:'♪'};
 const SC=40,CS=480; /* пикселей на метр, размер плана: комната 12×12 м */
-let cur=null,sel=null,dirty=false,msg='',io=false,inRoom=false,filesOpen=false,filesMsg='';
+let cur=null,sel=null,dirty=false,msg='',io=false,inRoom=false,filesOpen=false,filesMsg='',pubOpen=false,pubMsg='',pubList=[];
 /* отмена и возврат: снимки комнаты до каждой правки (шаг назад / шаг вперёд, Ctrl+Z / Ctrl+Y) */
 let hist=[],fut=[],lastKey='',lastAt=0;
 const HMAX=100;
@@ -86,9 +86,9 @@ function costHtml(){
 const frameHtml=()=>`<div class="card"><div class="small muted" style="margin-bottom:6px">Вы внутри комнаты. Дверь «← Холл» ведёт в холл; вернуться к правке — кнопка «← Вернуться в редактор». В шлеме комната открывается по кнопке VR внутри окна.</div><iframe title="Комната" src="index.html?room=${encodeURIComponent(cur.id)}&t=${Date.now()}" allow="xr-spatial-tracking; fullscreen" style="width:100%;height:480px;border:1px solid var(--line);border-radius:10px;background:#000"></iframe></div>`;
 function editHtml(){
   const b=S.bandsOf('room',cur.id);
-  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><button class="btn ghost" data-bd="undo" id="bdUndo" title="Шаг назад (Ctrl+Z)" ${hist.length?'':'disabled'}>↶ Назад</button><button class="btn ghost" data-bd="redo" id="bdRedo" title="Шаг вперёд (Ctrl+Y)" ${fut.length?'':'disabled'}>↷ Вперёд</button><span id="bdDirty" class="small" style="display:inline-block;min-width:200px"></span><button class="btn ghost" data-bd="preview">${inRoom?'← Вернуться в редактор':'Войти в комнату'}</button><button class="btn ghost" data-bd="newtab">В новой вкладке</button><button class="btn ghost" data-bd="vredit" title="Откроет комнату с планшетом-редактором на левой руке">Править в VR</button><button class="btn ghost" data-bd="export">Текст комнаты</button><button class="btn ghost" data-bd="files">Мои файлы</button><a href="help-rooms.html" class="small">Инструкция</a></div>
+  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><button class="btn ghost" data-bd="undo" id="bdUndo" title="Шаг назад (Ctrl+Z)" ${hist.length?'':'disabled'}>↶ Назад</button><button class="btn ghost" data-bd="redo" id="bdRedo" title="Шаг вперёд (Ctrl+Y)" ${fut.length?'':'disabled'}>↷ Вперёд</button><span id="bdDirty" class="small" style="display:inline-block;min-width:200px"></span><button class="btn ghost" data-bd="preview">${inRoom?'← Вернуться в редактор':'Войти в комнату'}</button><button class="btn ghost" data-bd="newtab">В новой вкладке</button><button class="btn ghost" data-bd="vredit" title="Откроет комнату с планшетом-редактором на левой руке">Править в VR</button><button class="btn ghost" data-bd="export">Текст комнаты</button><button class="btn ghost" data-bd="files">Мои файлы</button><button class="btn ghost" data-bd="pub" title="Сделать комнату открытой для всех, без входа">Открытая комната</button><a href="help-rooms.html" class="small">Инструкция</a></div>
   <div id="bdFrame" ${inRoom?'':'hidden'}>${inRoom?frameHtml():''}</div>
-  <div id="bdMsg" class="note small" ${msg?'':'hidden'}>${esc(msg)}</div><div id="bdFiles">${filesOpen?filesHtml():''}</div><div id="bdIO">${io?ioHtml(JSON.stringify(cur,null,1)):''}</div>
+  <div id="bdMsg" class="note small" ${msg?'':'hidden'}>${esc(msg)}</div><div id="bdFiles">${filesOpen?filesHtml():''}</div><div id="bdPub">${pubOpen?pubHtml():''}</div><div id="bdIO">${io?ioHtml(JSON.stringify(cur,null,1)):''}</div>
   <div class="card"><div class="row"><label class="bdl" style="flex:1;min-width:220px">Название комнаты<input data-r="title" value="${esc(cur.title)}" maxlength="${RS.LIM.title}"></label>
     <label class="bdl">Оформление<select data-r="env">${Object.keys(RS.PRESETS).map(k=>`<option value="${k}"${k===cur.env?' selected':''}>${esc(RS.PRESETS[k].title)}</option>`).join('')}</select></label></div>
     <label class="bdl">Подсказка при входе (по желанию)<input data-r="hint" value="${esc(cur.hint)}" maxlength="${RS.LIM.hint}"></label>
@@ -184,6 +184,36 @@ async function filesAct(a,t){
   const act={fok:'upload.approve',fno:'upload.reject',fdel:'upload.delete'}[a];
   if(act){if(a==='fdel'&&!confirm('Удалить файл? Комнаты, где он используется, останутся без него.'))return;const r=await S.admin(act,{id:t.dataset.id});filesMsg=r.status===200?'Готово.':(r.data.error||'Не получилось.');await S.refreshFiles();showFiles();}
 }
+/* ---------- «Открытая комната» (Б54): публикация для всех без входа; у учителя — на одобрение директору ---------- */
+const PUB_T={pending:'ждёт директора',approved:'открыта для всех',rejected:'отклонена'};
+const pubSchools=()=>{const m={};S.account.roles().forEach(r=>{if(r.school&&(r.role==='teacher'||r.role==='director'))m[r.school]=r.schoolName||r.school;});return m;};
+function pubHtml(){
+  if(!S.account.token())return'<div class="card"><p class="muted">Открытые комнаты доступны после входа по логину и паролю (кабинет учителя → «Войти»).</p></div>';
+  const sc=pubSchools(),ks=Object.keys(sc),mod=canModerate();
+  const mine=pubList.filter(x=>x.src===cur.id);
+  const rows=pubList.map(x=>`<tr><td>${esc(x.title)}</td><td>${PUB_T[x.status]||''}</td><td>${esc(x.owner)}</td><td>${mod&&x.status==='pending'?`<button class="btn" data-bd="rok" data-id="${x.id}">Одобрить</button> <button class="btn ghost" data-bd="rno" data-id="${x.id}">Отклонить</button> `:''}${x.mine||mod?`<button class="btn red" data-bd="rdel" data-id="${x.id}">Снять</button>`:''}</td></tr>`).join('');
+  return`<div class="card"><p class="muted small">Открытая комната видна всем на стартовой странице без входа; результаты в ней не сохраняются. Свои загруженные файлы в такой комнате пока недоступны — только встроенные модели, звуки и текстуры. ${mod?'Ваши комнаты открываются сразу.':'Комната станет открытой после одобрения директором. Изменили комнату — опубликуйте ещё раз.'}</p>
+  ${ks.length?`<div class="row"><select id="bdPubSch">${ks.map(k=>`<option value="${esc(k)}">${esc(sc[k])}</option>`).join('')}</select><button class="btn" data-bd="rpub">${mine.length?'Обновить публикацию':'Опубликовать'}</button></div>`:'<p class="muted small">Публиковать могут учитель или директор школы.</p>'}
+  <div class="small muted">${esc(pubMsg)}</div>
+  <div style="overflow-x:auto"><table style="width:100%;min-width:420px">${pubList.length?'<tr><th align="left">Комната</th><th align="left">Статус</th><th align="left">Автор</th><th></th></tr>'+rows:'<tr><td class="muted">Открытых комнат пока нет.</td></tr>'}</table></div></div>`;
+}
+async function pubLoad(){const r=await S.roomList('');pubList=r.status===200?r.data.items:[];}
+function showPub(){const h=$('bdPub');if(h)h.innerHTML=pubOpen?pubHtml():'';}
+async function pubAct(a,t){
+  if(a==='pub'){pubOpen=!pubOpen;if(pubOpen)await pubLoad();showPub();return;}
+  if(a==='rpub'){
+    if(dirty&&!save())return;
+    const spec=JSON.parse(JSON.stringify(cur));
+    if(JSON.stringify(spec).indexOf('up:')>=0){pubMsg='В комнате есть свои файлы («up:…»): уберите их, пока открытые комнаты их не поддерживают.';showPub();return;}
+    const r=await S.publishRoom($('bdPubSch').value,cur.id,spec);
+    pubMsg=r.status===200?(r.data.status==='approved'?'Комната открыта для всех.':'Отправлено директору на одобрение.'):(r.data.error||'Не получилось.');
+  }else{
+    const act={rok:'room.approve',rno:'room.reject',rdel:'room.unpublish'}[a];
+    if(a==='rdel'&&!confirm('Снять комнату с открытого доступа?'))return;
+    const r=await S.roomAct(act,t.dataset.id);pubMsg=r.status===200?'Готово.':(r.data.error||'Не получилось.');
+  }
+  await pubLoad();showPub();
+}
 function refreshPanels(){
   const l=$('bdList'),f=$('bdForm');if(l)l.innerHTML=listBlocks();if(f)f.innerHTML=formHtml();
   const c=$('bdCost');if(c)c.innerHTML=costHtml();drawPlan();
@@ -215,6 +245,7 @@ function onClick(e){
   const a=t.dataset.bd;
   if(a==='new'){const tpl=RS.TEMPLATES[t.dataset.t].make();create(tpl);}
   else if(a==='files'||a==='fup'||a==='fok'||a==='fno'||a==='fdel')filesAct(a,t);
+  else if(a==='pub'||a==='rpub'||a==='rok'||a==='rno'||a==='rdel')pubAct(a,t);
   else if(a==='import'){io=!io;show();}
   else if(a==='closeio'){io=false;show();}
   else if(a==='doimport'){

@@ -44,6 +44,7 @@ async function tryEnter(e){
   fails=0;$('selPin').value='';try{localStorage.setItem(LKEY,$('selClass').value);}catch(err){}
   choose(s);
 }
+let openPick=null;
 function choose(st){
   chosen=st;
   $('who').textContent=st.id?st.name:'Гость';
@@ -67,7 +68,7 @@ async function go(){
   $('err').textContent='';
   E.audio();startSession();
   /* ссылка предпросмотра из конструктора: index.html?room=c-… сразу ведёт в комнату */
-  let pv=null;try{VR.custom.refresh();pv=new URLSearchParams(location.search).get('room');if(pv&&E.rooms[pv]){E.goRoom(pv);if(new URLSearchParams(location.search).get('edit')==='1')VR.custom.startEdit(E,pv);}else pv=null;}catch(e){pv=null;}
+  let pv=null;try{VR.custom.refresh();pv=openPick||new URLSearchParams(location.search).get('room');if(pv&&E.rooms[pv]){E.goRoom(pv);if(new URLSearchParams(location.search).get('edit')==='1')VR.custom.startEdit(E,pv);}else pv=null;}catch(e){pv=null;}
   if(xrOk){
     try{await E.enterXR();$('ov').hidden=true;}
     catch(e){$('err').textContent=e.message;}
@@ -89,7 +90,7 @@ function endSession(){
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
   $('summary').textContent=msg;$('summary').hidden=false;
-  chosen=null;renderList();showSection('pick');
+  chosen=null;openPick=null;renderList();showSection('pick');
 }
 function showSync(st){
   const el=$('sync');if(!el)return;
@@ -144,6 +145,13 @@ function bind(){
   $('selStu').onchange=()=>{renderPin();$('pickErr').textContent='';if(!$('selPin').disabled&&!$('pinL').hidden)$('selPin').focus();};
   $('login').onsubmit=tryEnter;
   $('guestBtn').onclick=()=>choose({id:null,name:'Гость',grade:5});
+  /* открытые комнаты (Б54): кнопка видна, только если сервер включил их; вход — гостем, результаты не пишутся */
+  S.openList().then(r=>{if(r.status===200&&r.data.items&&r.data.items.length){$('openBtn').hidden=false;$('openBtn').onclick=()=>{
+    const box=$('openBox');box.hidden=!box.hidden;const L=$('openList');L.textContent='';
+    for(const it of r.data.items){const b=document.createElement('button');b.type='button';b.className='btn ghost';b.textContent=it.title;b.title=it.hint||'';b.onclick=async()=>{
+      $('openErr').textContent='';const sp=await S.openRoom(it.id);if(!sp){$('openErr').textContent='Комната недоступна.';return;}
+      openPick=sp.id;choose({id:null,name:'Гость',grade:5});};L.appendChild(b);}
+  };}}).catch(()=>{});
   $('back').onclick=()=>{chosen=null;showSection('pick');};
   $('go').onclick=go;
   $('deskExit').onclick=endSession;
