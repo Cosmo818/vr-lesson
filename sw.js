@@ -1,5 +1,5 @@
 /* Офлайн-кэш: при наличии сети берём свежие файлы, без сети — из кэша. */
-const V='vr-lesson-v36';
+const V='vr-lesson-v37';
 const FILES=['./','index.html','teacher.html','css/style.css','js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/assets.js','js/engine.js','js/controllers.js','js/learn.js','js/rooms.js','js/rooms2.js','js/builder.js','js/regions.js','js/admin.js','admin.html','js/inf.js','js/custom.js','js/app.js','assets/models/tree.glb','assets/models/house.glb','assets/models/rocket.glb','assets/models/atom.glb','assets/models/book.glb','assets/models/flask.glb','assets/sounds/bell.wav','assets/sounds/click.wav','assets/sounds/wind.wav','assets/sounds/water.wav','assets/sounds/birds.wav','help.html','help-teacher.html','help-rooms.html','css/help.css','manifest.webmanifest','icon.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});

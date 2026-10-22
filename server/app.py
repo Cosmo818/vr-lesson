@@ -1434,6 +1434,64 @@ def admin_action(c, p, act, b, ip):
         c.execute('UPDATE classes SET teacherId = ?, doc = ?, updated = ? WHERE id = ?', (tid, json.dumps(d, ensure_ascii=False), now, S('class_id', 60)))
         audit(c, who, 'class.assign', 'class', S('class_id', 60), row[0], {'from': row[1], 'to': tid})
         return {'ok': True}
+    if act in ('class.create', 'class.move'):
+        tid = S('teacher_id', 40) or None
+        if act == 'class.create':
+            sch, cid = S('school_id', 40), 'c-' + secrets.token_hex(6)
+            try:
+                grade = int(b.get('grade'))
+            except (TypeError, ValueError):
+                grade = 0
+            letter = S('letter', 4).strip().upper()
+            if not 1 <= grade <= 11 or not letter:
+                raise AdminError(400, 'Нужны параллель (1–11) и буква класса.')
+            src = None
+        else:
+            cid = S('class_id', 60)
+            src = class_row(c, cid)
+            if not src:
+                raise AdminError(404, 'Класса нет.')
+            sch = S('school_id', 40) or src[0]
+            row_d = c.execute('SELECT doc FROM classes WHERE id = ?', (cid,)).fetchone()[0]
+            grade, letter = num(load_doc(row_d).get('grade')), str(load_doc(row_d).get('letter') or '')
+            if rank < SUPER and src[0] not in dir_schools(p):
+                audit(c, who, 'admin.denied', 'class', cid, src[0], {'why': 'scope', 'action': act})
+                raise AdminError(403, 'Это класс чужой школы.')
+        if rank < SUPER and sch not in dir_schools(p):
+            audit(c, who, 'admin.denied', 'class', cid, sch or None, {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это школа не ваша.')
+        if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status = 'active'", (sch,)).fetchone():
+            raise AdminError(400, 'Такой школы нет.')
+        if tid:
+            t = user_row(c, tid)
+            if not t or t['status'] != 'active' or not c.execute("SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'teacher' AND school = ? AND status = 'active'", (tid, sch)).fetchone():
+                raise AdminError(400, 'Этот человек не учитель выбранной школы.')
+        dup = c.execute("SELECT id FROM classes WHERE school = ? AND name = ? AND status = 'active' AND id != ?", (sch, '%s%s' % (grade, letter), cid)).fetchone()
+        if dup:
+            raise AdminError(400, 'В этой школе такой класс уже есть.')
+        if act == 'class.create':
+            d = {'id': cid, 'grade': grade, 'letter': letter, 'created': now, 'updated': now, 'school': sch, 'year': acad_year(now), 'status': 'active'}
+            if tid:
+                d['teacherId'] = tid
+            c.execute('INSERT INTO classes(id, name, updated, doc, school, year, status, teacherId) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+                      (cid, '%s%s' % (grade, letter), now, json.dumps(d, ensure_ascii=False), sch, d['year'], 'active', tid))
+            audit(c, who, 'class.create', 'class', cid, sch, {'name': '%s%s' % (grade, letter), 'by': 'admin'})
+            return {'ok': True, 'id': cid}
+        d = load_doc(c.execute('SELECT doc FROM classes WHERE id = ?', (cid,)).fetchone()[0]) or {}
+        d['school'], d['updated'] = sch, now
+        if tid:
+            d['teacherId'] = tid
+        else:
+            d.pop('teacherId', None)
+        c.execute('UPDATE classes SET school = ?, teacherId = ?, doc = ?, updated = ? WHERE id = ?', (sch, tid, json.dumps(d, ensure_ascii=False), now, cid))
+        moved = 0
+        for sid, raw in c.execute("SELECT id, doc FROM students WHERE json_extract(doc, '$.classId') = ?", (cid,)).fetchall():
+            sd = load_doc(raw) or {}
+            sd['school'], sd['updated'] = sch, now
+            c.execute('UPDATE students SET school = ?, doc = ?, updated = ? WHERE id = ?', (sch, json.dumps(sd, ensure_ascii=False), now, sid))
+            moved += 1
+        audit(c, who, 'class.move', 'class', cid, sch, {'from': src[0], 'to': sch, 'students': moved})
+        return {'ok': True, 'students': moved}
     if act in ('student.move', 'student.pin'):
         row = c.execute('SELECT doc FROM students WHERE id = ?', (S('student_id', 60),)).fetchone()
         d = load_doc(row[0]) if row else None
@@ -1551,7 +1609,9 @@ def accounts_api(c, p, q):
         for (cid,) in c.execute("SELECT json_extract(doc, '$.classId') FROM students"):
             cnt[cid] = cnt.get(cid, 0) + 1
         tot = len(cls)
-        return {'items': [dict(k, students=cnt.get(k['id'], 0)) for k in cls[(page - 1) * size:page * size]], 'total': tot, 'page': page, 'size': size}
+        part = cls[(page - 1) * size:page * size]
+        tn = {r[0]: r[1] or r[2] for r in c.execute('SELECT id, name, login FROM users WHERE id IN (%s)' % ','.join('?' * len({k['teacherId'] for k in part if k['teacherId']})), tuple({k['teacherId'] for k in part if k['teacherId']}))} if any(k['teacherId'] for k in part) else {}
+        return {'items': [dict(k, students=cnt.get(k['id'], 0), teacherName=tn.get(k['teacherId'], '')) for k in part], 'total': tot, 'page': page, 'size': size}
     if kind == 'teachers':
         if not (sc['all'] or sc['dir']):
             raise AdminError(403, 'Список учителей доступен директору.')

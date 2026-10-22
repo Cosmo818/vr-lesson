@@ -66,7 +66,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
     <form id="acctForm" class="row" hidden><input id="lgn" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="Логин"><input id="lgp" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password" placeholder="Пароль"><button class="btn">Войти</button></form>
     <form id="pinForm" class="row"><input id="pin" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password" placeholder="Пароль"><button class="btn">Войти</button></form>
     <p id="toInvP" hidden><a href="#" id="toInv">У меня код приглашения или сброса пароля</a></p>
-    <form id="invForm" hidden><div class="row"><input id="icode" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="Код приглашения или сброса пароля"><input id="iname" autocomplete="name" placeholder="Ваше имя"></div><div class="row"><input id="ilog" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="Придумайте логин"><input id="ipw" type="password" autocomplete="new-password" placeholder="Придумайте пароль (не короче 12 знаков)"><button class="btn">Зарегистрироваться</button></div><p><a href="#" id="toLog">← Назад ко входу</a></p></form>
+    <form id="invForm" hidden><div class="row"><button type="button" class="btn" id="mReg">Регистрация по приглашению</button><button type="button" class="btn ghost" id="mRes">Новый пароль по коду</button></div><div class="row"><input id="icode" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="Код (из приглашения или для смены пароля)"></div><div class="row" id="regRow"><input id="iname" autocomplete="name" placeholder="ФИО: фамилия, имя, отчество"><input id="ilog" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="Придумайте логин"></div><div class="row"><input id="ipw" type="password" autocomplete="new-password" placeholder="Новый пароль (не короче 12 знаков)"><button class="btn" id="iGo">Зарегистрироваться</button></div><p><a href="#" id="toLog">← Назад ко входу</a></p></form>
     <p id="pinErr" class="muted"></p>
     <p><a href="index.html">← К выбору ученика</a></p>
   </div>
@@ -225,11 +225,15 @@ $('acctForm').onsubmit=async e=>{
   const sv=S.server(),r=await S.account.login(sv?sv.url:defSrv(),$('lgn').value,$('lgp').value);$('lgp').value='';
   if(r.ok){$('pinErr').textContent='';unlock();}else $('pinErr').textContent=r.msg;
 };
-$('toInv').onclick=e=>{e.preventDefault();$('acctForm').hidden=true;$('toInvP').hidden=true;$('invForm').hidden=false;};
+$('toInv').onclick=e=>{e.preventDefault();setMode('reg');$('acctForm').hidden=true;$('toInvP').hidden=true;$('invForm').hidden=false;};
+let invMode='reg';
+const setMode=m=>{invMode=m;$('regRow').hidden=m==='res';$('iGo').textContent=m==='res'?'Сменить пароль':'Зарегистрироваться';$('mReg').className='btn'+(m==='reg'?'':' ghost');$('mRes').className='btn'+(m==='res'?'':' ghost');$('pinErr').textContent='';};
+$('mReg').onclick=()=>setMode('reg');$('mRes').onclick=()=>setMode('res');
 $('toLog').onclick=e=>{e.preventDefault();$('invForm').hidden=true;showForms();};
 $('invForm').onsubmit=async e=>{
   e.preventDefault();$('pinErr').textContent='Проверяю…';
-  const r=await S.activate({code:$('icode').value,login:$('ilog').value,password:$('ipw').value,name:$('iname').value});$('ipw').value='';
+  if(invMode==='reg'&&$('iname').value.trim().split(/\s+/).length<2){$('pinErr').textContent='Укажите ФИО: хотя бы фамилию и имя.';return;}
+  const r=await S.activate(invMode==='res'?{code:$('icode').value,login:'',password:$('ipw').value,name:''}:{code:$('icode').value,login:$('ilog').value,password:$('ipw').value,name:$('iname').value});$('ipw').value='';
   if(r.status===200){$('pinErr').textContent='';$('invForm').hidden=true;unlock();}else $('pinErr').textContent=(r.data&&r.data.error)||'Не получилось. Проверьте код.';
 };
 S.onStatus(st=>{if(st.expired){lock();$('pinErr').textContent=st.msg;}});

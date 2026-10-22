@@ -146,6 +146,16 @@ try:
     st, b = req('POST', '/api/sync', {}, H('tA2')); ok('cA2' not in [x['id'] for x in b['state']['classes']], 'бывший учитель класс больше не видит')
     login('tA1')
     st, b = req('POST', '/api/sync', {}, H('tA1')); ok({'cA1', 'cA2'} <= {x['id'] for x in b['state']['classes']}, 'новый учитель видит класс')
+    # --- создание и перенос класса с выбором школы (админка)
+    st, b = adm('dirA', 'class.create', {'grade': 9, 'letter': 'я', 'school_id': 's-a', 'teacher_id': UID['tA1']}); ok(st == 200 and b.get('id'), 'директор создаёт класс в своей школе с учителем')
+    nid = b.get('id')
+    ok(sql("select school, teacherId, name from classes where id=?", nid)[0] == ('s-a', UID['tA1'], '9Я'), 'класс записан: школа, учитель, имя 9Я')
+    st, b = adm('dirA', 'class.create', {'grade': 9, 'letter': 'Я', 'school_id': 's-a'}); ok(st == 400, 'дубль класса в школе не создаётся')
+    st, b = adm('dirA', 'class.create', {'grade': 9, 'letter': 'Ю', 'school_id': 's-b'}); ok(st == 403, 'директор не создаёт класс в чужой школе')
+    st, b = adm('tA1', 'class.create', {'grade': 9, 'letter': 'Ю', 'school_id': 's-a'}); ok(st == 403, 'учитель через админку класс не создаёт')
+    st, b = adm('sup', 'class.create', {'grade': 9, 'letter': 'Ю', 'school_id': 's-b', 'teacher_id': UID['tA1']}); ok(st == 400, 'учитель должен быть из выбранной школы')
+    st, b = adm('sup', 'class.create', {'grade': 9, 'letter': 'Ю', 'school_id': 's-b', 'teacher_id': UID['tB1']}); ok(st == 200, 'суперадмин создаёт класс в любой школе')
+    sql("delete from classes where id in (?, ?)", nid, b.get('id'))  # тестовые классы убираем, чтобы не менять счётчики ниже
     # --- ученики
     st, b = adm('tA1', 'student.move', {'student_id': 'st-cA1-1', 'class_id': 'cA2'}); ok(st == 200, 'учитель переносит ученика между своими классами')
     st, b = adm('tA1', 'student.move', {'student_id': 'st-cA1-2', 'class_id': 'cB1'}); ok(st == 403, 'учитель не переносит в чужую школу')
@@ -256,6 +266,13 @@ try:
     sql("update pair_codes set expires=1 where used_at is null")
     st, b = req('POST', '/api/device/pair', {'code': pc2}); ok(st == 400, 'просроченный код привязки отклонён')
     sql("delete from login_fail")
+    # --- перенос класса в другую школу (в конце: класс cA1 уезжает)
+    st, b = adm('dirA', 'class.move', {'class_id': 'cA0', 'school_id': 's-b'}); ok(st == 403, 'директор не переносит класс в чужую школу')
+    nst = sql("select count(*) from students where json_extract(doc,'$.classId')='cA1'")[0][0]
+    st, b = adm('sup', 'class.move', {'class_id': 'cA1', 'school_id': 's-b', 'teacher_id': UID['tB1']}); ok(st == 200 and b.get('students') == nst and nst > 0, 'суперадмин переносит класс со всеми учениками (%d)' % nst)
+    ok(sql("select school, teacherId from classes where id='cA1'")[0] == ('s-b', UID['tB1']), 'у класса новая школа и учитель')
+    ok(sql("select count(*) from students where json_extract(doc,'$.classId')='cA1' and school='s-b' and json_extract(doc,'$.school')='s-b'")[0][0] == nst, 'ученики класса переехали в школу класса')
+    ok(sql("select count(*) from audit_log where action in ('class.create','class.move')")[0][0] >= 3, 'создание и перенос класса записаны в журнал')
     # --- флаг выключен
     app.save_config({'accounts': False, 'legacyTeacher': True, 'sessionMinutes': 15})
     st, b = req('POST', '/api/admin/school.create', {'name': 'Z'}, H('sup')); ok(st == 404, 'accounts=false: /api/admin — 404')

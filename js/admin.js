@@ -41,13 +41,13 @@ function select(items,ph){const s=el('select');VR.regions.fill(s,items,ph);retur
 const labelled=(text,node)=>{const l=el('label',text,{class:'bdl'});l.appendChild(node);return l;};
 
 /* ---------- люди и классы ---------- */
-const COLS={students:['Имя','Класс','Школа','Код входа',''],teachers:['Имя','Логин','Роли',''],classes:['Класс','Школа','Учеников','']};
+const COLS={students:['Имя','Класс','Школа','Код входа',''],teachers:['ФИО','Логин','Роли',''],classes:['Класс','Школа','Учитель','Учеников','']};
 function head(cols){const t=$('tbl');t.textContent='';const tr=el('tr');for(const c of cols)tr.appendChild(el('th',c));t.appendChild(tr);return t;}
 const schoolName=id=>(schoolsCache.find(s=>s.id===id)||{}).name||id;
 function actions(td,list){for(const [t,fn,cls] of list){const b=el('button',t,{class:'btn '+(cls||'ghost')});b.onclick=fn;td.appendChild(b);td.appendChild(document.createTextNode(' '));}}
 async function loadPeople(){
   await safe('Люди','peopleErr',async()=>{
-    secErr('peopleErr','');
+    secErr('peopleErr','');$('clsNew').hidden=tab!=='classes';
     const f=casc.get(),r=await S.accounts({kind:tab,region:f.region,school:f.school,class:f.class,teacher:f.teacher,q:$('fQ').value.trim(),page,size:SIZE});
     if(bad(r,'peopleErr')){head(COLS[tab]);total=0;pager();return;}
     const t=head(COLS[tab]);total=r.data.total;
@@ -60,8 +60,8 @@ async function loadPeople(){
         tr.appendChild(el('td',it.name||it.login));tr.appendChild(el('td',it.login));tr.appendChild(el('td',it.roles.map(x=>x.role+(x.school?' · '+schoolName(x.school):'')).join(', ')));
         const td=el('td');actions(td,[['Сбросить пароль',()=>resetPw(it)],['В архив',()=>archive(it),'red']]);tr.appendChild(td);
       }else{
-        tr.appendChild(el('td',it.name));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.students));
-        const td=el('td');actions(td,[['Передать учителю',()=>assignClass(it)]]);tr.appendChild(td);
+        tr.appendChild(el('td',it.name));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.teacherName||'— не назначен —'));tr.appendChild(el('td',it.students));
+        const td=el('td');actions(td,[['Передать / перенести',()=>assignClass(it)]]);tr.appendChild(td);
       }
       t.appendChild(tr);
     }
@@ -83,11 +83,38 @@ async function moveStudent(it){
   if(!await dialog('Перенести «'+it.name+'»',labelled('В класс',sel),'Перенести')||!sel.value)return;
   if(await act('student.move',{student_id:it.id,class_id:sel.value},'Ученик перенесён.'))loadPeople();
 }
+/* выбор места назначения: регион → район → школа → учитель; списки приходят из Store.options и зависят друг от друга */
+async function pickTarget(title,school0,teacher0,okText,top){
+  const reg=select([],'— регион —'),dis=select([],'— все районы —'),sch=select([],'— выберите школу —'),tch=select([],'— без учителя —'),box=el('div');
+  if(top)box.appendChild(top);
+  for(const [t,n] of [['Регион',reg],['Район',dis],['Школа',sch],['Учитель',tch]])box.appendChild(labelled(t,n));
+  const items=r=>r.status===200?r.data.items:[];
+  const loadDis=async()=>VR.regions.fill(dis,items(await S.options({level:'district',parent:reg.value})).filter(x=>x.id),'— все районы —');
+  const loadSch=async()=>VR.regions.fill(sch,items(await S.options({level:'school',parent:reg.value,district:dis.value})),'— выберите школу —');
+  const loadT=async()=>VR.regions.fill(tch,sch.value?items(await S.options({level:'teacher',parent:sch.value})):[],'— без учителя —');
+  reg.onchange=async()=>{await loadDis();await loadSch();await loadT();};dis.onchange=async()=>{await loadSch();await loadT();};sch.onchange=loadT;
+  const s0=schoolsCache.find(x=>x.id===school0)||{};
+  VR.regions.fill(reg,items(await S.options({level:'region'})),'— регион —');
+  if(s0.id!==undefined&&Array.from(reg.options).some(o=>o.value===(s0.region||'')))reg.value=s0.region||'';
+  await loadDis();dis.value=s0.district||'';await loadSch();if(school0)sch.value=school0;await loadT();if(teacher0)tch.value=teacher0;
+  if(!await dialog(title,box,okText))return null;
+  if(!sch.value){say('Выберите школу.');return null;}
+  return {school:sch.value,teacher:tch.value};
+}
 async function assignClass(it){
-  const o=await S.options({level:'teacher',parent:it.school});if(bad(o))return;
-  const sel=select(o.data.items,'— без учителя —');
-  if(!await dialog('Передать класс '+it.name,labelled('Учитель',sel),'Передать'))return;
-  if(await act('class.assign',{class_id:it.id,teacher_id:sel.value},'Класс передан.'))loadPeople();
+  const r=await pickTarget('Передать класс '+it.name,it.school,it.teacherId,'Передать');if(!r)return;
+  const moved=r.school!==it.school;
+  if(moved&&!ask('Класс '+it.name+' переедет в школу «'+schoolName(r.school)+'» вместе со всеми учениками. Продолжить?'))return;
+  const d=moved?await act('class.move',{class_id:it.id,school_id:r.school,teacher_id:r.teacher},'Класс перенесён.'):await act('class.assign',{class_id:it.id,teacher_id:r.teacher},'Класс передан.');
+  if(d)loadPeople();
+}
+async function createClass(){
+  const top=el('div'),g=el('select'),l=el('input',null,{maxlength:'4',placeholder:'А',style:'width:5em'});
+  for(let i=1;i<=11;i++)g.appendChild(el('option',String(i),{value:String(i)}));
+  top.appendChild(labelled('Параллель',g));top.appendChild(labelled('Буква',l));
+  const f=casc.get(),r=await pickTarget('Новый класс',f.school||(schoolsCache[0]||{}).id,'', 'Создать',top);if(!r)return;
+  if(!l.value.trim()){say('Укажите букву класса.');return;}
+  if(await act('class.create',{grade:g.value,letter:l.value,school_id:r.school,teacher_id:r.teacher},'Класс создан.'))loadPeople();
 }
 
 /* ---------- приглашения ---------- */
@@ -207,6 +234,7 @@ function show(){
 function bind(){
   $('out').onclick=async e=>{e.preventDefault();await S.account.logout();location.replace('teacher.html');};
   $('kinds').onclick=e=>{const b=e.target.closest('[data-k]');if(!b)return;tab=b.dataset.k;page=1;for(const x of $('kinds').children)x.classList.toggle('on',x===b);loadPeople();};
+  $('clsNew').onclick=createClass;
   $('prev').onclick=()=>{if(page>1){page--;loadPeople();}};$('next').onclick=()=>{page++;loadPeople();};
   let tm=null;$('fQ').oninput=()=>{clearTimeout(tm);tm=setTimeout(()=>{page=1;loadPeople();},300);};
   $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;

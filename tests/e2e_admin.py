@@ -97,7 +97,8 @@ try:
         pg2.goto('http://127.0.0.1:8776/index.html')
         pg2.evaluate('()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem("vrlesson.server",JSON.stringify({url:"http://127.0.0.1:8777",key:""}))}')
         pg2.goto('http://127.0.0.1:8776/admin.html'); pg2.wait_for_timeout(1500); clear_throttle()
-        pg2.click('#toInv'); pg2.fill('#icode', code); pg2.fill('#iname', 'Новая'); pg2.fill('#ilog', 'new.teacher'); pg2.fill('#ipw', 'Long-Pass-2026-Xy'); pg2.click('#invForm .btn'); pg2.wait_for_timeout(1500)
+        pg2.click('#toInv'); pg2.click('#mRes'); ok(not pg2.is_visible('#iname') and not pg2.is_visible('#ilog') and pg2.is_visible('#icode') and pg2.is_visible('#ipw') and 'Сменить' in pg2.inner_text('#iGo'), 'форма смены пароля: только код и новый пароль'); pg2.click('#mReg'); ok(pg2.is_visible('#iname') and 'ФИО' in pg2.get_attribute('#iname', 'placeholder'), 'форма регистрации: ФИО, логин, пароль')
+        pg2.fill('#icode', code); pg2.fill('#iname', 'Новая Учитель'); pg2.fill('#ilog', 'new.teacher'); pg2.fill('#ipw', 'Long-Pass-2026-Xy'); pg2.click('#iGo'); pg2.wait_for_timeout(1500)
         pg2.wait_for_timeout(1500)
         ok('teacher.html' in pg2.url and pg2.is_visible('#app'), 'учитель по приглашению активирован и сразу попадает в кабинет учителя (%s)' % pg2.url)
         # два приглашения подряд: разные коды и подписи роли; регистрация на странице учителя
@@ -111,7 +112,7 @@ try:
         pg4.evaluate('()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem("vrlesson.server",JSON.stringify({url:"http://127.0.0.1:8777",key:""}))}')
         pg4.goto('http://127.0.0.1:8776/teacher.html'); pg4.wait_for_timeout(900); clear_throttle()
         ok(pg4.is_visible('#toInv'), 'на странице учителя есть «У меня код приглашения»')
-        pg4.click('#toInv'); pg4.fill('#icode', t1); pg4.fill('#iname', 'Вторая'); pg4.fill('#ilog', 'second.teacher'); pg4.fill('#ipw', 'Long-Pass-2026-Xy'); pg4.click('#invForm .btn'); pg4.wait_for_timeout(1800)
+        pg4.click('#toInv'); pg4.fill('#icode', t1); pg4.fill('#iname', 'Вторая Учитель'); pg4.fill('#ilog', 'second.teacher'); pg4.fill('#ipw', 'Long-Pass-2026-Xy'); pg4.click('#iGo'); pg4.wait_for_timeout(1800)
         ok(pg4.is_visible('#app'), 'регистрация по коду на странице учителя открывает кабинет')
         ok(sqlite3.connect(os.path.join(tmp, 'vrlesson.db')).execute("SELECT COUNT(*) FROM users WHERE login = 'new.teacher'").fetchone()[0] == 1, 'учётка создана по коду')
         pg2.close()
