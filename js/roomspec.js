@@ -5,7 +5,7 @@
 'use strict';
 const VR=window.VR=window.VR||{};
 const SCHEMA='room/1';
-const LIM={blocks:60,panels:16,items:40,rooms:30,discover:6,title:40,hint:140,text:700,label:30,info:300,q:200,ans:80,explain:300,bytes:40000,coord:5.4};
+const LIM={models:12,sounds:4,blocks:60,panels:16,items:40,rooms:30,discover:6,title:40,hint:140,text:700,label:30,info:300,q:200,ans:80,explain:300,bytes:40000,coord:5.4};
 const SHAPES={cube:'Куб',ball:'Шар',cyl:'Цилиндр',cone:'Конус',tetra:'Тетраэдр',octa:'Октаэдр',icosa:'Икосаэдр',dodeca:'Додекаэдр'};
 const COLORS={red:['Красный','#ef4444'],orange:['Оранжевый','#f97316'],yellow:['Жёлтый','#facc15'],green:['Зелёный','#22c55e'],teal:['Бирюзовый','#14b8a6'],blue:['Синий','#3b82f6'],violet:['Фиолетовый','#8b5cf6'],pink:['Розовый','#ec4899'],white:['Белый','#f1f5f9'],gray:['Серый','#94a3b8']};
 const PRESETS={
@@ -16,8 +16,13 @@ const PRESETS={
   night:{title:'Ночь',env:{floor:[.04,.04,.09],wall:[.09,.08,.18],trim:[.7,.4,1],grid:[.6,.35,.9]}},
   space:{title:'Космос (открытое небо)',env:{open:true,floor:[.03,.04,.09],trim:[.3,.7,1],grid:[.3,.7,1]}}
 };
+/* библиотека ресурсов (Б51): файлы лежат в assets/, собираются tools/make_assets.py; id используются в комнатах */
+const MODELS={tree:{title:'Дерево',h:2.6},house:{title:'Домик',h:1.9},rocket:{title:'Ракета',h:2.4},atom:{title:'Атом',h:1.5},book:{title:'Книга',h:.2},flask:{title:'Колба',h:.9}};
+const SFX={bell:{title:'Колокол'},click:{title:'Щелчок'},wind:{title:'Ветер (фон)'},water:{title:'Вода (фон)'},birds:{title:'Птицы'}};
+const TEXOPTS={'':'Без текстуры',wood:'Дерево',brick:'Кирпич',grass:'Трава',metal:'Металл',tiles:'Плитка',sand:'Песок',stone:'Камень',paper:'Бумага'};
+const optsOf=o=>{const r={};for(const k of Object.keys(o))r[k]=o[k].title;return r;};
 const SOUNDS={none:'Без звука',ding:'Звонок',chime:'Колокольчик',low:'Низкий',high:'Высокий'};
-const TYPES={text:'Текст',item:'Предмет',table:'Стол',question:'Вопрос',quiz:'Тест по предмету',portal:'Переход'};
+const TYPES={text:'Текст',item:'Предмет',table:'Стол',question:'Вопрос',quiz:'Тест по предмету',portal:'Переход',model:'Модель',sound:'Звук'};
 const PANEL_TYPES=['text','question','quiz','portal'];
 const ID_RE=/^[a-z][a-z0-9_-]{1,39}$/;
 const isObj=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
@@ -46,6 +51,7 @@ const FIELDS={
     {k:'info',label:'Что рассказать, когда на предмет наведут и нажмут',kind:'area',max:LIM.info,def:''},
     {k:'shape',label:'Форма',kind:'select',opts:SHAPES,def:'cube'},
     {k:'color',label:'Цвет',kind:'color',def:'orange'},
+    {k:'tex',label:'Текстура',kind:'select',opts:TEXOPTS,def:''},
     {k:'size',label:'Размер, м',kind:'num',min:.1,max:1.2,step:.05,def:.4},
     {k:'lift',label:'Высота над полом, м (стол — 0.8)',kind:'num',min:0,max:2.5,step:.1,def:0},
     {k:'grab',label:'Можно брать в руки и бросать',kind:'check',def:false},
@@ -57,7 +63,8 @@ const FIELDS={
     {k:'w',label:'Длина, м',kind:'num',min:.4,max:4,step:.1,def:1.4},
     {k:'d',label:'Ширина, м',kind:'num',min:.4,max:3,step:.1,def:.8},
     {k:'h',label:'Высота, м',kind:'num',min:.4,max:1.2,step:.05,def:.8},
-    {k:'color',label:'Цвет',kind:'color',def:'gray'}
+    {k:'color',label:'Цвет',kind:'color',def:'gray'},
+    {k:'tex',label:'Текстура столешницы',kind:'select',opts:TEXOPTS,def:''}
   ],
   question:[
     {k:'q',label:'Вопрос',kind:'area',max:LIM.q,def:'Вопрос?'},
@@ -72,6 +79,20 @@ const FIELDS={
   ],
   quiz:[
     {k:'subj',label:'Предмет теста',kind:'subject',def:'math'}
+  ],
+  model:[
+    {k:'asset',label:'Модель',kind:'select',opts:optsOf(MODELS),def:'tree'},
+    {k:'label',label:'Название (по желанию)',kind:'text',max:LIM.label,def:''},
+    {k:'info',label:'Что рассказать, когда на модель наведут и нажмут',kind:'area',max:LIM.info,def:''},
+    {k:'h',label:'Высота, м',kind:'num',min:.2,max:3.5,step:.1,def:1.5},
+    {k:'lift',label:'Высота над полом, м (стол — 0.8)',kind:'num',min:0,max:2.5,step:.1,def:0},
+    {k:'yaw',label:'Поворот, градусов',kind:'num',min:-180,max:180,step:15,def:0},
+    {k:'discover',label:'Считать открытием (+2 балла, один раз)',kind:'check',def:false}
+  ],
+  sound:[
+    {k:'asset',label:'Звук',kind:'select',opts:optsOf(SFX),def:'wind'},
+    {k:'loop',label:'Звучит всё время, пока ученик в комнате',kind:'check',def:true},
+    {k:'vol',label:'Громкость (0.1–1)',kind:'num',min:.1,max:1,step:.1,def:.6}
   ],
   portal:[
     {k:'to',label:'Куда ведёт',kind:'room',def:'hall'},
@@ -102,6 +123,8 @@ function cleanBlock(b,subjOk){
     const seen=new Set();for(const k of['a0','a1','a2','a3']){if(o[k]&&seen.has(o[k]))o[k]='';else if(o[k])seen.add(o[k]);}
     if(!o.a0||!o.a1)return null;
   }
+  if(b.type==='model'){o.yaw=Math.round(o.yaw/15)*15;o.h=Math.round(o.h*10)/10;}
+  if(b.type==='sound')o.vol=Math.round(o.vol*10)/10;
   if(b.type==='item'){o.size=Math.round(o.size*100)/100;o.lift=r1(o.lift);}
   return o;
 }
@@ -121,13 +144,15 @@ function clean(spec,subjOk){
   if(isObj(spec.spawn))o.spawn={x:r1(num(spec.spawn.x,-LIM.coord,LIM.coord,0)),z:r1(num(spec.spawn.z,-LIM.coord,LIM.coord,4))};
   o.created=typeof spec.created==='number'&&isFinite(spec.created)?spec.created:0;
   o.updated=typeof spec.updated==='number'&&isFinite(spec.updated)?spec.updated:0;
-  const ids=new Set();let panels=0,items=0,disc=0,discCut=false;
+  const ids=new Set();let panels=0,items=0,models=0,sounds=0,disc=0,discCut=false;
   const src=Array.isArray(spec.blocks)?spec.blocks:[];
   for(const b of src){
     if(o.blocks.length>=LIM.blocks){errors.push('Блоков больше '+LIM.blocks+': лишние убраны.');break;}
     const c=cleanBlock(b,subjOk);
     if(!c){errors.push('Блок «'+(isObj(b)&&TYPES[b.type]||'?')+'» неполный или неизвестный: убран.');continue;}
     if(PANEL_TYPES.includes(c.type)){if(panels>=LIM.panels){const m='Панелей больше '+LIM.panels+' (текст, вопрос, тест, переход): лишние убраны.';if(!errors.includes(m))errors.push(m);continue;}panels++;}
+    if(c.type==='model'){if(models>=LIM.models){const m='Моделей больше '+LIM.models+': лишние убраны.';if(!errors.includes(m))errors.push(m);continue;}models++;}
+    if(c.type==='sound'){if(sounds>=LIM.sounds){const m='Звуков больше '+LIM.sounds+': лишние убраны.';if(!errors.includes(m))errors.push(m);continue;}sounds++;}
     if(c.type==='item'){if(items>=LIM.items){const m='Предметов больше '+LIM.items+': лишние убраны.';if(!errors.includes(m))errors.push(m);continue;}items++;}
     if(c.discover){if(disc>=LIM.discover){c.discover=false;discCut=true;}else disc++;}
     while(ids.has(c.id))c.id=newBlockId();
@@ -141,10 +166,10 @@ function clean(spec,subjOk){
 /* оценка нагрузки: панели — самая дорогая часть (у каждой своя текстура) */
 function cost(spec){
   const bl=spec&&Array.isArray(spec.blocks)?spec.blocks:[];
-  const panels=bl.filter(b=>PANEL_TYPES.includes(b.type)).length,items=bl.filter(b=>b.type==='item').length;
+  const panels=bl.filter(b=>PANEL_TYPES.includes(b.type)).length,items=bl.filter(b=>b.type==='item').length,models=bl.filter(b=>b.type==='model').length;
   const grab=bl.filter(b=>b.type==='item'&&b.grab).length;
-  const lite=panels<=8&&items<=25&&grab<=8,ok=panels<=LIM.panels&&items<=LIM.items;
-  return{panels,items,grab,blocks:bl.length,level:!ok?'over':lite?'lite':'standard',
+  const lite=panels<=8&&items<=25&&grab<=8&&models<=4,ok=panels<=LIM.panels&&items<=LIM.items&&models<=LIM.models;
+  return{panels,items,models,grab,blocks:bl.length,level:!ok?'over':lite?'lite':'standard',
     text:!ok?'Слишком много: уберите лишнее.':lite?'Пойдёт на Quest 1, 2 и 3.':'Пойдёт на Quest 2 и 3; на Quest 1 может подтормаживать.'};
 }
 
@@ -152,7 +177,7 @@ function cost(spec){
 function discoverKeys(spec){
   const k=[];
   for(const b of spec.blocks||[]){
-    if((b.type==='item'||b.type==='question')&&b.discover)k.push(b.id);
+    if((b.type==='item'||b.type==='question'||b.type==='model')&&b.discover)k.push(b.id);
   }
   return k;
 }
@@ -177,5 +202,5 @@ const TEMPLATES={
   ]})}
 };
 
-VR.roomspec={SCHEMA,LIM,SHAPES,COLORS,PRESETS,SOUNDS,TYPES,PANEL_TYPES,FIELDS,TEMPLATES,clean,cost,discoverKeys,blockDefault,newRoomId,newBlockId,colorHex,isRoomId:id=>typeof id==='string'&&/^c-[a-z0-9_-]{1,38}$/.test(id)};
+VR.roomspec={MODELS,SFX,TEXOPTS,SCHEMA,LIM,SHAPES,COLORS,PRESETS,SOUNDS,TYPES,PANEL_TYPES,FIELDS,TEMPLATES,clean,cost,discoverKeys,blockDefault,newRoomId,newBlockId,colorHex,isRoomId:id=>typeof id==='string'&&/^c-[a-z0-9_-]{1,38}$/.test(id)};
 })();

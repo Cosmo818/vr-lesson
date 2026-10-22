@@ -290,6 +290,13 @@ const Store=VR.Store={
       if(t&&sv)try{await fetch(sv.url+'/api/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+t}});}catch(e){}
     }
   },
+  /* файл ресурса (модель, звук): только из папки assets/ этого же сайта, с ограничением размера (Б51) */
+  async getAsset(url,max){
+    if(!/^assets\/[A-Za-z0-9_\/.-]{1,120}$/.test(String(url))||String(url).indexOf('..')>=0)throw new Error('Недопустимый адрес ресурса.');
+    const r=await fetch(url);if(!r.ok)throw new Error('Ресурс не найден: '+url);
+    const n=+r.headers.get('content-length');if(max&&n>max)throw new Error('Ресурс слишком большой.');
+    const b=await r.arrayBuffer();if(max&&b.byteLength>max)throw new Error('Ресурс слишком большой.');return b;
+  },
   status:{state:'off',at:0,role:null,msg:''},
   async sync(){
     const sv=Store.server();

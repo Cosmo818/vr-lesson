@@ -6,7 +6,7 @@ const VR=window.VR,D=VR.DATA,S=VR.Store,RS=VR.roomspec;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const BANDS=['a','b','c','d'],BS={a:'1–4',b:'5–6',c:'7–8',d:'9–11'};
-const ICON={text:'Т',item:'●',table:'▭',question:'?',quiz:'✓',portal:'⇨'};
+const ICON={text:'Т',item:'●',table:'▭',question:'?',quiz:'✓',portal:'⇨',model:'▲',sound:'♪'};
 const SC=40,CS=480; /* пикселей на метр, размер плана: комната 12×12 м */
 let cur=null,sel=null,dirty=false,msg='',io=false,inRoom=false;
 /* отмена и возврат: снимки комнаты до каждой правки (шаг назад / шаг вперёд, Ctrl+Z / Ctrl+Y) */
@@ -92,7 +92,7 @@ function editHtml(){
     <div class="small muted">План сверху: вверху задняя стена, внизу вход и дверь в холл. Зелёный треугольник — где ученик появляется (его тоже можно двигать).</div></div>
   <div><div class="card" style="margin-top:0;max-height:180px;overflow:auto;padding:8px" id="bdList">${listBlocks()}</div><div class="card" id="bdForm">${formHtml()}</div></div></div>`;
 }
-const blockTitle=b=>RS.TYPES[b.type]+': '+(b.title||b.label||b.q||(b.type==='quiz'?subjTitle(b.subj):b.type==='portal'?(b.to==='hall'?'Холл':subjTitle(b.to)):'')||'');
+const blockTitle=b=>RS.TYPES[b.type]+': '+(b.title||b.label||b.q||(b.asset&&(RS.MODELS[b.asset]||RS.SFX[b.asset]||{}).title)||(b.type==='quiz'?subjTitle(b.subj):b.type==='portal'?(b.to==='hall'?'Холл':subjTitle(b.to)):'')||'');
 function listBlocks(){return cur.blocks.length?cur.blocks.map(b=>`<div class="bdb${b.id===sel?' on':''}" data-pick="${b.id}">${ICON[b.type]} ${esc(blockTitle(b).slice(0,48))}</div>`).join(''):'<span class="muted small">Блоков пока нет: добавьте их кнопками выше.</span>';}
 
 /* ---------- план ---------- */
@@ -221,7 +221,7 @@ function onInput(e){
     else if(t.type==='number'){const v=parseFloat(t.value);if(isFinite(v))b[k]=v;}
     else b[k]=t.value;
     setDirty(true);drawPlan();
-    if(k==='title'||k==='label'||k==='q'||k==='subj'||k==='to'){const l=$('bdList');if(l)l.innerHTML=listBlocks();}
+    if(k==='title'||k==='label'||k==='q'||k==='subj'||k==='to'||k==='asset'){const l=$('bdList');if(l)l.innerHTML=listBlocks();}
   }
 }
 document.addEventListener('keydown',e=>{

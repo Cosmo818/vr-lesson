@@ -132,7 +132,7 @@ void main(){vec4 w=uModel*vec4(aPos,1.);vW=w.xyz;vN=mat3(uModel)*aNor;vUV=aUV;gl
   const FS=`#version 300 es
 precision highp float;
 in vec3 vN;in vec3 vW;in vec2 vUV;
-uniform vec3 uCol,uCam,uGrid,uFog;uniform float uEm;uniform int uMode;uniform sampler2D uTex;
+uniform vec3 uCol,uCam,uGrid,uFog;uniform float uEm,uUV;uniform int uMode;uniform sampler2D uTex;
 out vec4 o;
 void main(){
  if(uMode==1){vec4 t=texture(uTex,vUV);if(t.a<.05)discard;o=vec4(t.rgb,1.);return;}
@@ -140,6 +140,7 @@ void main(){
  vec3 n=normalize(vN);
  float d=max(dot(n,normalize(vec3(.4,.9,.3))),0.)*.6+.4;
  vec3 c=uCol;
+ if(uMode==4){vec4 t=texture(uTex,vUV*uUV);c=t.rgb*uCol;}
  if(uMode==2){vec2 g=abs(fract(vW.xz-.5)-.5)/fwidth(vW.xz);float l=1.-min(min(g.x,g.y),1.);c=mix(c,uGrid,l*.6);}
  vec3 col=mix(c*d,c,uEm);
  float f=clamp(length(vW-uCam)/30.,0.,1.);col=mix(col,uFog,f*f*.8);
@@ -151,7 +152,7 @@ void main(){
   gl.linkProgram(prog);
   if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error('Шейдер: '+gl.getProgramInfoLog(prog));
   const U={};
-  for(const n of['uProj','uView','uModel','uCol','uEm','uMode','uPS','uTex','uCam','uGrid','uFog'])U[n]=gl.getUniformLocation(prog,n);
+  for(const n of['uProj','uView','uModel','uCol','uEm','uMode','uPS','uUV','uTex','uCam','uGrid','uFog'])U[n]=gl.getUniformLocation(prog,n);
 
   function attrib(){
     gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,32,0);
@@ -250,6 +251,67 @@ void main(){
     p.dirty=false;
   }
   E.paint=paint;
+  /* ---------- текстуры и модели (Б51) ---------- */
+  const texCache={},modelCache={};
+  function glTex(src,repeat){
+    const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src);gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    const w=repeat?gl.REPEAT:gl.CLAMP_TO_EDGE;gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,w);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,w);
+    return t;
+  }
+  /* нарисованная кодом текстура по имени (дерево, кирпич, трава…), с повтором */
+  E.tex=name=>{if(texCache[name]!==undefined)return texCache[name];const cv=VR.assets&&VR.assets.proc(name);return texCache[name]=cv?glTex(cv,true):null;};
+  /* модель .glb из папки assets/: Promise → {parts:[{m,color,tex}],min,max,tris}; одна и та же модель грузится один раз */
+  E.loadModel=url=>{
+    if(modelCache[url])return modelCache[url];
+    return modelCache[url]=(async()=>{
+      const buf=await VR.Store.getAsset(url,VR.assets.LIM.bytes),g=VR.assets.parseGLB(buf);
+      const parts=g.parts.map(p=>{const o={m:mkMesh(Array.from(p.verts)),color:p.color,tex:null};
+        if(p.image&&typeof createImageBitmap==='function')createImageBitmap(new Blob([p.image.bytes],{type:p.image.mime})).then(bm=>{o.tex=glTex(bm,false);}).catch(()=>{});
+        return o;});
+      return{parts,min:g.min,max:g.max,tris:g.tris};
+    })().catch(e=>{delete modelCache[url];throw e;});
+  };
+  /* поставить загруженную модель: низ — на высоте y, высота — h метров, поворот yaw; возвращает список статичных частей */
+  E.addModel=(g,x,y,z,h,yaw)=>{
+    const hh=(g.max[1]-g.min[1])||1,k=h/hh,cx=(g.min[0]+g.max[0])/2,cz=(g.min[2]+g.max[2])/2;
+    const base=M.mul(M.trans(x,y,z),M.mul(M.rotY(yaw||0),M.mul(M.scale(k,k,k),M.trans(-cx,-g.min[1],-cz))));
+    return g.parts.map(p=>{
+      const s={m:p.m,model:base,col:p.color,em:0,mode:p.tex?4:0,tex:p.tex,uv:1,_p:p};
+      Object.defineProperty(s,'tex',{get(){return p.tex;}});Object.defineProperty(s,'mode',{get(){return p.tex?4:0;}});
+      E.statics.push(s);return s;});
+  };
+  /* ---------- звуки из файлов (Б51): wav/ogg/mp3 из assets/, до 1 МБ; объёмный звук от места в комнате ---------- */
+  const sndCache={},playing=new Set();
+  E.loadSound=url=>{
+    if(sndCache[url])return sndCache[url];
+    return sndCache[url]=(async()=>{
+      E.audio();if(!actx)throw new Error('Звук недоступен в этом браузере.');
+      const buf=await VR.Store.getAsset(url,1024*1024);
+      return await new Promise((ok,no)=>{try{actx.decodeAudioData(buf,ok,()=>no(new Error('Не удалось прочитать звук.')));}catch(e){no(e);}});
+    })().catch(e=>{delete sndCache[url];throw e;});
+  };
+  /* o: {pos:[x,y,z], loop, vol}; возвращает объект с stop(); циклические звуки умолкают при смене комнаты */
+  E.playSound=(buf,o)=>{
+    o=o||{};if(!actx||!buf)return{stop(){}};
+    const src=actx.createBufferSource(),g=actx.createGain();src.buffer=buf;src.loop=!!o.loop;g.gain.value=Math.max(0,Math.min(1,o.vol===undefined?.8:o.vol));
+    let node=g;
+    if(o.pos&&actx.createPanner){const p=actx.createPanner();p.panningModel='HRTF';p.distanceModel='inverse';p.refDistance=1.2;p.rolloffFactor=1.2;
+      if(p.positionX){p.positionX.value=o.pos[0];p.positionY.value=o.pos[1];p.positionZ.value=o.pos[2];}else p.setPosition(o.pos[0],o.pos[1],o.pos[2]);
+      g.connect(p);node=p;}
+    src.connect(g);node.connect(actx.destination);
+    const h={src,loop:!!o.loop,stop(){try{src.stop();}catch(e){}playing.delete(h);}};
+    src.onended=()=>playing.delete(h);playing.add(h);try{src.start();}catch(e){}return h;
+  };
+  E.stopSounds=()=>{for(const h of Array.from(playing))if(h.loop)h.stop();};
+  function listen(){
+    if(!actx||!actx.listener||!playing.size)return;
+    const h=E.headPose(),l=actx.listener;
+    try{if(l.positionX){l.positionX.value=h.pos[0];l.positionY.value=h.pos[1];l.positionZ.value=h.pos[2];l.forwardX.value=h.f[0];l.forwardY.value=0;l.forwardZ.value=h.f[1];l.upX.value=0;l.upY.value=1;l.upZ.value=0;}
+    else{l.setPosition(h.pos[0],h.pos[1],h.pos[2]);l.setOrientation(h.f[0],0,h.f[1],0,1,0);}}catch(e){}
+  }
   E.addPanel=o=>{const p=makePanel(o);E.panels.push(p);return p;};
   E.addUi=o=>{const p=makePanel(o);E.ui.push(p);return p;};
   const panelModel=p=>p.model||(p.model=TRS(p.pos[0],p.pos[1],p.pos[2],p.w,p.h,1,p.yaw));
@@ -294,9 +356,9 @@ void main(){
   };
   E.removeBody=b=>{const i=E.bodies.indexOf(b);if(i>=0)E.bodies.splice(i,1);for(const h of E.H)if(h.held===b)h.held=null;};
   E.addBox=b=>{E.boxes.push(b);return b;};
-  E.addStatic=(m,model,col,em,mode)=>{const s={m,model,col,em:em||0,mode:mode||0};E.statics.push(s);return s;};
-  E.addTable=(x,z,hx,hz,top,col)=>{
-    E.addStatic(mesh.cube,TRS(x,top-.03,z,hx*2,.06,hz*2),col||[.45,.3,.2]);
+  E.addStatic=(m,model,col,em,mode,tex,uv)=>{const s={m,model,col,em:em||0,mode:mode||0,tex:tex||null,uv:uv||1};E.statics.push(s);return s;};
+  E.addTable=(x,z,hx,hz,top,col,tex,uv)=>{
+    E.addStatic(mesh.cube,TRS(x,top-.03,z,hx*2,.06,hz*2),tex?[1,1,1]:(col||[.45,.3,.2]),0,tex?4:0,tex||null,uv||1);
     for(const sx of[-1,1])for(const sz of[-1,1])E.addStatic(mesh.cube,TRS(x+sx*(hx-.06),(top-.06)/2,z+sz*(hz-.06),.06,top-.06,.06),[.25,.2,.16]);
     return E.addBox({x,z,hx,hz,top});
   };
@@ -340,6 +402,7 @@ void main(){
     if(E.room&&E.room.leave)try{E.room.leave(E,E.S);}catch(e){}
     for(const p of E.panels)try{gl.deleteTexture(p.tex);}catch(e){}
     for(const m of E.roomMeshes)delMesh(m);
+    E.stopSounds();
     E.panels=[];E.bodies=[];E.boxes=[];E.targets=[];E.staticTargets=[];E.statics=[];E.envStatics=[];E.roomMeshes=[];E.conf=[];
     E.gravity=9.8;for(const h of E.H){h.held=null;h.hit=null;}
     E.room=R;E.roomId=id;E.S={};
@@ -544,6 +607,7 @@ void main(){
     if(toast.show&&E.t>toast.data.until)toast.show=false;
     hudT+=dt;if(hudT>1){hudT=0;hud.dirty=true;if(E.menuOpen)menu.dirty=true;}
     if(E.hooks.onFrame)try{E.hooks.onFrame(dt);}catch(e){}
+    listen();
     const all=E.panels.concat(E.ui);
     for(const p of all)p._h=-1;
     for(const h of H)if(h.has&&h.hit&&h.hit.kind==='panel')h.hit.p._h=h.hit.bi;
@@ -555,7 +619,7 @@ void main(){
 
   /* ---------- отрисовка ---------- */
   let L=[];
-  const add=(m,model,col,em,mode,tex,ps)=>{L.push({m,model,col,em:em||0,mode:mode||0,tex:tex||null,ps:ps||1});};
+  const add=(m,model,col,em,mode,tex,ps,uv)=>{L.push({m,model,col,em:em||0,mode:mode||0,tex:tex||null,ps:ps||1,uv:uv||1});};
   E.add=add;
   function buildDraw(head){
     L=[];
@@ -590,7 +654,7 @@ void main(){
     gl.uniform3fv(U.uGrid,E.grid||[.25,.55,.9]);gl.uniform3fv(U.uFog,E.clear);
     for(const o of L){
       gl.uniformMatrix4fv(U.uModel,false,o.model);gl.uniform3fv(U.uCol,o.col);
-      gl.uniform1f(U.uEm,o.em||0);gl.uniform1i(U.uMode,o.mode||0);gl.uniform1f(U.uPS,o.ps||1);
+      gl.uniform1f(U.uEm,o.em||0);gl.uniform1i(U.uMode,o.mode||0);gl.uniform1f(U.uPS,o.ps||1);gl.uniform1f(U.uUV,o.uv||1);
       if(o.tex){gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,o.tex);}
       if(o.m.n>0){gl.bindVertexArray(o.m.vao);gl.drawArrays(o.m.mode,0,o.m.n);}
     }

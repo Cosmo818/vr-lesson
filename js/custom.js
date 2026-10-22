@@ -13,6 +13,7 @@ const sound=(E,k)=>{const s=SOUND[k];if(s)E.beep(s[0],s[1],s[2]);};
 
 function buildSpec(E,S,spec){
   const sp=spec.spawn,face=(x,z)=>yawTo(x,z,sp.x,sp.z);
+  const editing=ED.on&&ED.id===spec.id;
   const subj='gen',key=b=>'c:'+spec.id+':'+b.id;
   S.keys=new Set(RS.discoverKeys(spec));S.found=new Set();S.goal=false;
   S.items=[];S.qs=[];
@@ -39,15 +40,24 @@ function buildSpec(E,S,spec){
         p.text(b.text||'',36,110,{size:36,color:'#dbe6ff',maxW:p.W-72,maxY:p.H-16});
       }});
     }else if(b.type==='table'){
-      E.addTable(b.x,b.z,b.w/2,b.d/2,b.h,rgb(b.color));
+      E.addTable(b.x,b.z,b.w/2,b.d/2,b.h,rgb(b.color),b.tex?E.tex(b.tex):null,Math.max(1,Math.round(Math.max(b.w,b.d))));
     }else if(b.type==='item'){
       const col=rgb(b.color),y=b.lift+b.size/2;
       if(b.grab){
         E.addBody({shape:b.shape==='cube'?'cube':'ball',mesh:E.mesh[b.shape],p:[b.x,y,b.z],s:b.size,col,data:{item:b.id}});
         S.items.push({b,x:b.x,y,z:b.z,grab:true});
       }else{
-        S.items.push({b,x:b.x,y,z:b.z,m:E.mesh[b.shape]||E.mesh.cube,col,rot:0});
+        S.items.push({b,x:b.x,y,z:b.z,m:E.mesh[b.shape]||E.mesh.cube,col:b.tex?[1,1,1].map((v,i)=>.55+col[i]*.45):col,tex:b.tex?E.tex(b.tex):null,rot:0});
       }
+    }else if(b.type==='model'){
+      const def=RS.MODELS[b.asset];if(!def)continue;
+      /* модель грузится в фоне и появляется, когда готова; ученик при этом не ждёт */
+      S.items.push({b:Object.assign({},b,{size:b.h,sound:'ding'}),x:b.x,y:b.lift+b.h/2,z:b.z,grab:false,model:true});
+      E.loadModel('assets/models/'+b.asset+'.glb').then(g=>{if(E.S!==S)return;E.addModel(g,b.x,b.lift,b.z,b.h,b.yaw*Math.PI/180);}).catch(()=>{if(!S.modelErr){S.modelErr=true;E.toast('Не удалось загрузить модель.','#fca5a5');}});
+    }else if(b.type==='sound'){
+      if(editing)continue;/* в редакторе фон не играет: комната пересобирается после каждой правки */
+      if(!RS.SFX[b.asset])continue;
+      E.loadSound('assets/sounds/'+b.asset+'.wav').then(buf=>{if(E.S!==S)return;E.playSound(buf,{pos:[b.x,1.5,b.z],loop:b.loop,vol:b.vol});}).catch(()=>{});
     }else if(b.type==='question'){
       const R={picked:-1,ok:false};
       const opts=shuffle([b.a0,b.a1,b.a2,b.a3].filter(Boolean));
@@ -111,9 +121,9 @@ function undoRedo(E,back){
 function dirs(E){const f=E.headPose().f;return{f,r:[-f[1],f[0]]};}
 function ahead(E,m){const h=E.headPose();return[clampC(h.pos[0]+h.f[0]*m),clampC(h.pos[2]+h.f[1]*m)];}
 function move(E,dx,dz){edit(E,s=>{const b=edBlock(s,ED.sel);if(!b)return false;const x=clampC(b.x+dx),z=clampC(b.z+dz);if(x===b.x&&z===b.z)return false;b.x=x;b.z=z;});}
-function vert(E,d){edit(E,s=>{const b=edBlock(s,ED.sel);if(!b)return false;return bump(b,b.type==='item'?'lift':b.type==='table'?'h':'y',d,false);});}
+function vert(E,d){edit(E,s=>{const b=edBlock(s,ED.sel);if(!b)return false;return bump(b,b.type==='item'||b.type==='model'?'lift':b.type==='table'?'h':'y',d,false);});}
 function grow(E,m){edit(E,s=>{const b=edBlock(s,ED.sel);if(!b)return false;let ch=false;
-  if(b.type==='item')ch=bump(b,'size',m,true);else if(b.type==='table'){ch=bump(b,'w',m,true);ch=bump(b,'d',m,true)||ch;}else ch=bump(b,'w',m,true);return ch;});}
+  if(b.type==='item')ch=bump(b,'size',m,true);else if(b.type==='model')ch=bump(b,'h',m,true);else if(b.type==='table'){ch=bump(b,'w',m,true);ch=bump(b,'d',m,true)||ch;}else ch=bump(b,'w',m,true);return ch;});}
 function addBlock(E,type){edit(E,s=>{
   const b=RS.blockDefault(type),p=ahead(E,1.5);b.x=p[0];b.z=p[1];
   if(type==='portal'){b.to='hall';}
@@ -141,13 +151,13 @@ function tabletDraw(E,S,c,p){
   p.button(X3(2),726,t3,84,'Удалить',()=>edit(E,s=>{if(!edBlock(s,ED.sel))return false;s.blocks=s.blocks.filter(k=>k.id!==ED.sel);ED.sel=null;}),{bg:'#b91c1c',size:34,disabled:!b});
   p.text('Каждая правка сохраняется сразу. Подробности: «Конструктор комнат» в кабинете учителя.',30,830,{size:26,color:'#94a3b8',maxW:W-60,maxY:p.H-10});
 }
-const blockTitle=b=>(RS.TYPES[b.type]||b.type)+': '+(b.title||b.label||b.q||'');
-function blockPos(b){return b.type==='item'?[b.x,b.lift+b.size/2,b.z]:b.type==='table'?[b.x,b.h,b.z]:b.type==='portal'||b.type==='quiz'?[b.x,1.4,b.z]:[b.x,b.y,b.z];}
+const blockTitle=b=>(RS.TYPES[b.type]||b.type)+': '+(b.title||b.label||b.q||(b.asset&&(RS.MODELS[b.asset]||RS.SFX[b.asset]||{}).title)||'');
+function blockPos(b){return b.type==='model'?[b.x,b.lift+b.h/2,b.z]:b.type==='sound'?[b.x,1.5,b.z]:b.type==='item'?[b.x,b.lift+b.size/2,b.z]:b.type==='table'?[b.x,b.h,b.z]:b.type==='portal'||b.type==='quiz'?[b.x,1.4,b.z]:[b.x,b.y,b.z];}
 function buildEditor(E,S,spec){
   S.edit=true;
   S.tablet=E.addPanel({w:.46,h:.46,res:1024,pos:[0,1.4,-1],yaw:0,accent:'#facc15',draw:(c,p)=>tabletDraw(E,S,c,p)});
   /* на экране (без шлема) планшет стоит перед лицом чуть слева */
-  S.edTargets=spec.blocks.map(b=>{const c=blockPos(b),big=b.w?b.w*.3:.3;return{c,r:Math.max(.3,b.type==='item'?b.size*.8:big),id:'ed'+b.id,sel:()=>{ED.sel=b.id;S.tablet.dirty=true;E.beep(700,.05,'triangle',.04);}};});
+  S.edTargets=spec.blocks.map(b=>{const c=blockPos(b),big=b.w?b.w*.3:.3;return{c,r:Math.max(.3,b.type==='item'?b.size*.8:b.type==='model'?b.h*.5:big),id:'ed'+b.id,sel:()=>{ED.sel=b.id;S.tablet.dirty=true;E.beep(700,.05,'triangle',.04);}};});
 }
 function poseTablet(E,S){
   const t=S.tablet;if(!t)return;
@@ -195,10 +205,10 @@ function register(id){
         if(b){const q=blockPos(b),k=.07,y=q[1]+(b.type==='item'?b.size/2:b.type==='table'?0:(b.w||1)*.35)+.25+Math.sin(E.t*4)*.04;add(E.mesh.sphere,M.mul(M.trans(q[0],y,q[2]),M.scale(k,k,k)),[1,.85,.2],.9);}
       }
       for(const it of S.items||[]){
-        if(it.grab)continue;
+        if(it.grab||it.model)continue;
         if(it.b.spin)it.rot+=.012;
         const k=it.b.size;
-        add(it.m,M.mul(M.trans(it.x,it.y,it.z),M.mul(M.rotY(it.rot),M.scale(k,k,k))),it.col,.12);
+        add(it.m,M.mul(M.trans(it.x,it.y,it.z),M.mul(M.rotY(it.rot),M.scale(k,k,k))),it.col,.12,it.tex?4:0,it.tex);
       }
     },
     onGrab(E,S,b){
