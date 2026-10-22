@@ -73,7 +73,7 @@ function makeCtx(xr){
     const nF=V0.Store.norm(F);
     ok(JSON.stringify(strip(nF))===fs.readFileSync(path.join(ROOT,'tests/fixtures/legacy-v2.norm.json'),'utf8'),'schema: старые поля не изменились (без school/year/status)');
     const byId=(L,id)=>L.find(x=>x.id===id);
-    ok(nF.v===3&&[...nF.students,...nF.classes].every(x=>x.school==='school-default'&&x.status==='active'),'schema v3: у всех учеников и классов школа по умолчанию и статус active');
+    ok(nF.v===4&&[...nF.students,...nF.classes].every(x=>x.school==='school-default'&&x.status==='active'),'schema v3: у всех учеников и классов школа по умолчанию и статус active');
     ok(byId(nF.classes,'c5a').year===2025&&byId(nF.classes,'c9b').year===2024&&byId(nF.students,'s1').year===2025&&byId(nF.students,'s2').year===2024&&byId(nF.students,'s3').year===null&&byId(nF.students,'s4').year===null,'schema v3: учебный год выводится из created (август — начало года, нет времени — null)');
     ok(V0.schema.acadYear(1720000000000)===2023&&V0.schema.acadYear(0)===null,'schema v3: acadYear(июль 2024)=2023');
     const s1n=byId(nF.students,'s1');
@@ -84,6 +84,23 @@ function makeCtx(xr){
     const mc3=V0.Store.merge({students:[Object.assign({},s1n,{status:'archived',updated:5})]},{students:[Object.assign({},s1n,{status:'active',updated:9})]});
     ok(mc3.students[0].status==='active','слияние: возврат из архива (новее) побеждает');
     ok(V0.schema.fill('students',{id:'z',name:'я',status:'bad',school:'',year:'x',created:1760000000000}).status==='active','schema v3: недопустимые значения заменяются по умолчанию');
+    /* v4: teacherId у классов (серверное поле, клиент его хранит и не теряет) */
+    {const SCH=V0.schema,kl={id:'ck',grade:5,letter:'А',created:1,updated:10},pickC=c=>JSON.stringify([c.letter,c.teacherId]);
+      ok(SCH.VERSION===4&&V0.Store.norm(null).v===4,'schema v4: версия 4');
+      ok(SCH.okTeacher('t-1')&&!SCH.okTeacher('')&&!SCH.okTeacher(5)&&!SCH.okTeacher(null)&&!SCH.okTeacher('x'.repeat(41)),'schema v4: okTeacher — строка 1–40 символов');
+      const vt=SCH.validate('classes',[Object.assign({},kl,{teacherId:'t-1'}),Object.assign({},kl,{id:'ck2',teacherId:7}),Object.assign({},kl,{id:'ck3',teacherId:''})]).value;
+      ok(vt[0].teacherId==='t-1'&&!('teacherId' in vt[1])&&!('teacherId' in vt[2]),'schema v4: validate сохраняет допустимый teacherId класса и отбрасывает недопустимый');
+      ok(Object.keys(vt[0]).join()==='id,grade,letter,created,updated,teacherId,school,year,status','schema v4: порядок полей класса фиксирован');
+      ok(!('teacherId' in SCH.validate('students',[{id:'q',name:'Я',teacherId:'t-1'}]).value[0]),'schema v4: у ученика teacherId не бывает');
+      const mA=V0.Store.merge({classes:[Object.assign({},kl,{teacherId:'t-1'})]},{classes:[Object.assign({},kl,{updated:20,letter:'Б'})]});
+      ok(pickC(mA.classes[0])==='["Б","t-1"]','слияние v4: класс от старого клиента (новее, без teacherId) не теряет teacherId');
+      const mB=V0.Store.merge({classes:[Object.assign({},kl,{updated:20,letter:'Б'})]},{classes:[Object.assign({},kl,{teacherId:'t-1'})]});
+      ok(pickC(mB.classes[0])==='["Б","t-1"]','слияние v4: то же при обратном порядке');
+      const ad=SCH.adoptTeacher([{id:'ck',teacherId:'forged'},{id:'cz',teacherId:'keep'},{id:'cn',teacherId:'forged2'}],[{id:'ck',teacherId:'t-1'},{id:'cn'}]);
+      ok(ad[0].teacherId==='t-1'&&ad[1].teacherId==='keep'&&!('teacherId' in ad[2]),'schema v4: после синхронизации teacherId берётся у сервера (у классов вне ответа не трогаем)');
+      const cF=JSON.parse(JSON.stringify(F));cF.classes[0].teacherId='t-1';
+      const nC=V0.Store.norm(cF);ok(nC.classes.find(x=>x.id==='c5a').teacherId==='t-1'&&nC.classes.find(x=>x.id==='c9b').teacherId===undefined,'schema v4: фикстура v2 читается, teacherId сохраняется там, где задан');
+    }
     /* архив на фикстуре: реальные непустые данные */
     {const Cx=makeCtx(false);await tick();const Sx=Cx.sb.VR.Store;Cx.store['vrlesson.v1']=JSON.stringify(F);Sx.reload();
       const n0=Sx.students().length;
@@ -394,6 +411,87 @@ function makeCtx(xr){
       ok(d2&&d2.classId===null&&d2.year===2025&&d2.school==='school-default'&&d2.status==='active','сервер: шлем не задаёт год и не кладёт ученика в архивный класс');
       ok(d3&&d3.year===2024,'сервер: год ученика от шлема считается по дате создания, а не из присланного');
       TS.restoreClass(arK.id);await TS.sync();}
+    /* ---- v4: teacherId — сервер источник правды ---- */
+    {const post=(key,body)=>fetch(url+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json','X-Key':key},body:JSON.stringify(body)}).then(r=>r.json());
+      const dbp=path.join(dir,'vrlesson.db'),pq=(q,...a)=>cp.execFileSync('python3',['-I','-c',q,dbp,...a]).toString().trim();
+      const colT=id=>pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select teacherId from classes where id=?",(sys.argv[2],)).fetchone()[0])',id);
+      const cur=JSON.parse(JSON.stringify(TS.klass(arK.id)));
+      ok(cur.teacherId===undefined&&colT(arK.id)==='None','teacherId: у класса без назначения поле пустое и на клиенте, и в колонке сервера');
+      /* имитация серверного действия «передать класс» (шаг 7): пишем teacherId прямо в базу */
+      pq('import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);d=json.loads(c.execute("select doc from classes where id=?",(sys.argv[2],)).fetchone()[0]);d["teacherId"]="t-7";c.execute("update classes set doc=?,teacherId=? where id=?",(json.dumps(d,ensure_ascii=False),"t-7",sys.argv[2]));c.commit()',arK.id);
+      const srvCls=Object.assign({},cur,{teacherId:'t-7'});
+      const pick=c=>JSON.stringify([c.letter,c.teacherId,c.status,c.school,c.year]);
+      const oldFmt={id:cur.id,grade:cur.grade,letter:'Ж',created:cur.created,updated:cur.updated+5000};
+      const r1=await post('teach-secret',{classes:[oldFmt]});const k1=r1.state.classes.find(x=>x.id===cur.id);
+      ok(k1.letter==='Ж'&&k1.teacherId==='t-7'&&colT(cur.id)==='t-7','сервер: класс от старого клиента (без teacherId) принят, teacherId сохранён');
+      ok(pick(k1)===pick(V0.Store.merge({classes:[srvCls]},{classes:[oldFmt]}).classes[0]),'слияние v4: сервер и JS дают одинаковый результат для класса от старого клиента ('+pick(k1)+')');
+      const r2=await post('teach-secret',{classes:[Object.assign({},k1,{letter:'З',updated:k1.updated+5000,teacherId:'t-evil'})]});const k2=r2.state.classes.find(x=>x.id===cur.id);
+      ok(k2.letter==='З'&&k2.teacherId==='t-7'&&colT(cur.id)==='t-7','сервер: ключ учителя не может сменить teacherId через синхронизацию');
+      const r3=await post('dev-secret',{classes:[Object.assign({},k2,{letter:'И',updated:k2.updated+5000,teacherId:'t-evil'})]});const k3=r3.state.classes.find(x=>x.id===cur.id);
+      ok(k3.letter==='З'&&k3.teacherId==='t-7','сервер: ключ шлема не меняет класс и не ставит teacherId');
+      const nid='cnew-'+Date.now(),r4=await post('teach-secret',{classes:[{id:nid,grade:6,letter:'Т',created:1760000000000,updated:1760000000000,teacherId:'t-evil'}]});
+      ok(r4.state.classes.find(x=>x.id===nid).teacherId===undefined&&colT(nid)==='None','сервер: новый класс с присланным teacherId создаётся без него');
+      await TS.sync();
+      ok(TS.klass(cur.id).teacherId==='t-7','клиент: teacherId пришёл с сервера');
+      TS.klass(cur.id).teacherId='forged';await TS.sync();
+      ok(TS.klass(cur.id).teacherId==='t-7'&&colT(cur.id)==='t-7','клиент: подмену teacherId локально сервер откатывает (сервер — источник правды)');
+      TS.removeClass(nid);await TS.sync();
+    }
+    /* ---- журнал аудита (шаг 3): только реальные изменения, без секретов ---- */
+    {const dbp=path.join(dir,'vrlesson.db'),pq=(q,...a)=>cp.execFileSync('python3',['-I','-c',q,dbp,...a]).toString().trim();
+      const rows=since=>JSON.parse(pq('import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps(c.execute("select id,actor_kind,actor_id,action,target_kind,target_id,school,detail from audit_log where id>? order by id",(int(sys.argv[2]),)).fetchall(),ensure_ascii=False))',String(since)));
+      const lastId=()=>+pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select coalesce(max(id),0) from audit_log").fetchone()[0])');
+      const acts=r=>r.map(x=>x[3]+':'+x[5]).join('|');
+      const early=rows(0);
+      ok(early.some(r=>r[3]==='student.create'&&r[1]==='device')&&early.some(r=>r[3]==='student.pin_change'&&r[1]==='legacy-teacher')&&early.some(r=>r[3]==='delete'&&r[4]==='student'),'аудит: действия предыдущих проверок уже в журнале (ученик от шлема, смена кода, удаление ученика)');
+      /* архив / возврат ученика */
+      const au=TS.addStudent('Аудит Ученик',6);await TS.sync();
+      let m=lastId();
+      TS.archiveStudent(au.id);await TS.sync();
+      let r1=rows(m);
+      ok(r1.length===1&&r1[0][3]==='student.archive'&&r1[0][1]==='legacy-teacher'&&r1[0][2]==='teacher'&&r1[0][4]==='student'&&r1[0][5]===au.id&&r1[0][6]==='school-default','аудит: архив ученика — одна запись с исполнителем legacy-teacher и школой ('+acts(r1)+')');
+      await TS.sync();await TS.sync();
+      ok(rows(m).length===1,'аудит: повторная синхронизация без изменений не добавляет записей');
+      m=lastId();TS.restoreStudent(au.id);await TS.sync();r1=rows(m);
+      ok(r1.length===1&&r1[0][3]==='student.restore','аудит: возврат из архива записан');
+      /* смена кода: факт без значения */
+      m=lastId();const pinNew=await TS.setStudentPin(au.id,'7788');await TS.sync();r1=rows(m);
+      const pinH=TS.student(au.id).pinHash;
+      ok(r1.length===1&&r1[0][3]==='student.pin_change'&&r1[0][7]==='{}'&&pinH&&pinH.length>8,'аудит: смена кода ученика — факт без значения кода и хэша');
+      /* классы */
+      m=lastId();const ak=TS.addClass(8,'Я');await TS.sync();TS.archiveClass(ak.id);await TS.sync();TS.restoreClass(ak.id);await TS.sync();r1=rows(m);
+      ok(r1.map(x=>x[3]).join()==='class.create,class.archive,class.restore'&&r1.every(x=>x[5]===ak.id&&x[6]==='school-default'&&JSON.parse(x[7]).name==='8Я'),'аудит: класс — создание, архив, возврат ('+acts(r1)+')');
+      /* настройки: имена ключей, не значения */
+      m=lastId();TS.setSettings({pinHash:'SECRETHASH-aud-1',pinSalt:'SECRETSALT-aud-1',minutes:11});T.sb.VR.flags.set('auditDemo',true);await TS.sync();r1=rows(m);
+      const sk=r1.find(x=>x[3]==='settings.update');
+      ok(!!sk&&sk[1]==='legacy-teacher'&&JSON.parse(sk[7]).keys.join()==='flags.auditDemo,minutes,pinHash,pinSalt','аудит: настройки — записаны имена изменённых ключей ('+(sk&&sk[7])+')');
+      m=lastId();await TS.sync();ok(rows(m).length===0,'аудит: повтор настроек без изменений не пишется');
+      m=lastId();TS.setSettings({minutes:8});T.sb.VR.flags.set('auditDemo',false);await TS.sync();
+      /* ученик от шлема */
+      m=lastId();const hs=HS.addStudent('Шлем Аудит',4);await HS.sync();r1=rows(m);
+      ok(r1.length===1&&r1[0][3]==='student.create'&&r1[0][1]==='device'&&r1[0][2]==='device'&&r1[0][5]===hs.id,'аудит: новый ученик от шлема — actor device ('+acts(r1)+')');
+      await HS.sync();ok(rows(m).length===1,'аудит: повторная синхронизация шлема не дублирует запись');
+      /* удаление: вид записи и число результатов, запись журнала переживает удаление */
+      HS.addResult({sid:hs.id,subj:'math',band:'a',grade:4,score:3,total:5,ans:[]});await HS.sync();await TS.sync();
+      m=lastId();TS.removeStudent(hs.id);await TS.sync();r1=rows(m);
+      ok(r1.length===1&&r1[0][3]==='delete'&&r1[0][4]==='student'&&r1[0][5]===hs.id&&JSON.parse(r1[0][7]).results===1,'аудит: удаление ученика — вид, id и число удалённых результатов ('+(r1[0]&&r1[0][7])+')');
+      await TS.sync();ok(rows(m).length===1,'аудит: повтор удаления не дублирует запись');
+      ok(pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select count(*) from audit_log where target_id=?",(sys.argv[2],)).fetchone()[0])',hs.id)==='2'&&!TS.student(hs.id),'аудит: записи об удалённом ученике остаются в журнале');
+      /* секреты: ни хэшей кодов, ни хэша и соли пароля, ни ключей нет нигде в журнале */
+      const hashes=TS.students({all:true}).map(x=>x.pinHash).filter(Boolean).concat([pinH,'SECRETHASH-aud-1','SECRETSALT-aud-1','teach-secret','dev-secret']);
+      const dump=pq('import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps(["|".join(str(v) for v in r) for r in c.execute("select * from audit_log")],ensure_ascii=False))');
+      const hit=hashes.filter(h=>dump.includes(h));
+      ok(hashes.length>=6&&hit.length===0,'аудит: в журнале нет хэшей, соли, кодов и ключей ('+hashes.length+' значений проверено, найдено: '+hit.length+')');
+      ok(+pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select max(length(detail)) from audit_log").fetchone()[0])')<=2048,'аудит: detail не длиннее 2 КБ');
+      /* ограничение объёма и вставка без секретов напрямую (юнит) */
+      const big=cp.execFileSync('python3',['-I','-c',`import sys,os,tempfile,json;d=tempfile.mkdtemp();os.environ['DATA_DIR']=d;sys.path.insert(0,sys.argv[1])
+import app;app.DB_PATH=os.path.join(d,'vrlesson.db');app.init_db()
+c=app.db();app.audit(c,('cli','x',''),'t.big',None,None,None,{'a':'я'*3000});app.audit(c,('cli','x','1.2.3.4'),'t.small','student','s'*200,'school-default',{'k':1});c.commit()
+print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit_log order by id').fetchall(),ensure_ascii=False))`,path.join(ROOT,'server')]).toString().trim();
+      const bg=JSON.parse(big);
+      ok(bg[0][1]==='{"truncated": true}'&&bg[1][1]==='{"k": 1}'&&bg[1][2]===80&&bg[1][3]==='1.2.3.4','аудит: слишком большой detail заменяется пометкой, длинный target_id обрезается');
+      ok(+pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select count(*) from audit_log where actor_kind not in (?,?)",("legacy-teacher","device")).fetchone()[0])')===0,'аудит: все исполнители — legacy-teacher или device (учётных записей пока нет)');
+    }
     ok(fs.readdirSync(dir).filter(f=>/^vrlesson\.db\.bak-/.test(f)).length===0,'свежая база: копий миграции нет');
   }finally{srv.kill();}
 
@@ -410,18 +508,18 @@ function makeCtx(xr){
     let p2=await start();
     try{
       ok(baks().length===1&&pyq(path.join(dir2,baks()[0]),'select count(*) from students')==='4','миграция: перед ней сделана копия базы v2 (4 ученика)');
-      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='3','миграция: user_version = 3');
+      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='4','миграция v2→v4: user_version = 4');
       const exp=await (await fetch(url2+'/api/export',{headers:{'X-Key':'teach-secret'}})).json();
       const yr=id=>exp.students.find(x=>x.id===id).year;
       ok(exp.students.length===4&&exp.students.every(x=>x.school==='school-default'&&x.status==='active')&&yr('s1')===2025&&yr('s2')===2024&&yr('s3')===null&&yr('s4')===null&&exp.classes.find(x=>x.id==='c5a').year===2025,'миграция: ученики и классы дозаполнены, годы выведены');
-      ok(exp.results.length===5&&exp.disc.s1&&exp.settings.futureKey==='keep-me'&&exp.v===3,'миграция: результаты, открытия и неизвестные настройки на месте');
+      ok(exp.results.length===5&&exp.disc.s1&&exp.settings.futureKey==='keep-me'&&exp.v===4,'миграция: результаты, открытия и неизвестные настройки на месте');
       ok(exp.students.find(x=>x.id==='s1').pinHash==='test-hash-1'&&exp.students.find(x=>x.id==='s1').name==='Иван Петров','миграция: прежние поля ученика не изменились');
-      const h=await (await fetch(url2+'/api/health')).json();ok(h.schema===3,'/api/health: schema = 3');
+      const h=await (await fetch(url2+'/api/health')).json();ok(h.schema===4,'/api/health: schema = 4');
     }finally{p2.kill();}
     await new Promise(r=>setTimeout(r,300));
     p2=await start();
     try{
-      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='3','миграция повторяема: после перезапуска новой копии нет');
+      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='4','миграция повторяема: после перезапуска новой копии нет');
     }finally{p2.kill();}
     /* обрыв миграции: на временной базе v2 ломаем заполнение на второй записи; база должна остаться целой v2, повторный запуск — дать ту же v3 */
     {
@@ -454,6 +552,104 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v3(c);c.close()`;
       ok(A[0]===3&&A[1].includes('school')&&A[2].length===4&&A[4]===5,'миграция: повторный запуск после обрыва даёт v3 без потерь');
       cp.execFileSync('python3',['-I','-c',run,db3,path.join(ROOT,'server'),dir3]);
       ok(snap()===after,'миграция: ещё один запуск базу не меняет');
+    }
+  }
+
+  /* ---------- миграция базы v3 → v4 (шаг 1 плана учёток: только DDL, поведение не меняется) ---------- */
+  {
+    const fx=path.join(ROOT,'tests/fixtures/legacy-v2.json'),srvDir=path.join(ROOT,'server');
+    const build=fs.mkdtempSync(path.join(os.tmpdir(),'vrl-v3b-'));
+    cp.execFileSync('python3',['-I',path.join(ROOT,'tests/fixtures/make_v3_db.py'),path.join(build,'vrlesson.db'),fx],{stdio:'ignore'});
+    const v3db=path.join(build,'vrlesson.db');
+    const py=(code,...args)=>cp.execFileSync('python3',['-I','-c',code,...args]).toString().trim();
+    const stateJson=`import sys,os,json;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
+import app,sqlite3
+c=sqlite3.connect(sys.argv[1]);s=app.state(c);s.pop('v');print(json.dumps(s,ensure_ascii=False,sort_keys=True))`;
+    const dumpDb=`import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps([c.execute('pragma user_version').fetchone()[0],sorted(r[0] for r in c.execute("select name from sqlite_master where type='table'")),[r[1] for r in c.execute('pragma table_info(classes)')],c.execute('select id,name,grade,updated,doc,school,year,status from students order by id').fetchall(),c.execute('select id,name,updated,doc,school,year,status from classes order by id').fetchall(),c.execute('select count(*) from results').fetchone()[0]],ensure_ascii=False))`;
+    const newDir=src=>{const d=fs.mkdtempSync(path.join(os.tmpdir(),'vrl-mig4-'));fs.copyFileSync(src,path.join(d,'vrlesson.db'));return d;};
+    const startOn=async(dir,port,script)=>{const p=cp.spawn('python3',['-I',script],{env:Object.assign({},process.env,{DATA_DIR:dir,PORT:String(port),TEACHER_KEY:'teach-secret',DEVICE_KEY:'dev-secret'}),stdio:'ignore'});
+      for(let i=0;i<50;i++){try{const r=await fetch('http://127.0.0.1:'+port+'/api/health');if(r.ok)break;}catch(e){}await new Promise(r=>setTimeout(r,100));}return p;};
+    const baks=(dir,tag)=>fs.readdirSync(dir).filter(f=>new RegExp('^vrlesson\\.db\\.bak-'+tag+'-').test(f));
+    const NEWT=['schools','users','user_roles','sessions','invites','login_fail','audit_log'];
+    const d0=JSON.parse(py(dumpDb,v3db));
+    ok(d0[0]===3&&!d0[1].includes('schools')&&!d0[2].includes('teacherId')&&d0[3].length===4&&d0[4].length===2&&d0[5]===5,'миграция v3→v4: исходная база настоящая v3 (4 ученика, 2 класса, 5 результатов, без новых таблиц)');
+    const dir4=newDir(v3db),db4=path.join(dir4,'vrlesson.db');
+    const before=py(stateJson,v3db,srvDir,dir4);
+    let p4=await startOn(dir4,8799,path.join(srvDir,'app.py'));
+    try{
+      ok(baks(dir4,'v3').length===1&&py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select count(*) from students").fetchone()[0])',path.join(dir4,baks(dir4,'v3')[0]))==='4','миграция v3→v4: перед ней сделана копия базы v3 (4 ученика)');
+      const h=await (await fetch('http://127.0.0.1:8799/api/health')).json();
+      ok(h.ok&&h.schema===4,'миграция v3→v4: /api/health schema = 4');
+      const exp=await (await fetch('http://127.0.0.1:8799/api/export',{headers:{'X-Key':'teach-secret'}})).json();
+      ok(exp.v===4&&exp.students.length===4&&exp.classes.length===2&&exp.results.length===5,'миграция v3→v4: экспорт учителя работает, данные на месте');
+    }finally{p4.kill();}
+    await new Promise(r=>setTimeout(r,300));
+    const d1=JSON.parse(py(dumpDb,db4));
+    ok(d1[0]===4&&NEWT.every(t=>d1[1].includes(t))&&d1[2].includes('teacherId'),'миграция v3→v4: user_version = 4, есть все новые таблицы и колонка classes.teacherId');
+    ok(py(stateJson,db4,srvDir,dir4)===before,'миграция v3→v4: состояние (state) до и после совпадает по всем данным, кроме номера схемы');
+    ok(JSON.stringify([d1[3],d1[4],d1[5]])===JSON.stringify([d0[3],d0[4],d0[5]]),'миграция v3→v4: строки учеников, классов и число результатов не изменились');
+    const cnt=(t,w)=>py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0])',db4,'select count(*) from '+t+(w?' where '+w:''));
+    ok(cnt('schools')==='1'&&cnt('schools',"id='school-default' and status='active'")==='1'&&cnt('users')==='0'&&cnt('audit_log')==='0'&&cnt('user_roles')==='0','миграция v3→v4: есть школа school-default, учётки и журнал пусты');
+    ok(cnt('classes','teacherId is null')==='2','миграция v3→v4: у существующих классов teacherId пуст');
+    const idx=py('import sqlite3,sys;print(",".join(sorted(r[0] for r in sqlite3.connect(sys.argv[1]).execute("select name from sqlite_master where type=\'index\' and name not like \'sqlite_%\'"))))',db4);
+    ok(['schools_region','user_roles_school','sessions_user','invites_school','audit_school_ts','audit_target','classes_teacher','classes_school','students_school'].every(i=>idx.split(',').includes(i)),'миграция v3→v4: индексы созданы');
+    const dAfter=py(dumpDb,db4);
+    p4=await startOn(dir4,8799,path.join(srvDir,'app.py'));
+    try{
+      await new Promise(r=>setTimeout(r,200));
+    }finally{p4.kill();}
+    await new Promise(r=>setTimeout(r,300));
+    ok(baks(dir4,'v3').length===1&&py(dumpDb,db4)===dAfter&&cnt('schools')==='1','миграция v3→v4 повторяема: второй запуск не меняет базу и не делает новую копию');
+    /* обрыв посреди миграции: база остаётся целой v3, повторный запуск даёт v4 */
+    {
+      const dir5=newDir(v3db),db5=path.join(dir5,'vrlesson.db');
+      const snap=()=>py(dumpDb,db5);
+      const b5=snap();
+      const crash=`import sys,os;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
+import app,sqlite3
+n=[0];orig=app.class_teacher
+def bad(*a,**k):
+    n[0]+=1
+    if n[0]>=2: raise RuntimeError('обрыв')
+    return orig(*a,**k)
+app.class_teacher=bad
+c=sqlite3.connect(sys.argv[1])
+try:
+    app.migrate_v4(c)
+except RuntimeError:
+    print('crashed')`;
+      ok(py(crash,db5,srvDir,dir5)==='crashed','миграция v3→v4: обрыв посреди заполнения вызван');
+      ok(snap()===b5&&JSON.parse(b5)[0]===3&&!JSON.parse(b5)[1].includes('schools'),'миграция v3→v4: после обрыва база целиком прежняя v3 (новых таблиц и колонки нет, user_version 3, данные те же)');
+      const run=`import sys,os;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
+import app,sqlite3
+c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
+      py(run,db5,srvDir,dir5);
+      const a5=snap(),A=JSON.parse(a5);
+      ok(A[0]===4&&A[1].includes('audit_log')&&A[2].includes('teacherId')&&A[3].length===4&&A[5]===5,'миграция v3→v4: повторный запуск после обрыва даёт v4 без потерь');
+      py(run,db5,srvDir,dir5);
+      ok(snap()===a5,'миграция v3→v4: ещё один запуск базу не меняет');
+    }
+    /* откат: прежний код (v3) открывает базу v4 и работает с теми же данными */
+    {
+      const dir6=newDir(db4),db6=path.join(dir6,'vrlesson.db');
+      const oldSrv=path.join(ROOT,'tests/fixtures/server_v3.py');
+      let po=await startOn(dir6,8800,oldSrv),syN=-1;
+      try{
+        const h=await (await fetch('http://127.0.0.1:8800/api/health')).json();
+        ok(h.ok&&h.schema===3,'откат: прежний сервер v3 стартует на базе v4');
+        const ex=await (await fetch('http://127.0.0.1:8800/api/export',{headers:{'X-Key':'teach-secret'}})).json();
+        ok(ex.students.length===4&&ex.classes.length===2&&ex.results.length===5&&ex.settings.futureKey==='keep-me','откат: прежний сервер видит те же данные');
+        const sy=await (await fetch('http://127.0.0.1:8800/api/sync',{method:'POST',headers:{'X-Key':'dev-secret','Content-Type':'application/json'},body:JSON.stringify({students:[{id:'rb1',name:'После отката',grade:6,created:1760000000000,updated:1760000000000}]})})).json();
+        syN=sy.state.results.length;ok(sy.state.students.some(x=>x.id==='rb1'),'откат: прежний сервер принимает синхронизацию на базе v4');
+      }finally{po.kill();}
+      await new Promise(r=>setTimeout(r,300));
+      p4=await startOn(dir6,8799,path.join(srvDir,'app.py'));
+      try{
+        const ex=await (await fetch('http://127.0.0.1:8799/api/export',{headers:{'X-Key':'teach-secret'}})).json();
+        ok(ex.v===4&&ex.students.length===5&&ex.students.some(x=>x.id==='rb1')&&ex.results.length===syN&&syN>0,'откат: новый сервер снова открывает базу после работы прежнего, данные не потеряны');
+      }finally{p4.kill();}
+      await new Promise(r=>setTimeout(r,300));
+      ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='4'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 4');
     }
   }
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');

@@ -14,14 +14,15 @@ const clampGrade=g=>VR.schema.clampGrade(g);
 const uid=()=>now().toString(36)+Math.random().toString(36).slice(2,8);
 
 function norm(x){return VR.schema.db(x);}
+function adoptServerTeachers(d,st){VR.schema.adoptTeacher(d.classes,st&&st.classes);}
 function merge(A,B){
   const SC=VR.schema;A=SC.db(A,{fill:false});B=SC.db(B,{fill:false});
   const del=Object.assign({},A.deleted);for(const k in B.deleted)del[k]=Math.max(del[k]||0,B.deleted[k]);
   const settings=(B.settings.updated||0)>(A.settings.updated||0)?B.settings:A.settings;
   const reset=settings.resetAt||0;
-  /* carry: поля школа/год/статус, которых нет у победителя (старый клиент их не знает), берутся у проигравшей версии; то же правило в server/app.py (fill_v3) */
-  const lww=(a,b,carry)=>{const m=new Map();for(const x of a.concat(b)){if(del[x.id])continue;const o=m.get(x.id);if(!o)m.set(x.id,x);else if((x.updated||0)>(o.updated||0))m.set(x.id,carry?SC.carry(x,o):x);else if(carry)m.set(o.id,SC.carry(o,x));}return[...m.values()];};
-  const students=lww(A.students,B.students,true).map(i=>SC.fill('students',i)),tests=lww(A.tests,B.tests),classes=lww(A.classes,B.classes,true).map(i=>SC.fill('classes',i));
+  /* kind: поля школа/год/статус (у классов ещё teacherId), которых нет у победителя (старый клиент их не знает), берутся у проигравшей версии; то же правило в server/app.py (fill_v3, fill_v4) */
+  const lww=(a,b,kind)=>{const m=new Map();for(const x of a.concat(b)){if(del[x.id])continue;const o=m.get(x.id);if(!o)m.set(x.id,x);else if((x.updated||0)>(o.updated||0))m.set(x.id,kind?SC.carry(x,o,kind):x);else if(kind)m.set(o.id,SC.carry(o,x,kind));}return[...m.values()];};
+  const students=lww(A.students,B.students,'students').map(i=>SC.fill('students',i)),tests=lww(A.tests,B.tests),classes=lww(A.classes,B.classes,'classes').map(i=>SC.fill('classes',i));
   const rm=new Map();for(const r of A.results.concat(B.results))if(!rm.has(r.id)&&!del[r.sid]&&!del[r.id]&&(r.ts||0)>=reset)rm.set(r.id,r);
   const disc={};
   for(const src of[A.disc,B.disc])for(const sid in src){if(del[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
@@ -227,7 +228,7 @@ const Store=VR.Store={
         if(res.status===401||res.status===403)throw new Error('Сервер не принял ключ. Скопируй только символы между кавычками, без самих кавычек');
         if(!res.ok)throw new Error('Сервер ответил '+res.status);
         const data=await res.json();
-        db=merge(load(),data.state);save();
+        db=merge(load(),data.state);adoptServerTeachers(db,data.state);save();
         Store.status={state:'ok',at:now(),role:data.role,msg:''};
       }catch(e){
         Store.status={state:'err',at:now(),role:null,msg:e&&e.name==='AbortError'?'сервер не ответил за 12 секунд':(e instanceof TypeError||/fetch/i.test(e&&e.message||''))?'нет связи с сервером: сеть, VPN или сервер выключен':(e&&e.message)||'нет связи'};
