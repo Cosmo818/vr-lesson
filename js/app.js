@@ -14,34 +14,29 @@ function renderList(){
   const cls=S.classes(),loose=S.studentsOf(null);
   const opts=cls.map(c=>[c.id,S.className(c)+' класс']);if(loose.length)opts.push(['-','Без класса']);
   let last='';try{last=localStorage.getItem(LKEY)||'';}catch(e){}
-  const cur=$('selClass').value||last;
+  let want='';try{want=new URLSearchParams(location.search).get('class')||'';}catch(e){}
+  const cur=want&&opts.some(o=>o[0]===want)?want:($('selClass').value||last);
   $('selClass').innerHTML='<option value="">— выбери класс —</option>'+opts.map(([v,t])=>`<option value="${v}">${esc(t)}</option>`).join('');
   if(opts.some(o=>o[0]===cur))$('selClass').value=cur;
   $('login').hidden=!opts.length;
   $('pickErr').textContent=opts.length?'':'Учитель ещё не добавил учеников. Можно войти гостем.';
   renderStudents();
 }
+/* список имён ученикам не показываем (чтобы нельзя было «снять» состав классов): класс, номер в нём и пароль */
 function renderStudents(){
-  const v=$('selClass').value,st=v?S.studentsOf(v==='-'?null:v):[];
-  const cur=$('selStu').value;
-  $('selStu').innerHTML='<option value="">— выбери себя —</option>'+st.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
-  if(st.some(s=>s.id===cur))$('selStu').value=cur;
-  $('selStu').disabled=!v;renderPin();
-}
-function renderPin(){
-  const s=S.student($('selStu').value);
-  $('pinL').hidden=!!(s&&!s.pinHash);
-  $('selPin').disabled=!s;$('enterBtn').disabled=!s;
+  const v=$('selClass').value;
+  $('selNum').disabled=!v;$('selPin').disabled=!v;$('enterBtn').disabled=!v;
 }
 async function tryEnter(e){
   e.preventDefault();
-  const s=S.student($('selStu').value);if(!s)return;
+  const v=$('selClass').value,n=$('selNum').value.trim();if(!v)return;
   if(Date.now()<lockUntil){$('pickErr').textContent='Слишком много попыток. Подожди '+Math.ceil((lockUntil-Date.now())/1000)+' с.';return;}
   $('pickErr').textContent='';$('enterBtn').disabled=true;
-  const ok=await S.checkStudentPin(s,$('selPin').value);
+  const s=/^\d{1,3}$/.test(n)?S.studentByNum(v==='-'?null:v,n):null;
+  const ok=s?await S.checkStudentPin(s,$('selPin').value):(await S.pinHash('none',String($('selPin').value)),false);
   $('enterBtn').disabled=false;
-  if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}$('pickErr').textContent='Неверный код. Если забыл — подойди к учителю.';return;}
-  fails=0;$('selPin').value='';try{localStorage.setItem(LKEY,$('selClass').value);}catch(err){}
+  if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}$('pickErr').textContent='Неверный номер или пароль. Если забыл — подойди к учителю.';return;}
+  fails=0;$('selPin').value='';$('selNum').value='';try{localStorage.setItem(LKEY,$('selClass').value);}catch(err){}
   choose(s);
 }
 let openPick=null;
@@ -152,8 +147,7 @@ function hooks(){
 }
 
 function bind(){
-  $('selClass').onchange=()=>{$('selStu').value='';renderStudents();$('pickErr').textContent='';};
-  $('selStu').onchange=()=>{renderPin();$('pickErr').textContent='';if(!$('selPin').disabled&&!$('pinL').hidden)$('selPin').focus();};
+  $('selClass').onchange=()=>{renderStudents();$('pickErr').textContent='';if($('selClass').value)$('selNum').focus();};
   $('login').onsubmit=tryEnter;
   $('guestBtn').onclick=()=>choose({id:null,name:'Гость',grade:5});
   /* открытые комнаты (Б54): кнопка видна, только если сервер включил их; вход — гостем, результаты не пишутся */

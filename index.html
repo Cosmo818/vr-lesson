@@ -25,12 +25,12 @@
       <h2>Кто сейчас в шлеме?</h2>
       <form id="login" class="steps" autocomplete="off">
         <label>Класс<select id="selClass"></select></label>
-        <label>Ученик<select id="selStu"></select></label>
-        <label id="pinL">Код входа<input id="selPin" type="password" inputmode="numeric" maxlength="6" placeholder="4 цифры"></label>
+        <label>Номер в классе (логин)<input id="selNum" inputmode="numeric" maxlength="3" placeholder="например, 7" autocomplete="off"></label>
+        <label id="pinL">Пароль<input id="selPin" type="password" inputmode="numeric" maxlength="8" placeholder="4 цифры" autocomplete="off"></label>
         <button id="enterBtn" class="btn">Дальше</button>
       </form>
       <p id="pickErr" class="warn"></p>
-      <p class="muted small">Код входа выдаёт учитель. Забыл — подойди к учителю. <button type="button" id="guestBtn" class="linkbtn">Войти гостем</button> <button type="button" id="openBtn" class="linkbtn" hidden>Открытые комнаты</button></p>
+      <p class="muted small">Номер и пароль выдаёт учитель. Забыл — подойди к учителю. <button type="button" id="guestBtn" class="linkbtn">Войти гостем</button> <button type="button" id="openBtn" class="linkbtn" hidden>Открытые комнаты</button></p>
       <div id="openBox" hidden><h3>Открытые комнаты</h3><p class="muted small">Без входа: можно смотреть и пробовать. Результаты не сохраняются.</p><div id="openList"></div><p id="openErr" class="warn"></p></div>
     </section>
 

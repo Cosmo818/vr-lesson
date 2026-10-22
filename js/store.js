@@ -52,16 +52,30 @@ const Store=VR.Store={
     return load().students.filter(s=>all||(s.status!=='archived'&&!(s.classId&&ar.has(s.classId)))).sort((a,b)=>a.grade-b.grade||a.name.localeCompare(b.name,'ru'));
   },
   student(id){return load().students.find(s=>s.id===id)||null;},
+  /* номер ученика в классе = его «логин» при входе. Есть поле num — берём его; у старых записей номер выдаётся по порядку добавления после максимального (одинаково на всех устройствах) */
+  numMap(classId){
+    const L=load().students.filter(s=>(s.classId||null)===(classId||null)),m={};let mx=0;
+    for(const s of L)if(Number.isInteger(s.num)&&s.num>0){m[s.id]=s.num;mx=Math.max(mx,s.num);}
+    for(const s of L.filter(s=>!m[s.id]).sort((a,b)=>(a.created||0)-(b.created||0)||String(a.id).localeCompare(String(b.id))))m[s.id]=++mx;
+    return m;
+  },
+  numOf(s){return s?Store.numMap(s.classId)[s.id]||0:0;},
+  studentByNum(classId,n){const m=Store.numMap(classId);n=parseInt(n,10);return load().students.find(s=>s.status!=='archived'&&(s.classId||null)===(classId||null)&&m[s.id]===n)||null;},
+  /* закрепить номера у тех, у кого их нет (вызывает кабинет учителя) */
+  ensureNums(){let ch=false;const cl=new Set(load().students.map(s=>s.classId||null));for(const c of cl){const m=Store.numMap(c);for(const s of load().students)if((s.classId||null)===c&&s.num!==m[s.id]){s.num=m[s.id];s.updated=now();ch=true;}}if(ch){save();Store.syncSoon();}return ch;},
   addStudent(name,grade,classId){
     name=String(name||'').trim().slice(0,40);if(!name)return null;
     let k=classId?Store.klass(classId):null;if(k&&k.status==='archived')k=null; // в архивный класс новых учеников не кладём (то же на сервере для шлема)
     const t=now(),s={id:uid(),name,grade:k?k.grade:clampGrade(grade),classId:k?k.id:null,pinHash:null,created:t,updated:t,school:VR.schema.DEFAULT_SCHOOL,year:VR.schema.acadYear(t),status:'active'};
+    if(s.classId){const m=Store.numMap(s.classId);s.num=Math.max(0,...Object.values(m))+1;}
     load().students.push(s);save();Store.syncSoon();return s;
   },
   updateStudent(id,patch){
     const s=Store.student(id);if(!s)return null;
     if(patch.name!=null){const n=String(patch.name).trim().slice(0,40);if(n)s.name=n;}
     if(patch.grade!=null)s.grade=clampGrade(patch.grade);
+    if(patch.classId!==undefined&&(patch.classId||null)!==(s.classId||null)){const m=Store.numMap(patch.classId||null);s.num=Math.max(0,...Object.values(m))+1;}
+    if(patch.gender!==undefined){if(patch.gender==='m'||patch.gender==='f')s.gender=patch.gender;else delete s.gender;}
     if(patch.classId!==undefined){const k=patch.classId?Store.klass(patch.classId):null;s.classId=k?k.id:null;if(k)s.grade=k.grade;}
     if(patch.pinHash!==undefined)s.pinHash=patch.pinHash;
     if(patch.pinView!==undefined){if(VR.schema.okPin(patch.pinView))s.pinView=patch.pinView;else delete s.pinView;}

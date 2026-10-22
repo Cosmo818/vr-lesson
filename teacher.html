@@ -272,14 +272,21 @@ function renderDetail(){
 
 /* ---- ученики ---- */
 /* ---- классы и ученики ---- */
-let curClass=null,newCodes={},shown={},shownT={};
+let curClass=null,newCodes={},shown={},shownT={},pwVis=true,addOpen=false,shareOpen=false;
+const vis=id=>pwVis||!!shown[id];
+/* пол по имени (подсказка, в таблице меняется): русские фамилии на -а/-я и имена на -а/-я — женские */
+function guessGender(n){const w=String(n).trim().split(/\s+/),a=(w[0]||'').toLowerCase(),b=(w[1]||'').toLowerCase();
+  if(/(ова|ева|ёва|ина|ына|ская|цкая|ая)$/.test(a))return'f';if(/(ов|ев|ёв|ин|ын|ский|цкий|ий|ой)$/.test(a))return'm';
+  if(/[ая]$/.test(b)&&!/( илья|никита|данила|кузьма|лука|фома)$/.test(b))return'f';return b?'m':'';}
+function ago(ts){if(!ts)return'Не занимался';const m=Math.round((Date.now()-ts)/60000);if(m<2)return'только что';if(m<60)return m+' мин назад';const h=Math.round(m/60);if(h<24)return h+' ч назад';const d=Math.round(h/24);if(d<31)return d+' дн назад';const mo=Math.round(d/30);return mo<12?mo+' мес назад':'больше года назад';}
+const genOpts=g=>`<option value=""${!g?' selected':''}>—</option><option value="m"${g==='m'?' selected':''}>М</option><option value="f"${g==='f'?' selected':''}>Ж</option>`;
 const codeOf=s=>newCodes[s.id]||s.pinView||'';
 /* код входа: виден по кнопке-глазику и сам прячется через 30 с (чтобы не остался на экране); код, выданный только что, виден сразу */
 const codeCell=s=>{const c=codeOf(s);
-  if(c)return `<span class="pc">${shown[s.id]?'<b class="pcode">'+esc(c)+'</b>':'<span class="muted">••••</span>'}</span> <button class="btn ghost eye${shown[s.id]?' on':''}" title="Показать или скрыть код">👁</button>`;
+  if(c)return `<span class="pc">${vis(s.id)?'<b class="pcode">'+esc(c)+'</b>':'<span class="muted">••••</span>'}</span> <button class="btn ghost eye${vis(s.id)?' on':''}" title="Показать или скрыть код">👁</button>`;
   return (s.pinHash?'<span class="muted">задан</span> <button class="btn ghost eye" disabled title="Код выдан до обновления, его не видно. Нажми «Новый код»: новый код можно будет смотреть здесь">👁</button>':'<span style="color:var(--mid)">нет</span>');};
 function paintCode(id){const tr=$('cCard').querySelector('tr[data-id="'+id+'"]'),s=S.student(id);if(!tr||!s)return;const el=tr.querySelector('.pc'),b=tr.querySelector('.eye');if(!el||!b)return;
-  el.innerHTML=shown[id]?'<b class="pcode">'+esc(codeOf(s))+'</b>':'<span class="muted">••••</span>';b.classList.toggle('on',!!shown[id]);}
+  el.innerHTML=vis(id)?'<b class="pcode">'+esc(codeOf(s))+'</b>':'<span class="muted">••••</span>';b.classList.toggle('on',vis(id));}
 function showCode(id,on){clearTimeout(shownT[id]);if(on){shown[id]=true;shownT[id]=setTimeout(()=>{delete shown[id];paintCode(id);},30000);}else delete shown[id];}
 function hideAllCodes(){for(const id of Object.keys(shown)){clearTimeout(shownT[id]);delete shown[id];}}
 /* печать кодов: лист создаётся на странице (всплывающие окна на телефоне блокируются) и виден только при печати; до 2 столбцов, до 20 учеников в столбце */
@@ -289,7 +296,7 @@ function printCodes(groups){
   const date=new Date().toLocaleDateString('ru-RU');let missing=0,pages='';
   for(const g of groups)for(let i=0;i<g.list.length;i+=40){
     const ch=g.list.slice(i,i+40),two=ch.length>12,nrows=two?Math.min(20,Math.ceil(ch.length/2)):ch.length,np=Math.ceil(g.list.length/40);
-    pages+=`<section class="pp"><div class="ph"><b>VR-урок · коды входа · ${esc(g.title)}</b><span>${date}${np>1?' · стр. '+(i/40+1)+' из '+np:''}</span></div><div class="pg" style="grid-template-columns:${two?'1fr 1fr':'1fr'};grid-template-rows:repeat(${nrows},12.5mm)">${ch.map(s=>{const c=codeOf(s);if(!c)missing++;return `<div class="r"><span class="n">${esc(s.name)}</span><b class="k${c?'':' no'}">${c?esc(c):'—'}</b></div>`;}).join('')}</div></section>`;
+    pages+=`<section class="pp"><div class="ph"><b>VR-урок · коды входа · ${esc(g.title)}</b><span>${date}${np>1?' · стр. '+(i/40+1)+' из '+np:''}</span></div><div class="pg" style="grid-template-columns:${two?'1fr 1fr':'1fr'};grid-template-rows:repeat(${nrows},12.5mm)">${ch.map(s=>{const c=codeOf(s);if(!c)missing++;return `<div class="r"><span class="n">${S.numOf(s)}. ${esc(s.name)}</span><b class="k${c?'':' no'}">${c?esc(c):'—'}</b></div>`;}).join('')}</div></section>`;
   }
   const note=missing?`<div class="pn">«—»: код не виден (выдан до обновления). Нажмите «Новый код» у ученика и напечатайте лист ещё раз.</div>`:'';
   const el=document.createElement('div');el.id='psheet';el.innerHTML=pages.replace(/<\/section>(?![\s\S]*<\/section>)/,note+'</section>');
@@ -302,6 +309,7 @@ $('cGrade').innerHTML=Array.from({length:11},(_,i)=>`<option value="${i+1}">${i+
 $('cAdd').onclick=()=>{const c=S.addClass($('cGrade').value,$('cLetter').value);if(!c){alert('Такой класс уже есть.');return;}$('cLetter').value='';curClass=c.id;newCodes={};hideAllCodes();renderStudents();};
 $('cSel').onchange=()=>{curClass=$('cSel').value||null;newCodes={};hideAllCodes();renderStudents();};
 function renderStudents(){
+  S.ensureNums();
   const klist=S.classes(),loose=S.studentsOf(null);
   if(curClass&&curClass!=='-'&&!klist.some(c=>c.id===curClass))curClass=null;
   if(!curClass)curClass=klist.length?klist[0].id:(loose.length?'-':null);
@@ -309,13 +317,15 @@ function renderStudents(){
   if(curClass)$('cSel').value=curClass;
   const box=$('cCard');
   if(!curClass){box.innerHTML='<div class="card muted">Создайте первый класс: выберите параллель, букву и нажмите «Создать класс».</div>';renderClassRank();return;}
-  const k=curClass==='-'?null:S.klass(curClass),L=S.studentsOf(k?k.id:null);
+  const k=curClass==='-'?null:S.klass(curClass),L=S.studentsOf(k?k.id:null).sort((a,b)=>S.numOf(a)-S.numOf(b));
   const st=S.classStats().rows.find(r=>(r.c.id||null)===(k?k.id:null));
   const clsOpts=v=>S.classes().map(c=>`<option value="${c.id}"${c.id===v?' selected':''}>${clsName(c)}</option>`).join('')+`<option value=""${!v?' selected':''}>без класса</option>`;
-  box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${clsName(k)} <span class="muted small">· учеников: ${L.length}${st&&st.rating!=null?' · рейтинг '+st.rating.toFixed(1):''}</span></h2><div class="row" style="margin:0"><button class="btn ghost" id="printCodes" title="Лист с кодами этого класса">Печать кодов</button><button class="btn ghost" id="printAll" title="Коды всех классов, каждый класс с новой страницы">Печать: все классы</button>${k?'<button class="btn ghost" id="cDel">В архив</button>':''}</div></div>
-   ${k?`<div class="row"><textarea id="bulk" placeholder="Добавить учеников: по одному имени в строке" style="min-height:70px;font-family:inherit;font-size:15px"></textarea></div><div class="row"><button class="btn" id="bulkAdd">Добавить и выдать коды</button></div>`:''}
+  box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${clsName(k)} <span class="muted small">· учеников: ${L.length}${st&&st.rating!=null?' · рейтинг '+st.rating.toFixed(1):''}</span></h2><div class="row" style="margin:0"><button class="btn ghost" id="pwToggle">${pwVis?'Скрыть пароли':'Показать пароли'}</button><button class="btn ghost" id="printCodes" title="Лист с кодами этого класса">Печать кодов</button><button class="btn ghost" id="printAll" title="Коды всех классов, каждый класс с новой страницы">Печать: все классы</button>${k?'<button class="btn ghost" id="cDel">В архив</button>':''}</div></div>
+   ${k?`<div class="row"><button class="btn" id="addOpen">＋ Добавить учеников</button><button class="btn ghost" id="shareOpen" title="Одна ссылка на весь класс: ученик открывает её, находит себя в списке и вводит пароль">Передать доступ</button></div>
+   ${addOpen?`<div class="card" style="background:#0e1730"><b>Список учеников</b> <span class="muted small">— по одному в строке: «Фамилия Имя». Пароли создадутся сами, пол определится по имени (в таблице его можно поправить).</span><div class="row"><textarea id="bulk" placeholder="Иванов Пётр&#10;Смирнова Анна" style="min-height:120px;font-family:inherit;font-size:15px"></textarea></div><div class="row"><button class="btn" id="bulkAdd">Добавить и выдать пароли</button><button class="btn ghost" id="addCancel">Отмена</button></div></div>`:''}
+   ${shareOpen?`<div class="card" style="background:#0e1730"><b>Ссылка для класса ${esc(clsName(k))}</b> <span class="muted small">— отправьте её ученикам или родителям: класс уже выбран, останется найти себя в списке и ввести пароль.</span><div class="row"><input id="shareUrl" readonly value="${esc(new URL('index.html?class='+k.id,location.href).href)}" style="width:100%"></div><div class="row"><button class="btn" id="shareCopy">Скопировать ссылку</button><button class="btn ghost" id="shareClose">Закрыть</button></div></div>`:''}`:''}
    ${Object.keys(newCodes).length?`<div class="card" id="codes" style="background:#0e1730"><b>Новые коды входа — раздайте ученикам.</b> Позже их можно посмотреть кнопкой 👁 в таблице; список для раздачи — кнопка «Печать кодов».<div id="codesList">${Object.keys(newCodes).map(id=>{const s=S.student(id);return s?`<div class="row" style="margin:4px 0"><span style="min-width:220px">${esc(s.name)}</span><b style="font-size:20px;letter-spacing:3px">${newCodes[id]}</b></div>`:'';}).join('')}</div></div>`:''}
-   <div class="scroll"><table><tr><th>Имя</th><th>Класс</th><th>Код входа</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${codeCell(s)} <button class="btn ghost pin">Новый код</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">В архив</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
+   <div class="scroll"><table><tr><th title="Номер в классе — логин ученика при входе">№ (логин)</th><th>Фамилия и имя</th><th>Пол</th><th>Активность</th><th>Класс</th><th>Пароль</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><b>${S.numOf(s)}</b></td><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="gn">${genOpts(s.gender)}</select></td><td class="small">${ago(S.lastActive(s.id))}</td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${codeCell(s)} <button class="btn ghost pin">Новый пароль</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">В архив</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
   renderClassRank();
 }
 function renderClassRank(){
@@ -325,13 +335,19 @@ function renderClassRank(){
 $('cCard').onclick=async e=>{
   const t=e.target;
   if(t.id==='cDel'){const k=S.klass(curClass);if(k&&confirm(`Перенести класс ${clsName(k)} в архив? Ученики и результаты сохранятся, класс скроется из списков.`)){S.archiveClass(k.id);curClass=null;renderStudents();}return;}
-  if(t.id==='bulkAdd'){const names=$('bulk').value.split('\n').map(x=>x.trim()).filter(Boolean);if(!names.length)return;for(const n of names){const s=S.addStudent(n,null,curClass);if(s){newCodes[s.id]=await S.setStudentPin(s.id);showCode(s.id,true);}}renderStudents();return;}
+  if(t.id==='addOpen'){addOpen=!addOpen;shareOpen=false;renderStudents();return;}
+  if(t.id==='addCancel'){addOpen=false;renderStudents();return;}
+  if(t.id==='shareOpen'){shareOpen=!shareOpen;addOpen=false;renderStudents();return;}
+  if(t.id==='shareClose'){shareOpen=false;renderStudents();return;}
+  if(t.id==='shareCopy'){const u=$('shareUrl');u.select();try{await navigator.clipboard.writeText(u.value);t.textContent='Скопировано';}catch(e){document.execCommand('copy');t.textContent='Скопировано';}return;}
+  if(t.id==='pwToggle'){pwVis=!pwVis;renderStudents();return;}
+  if(t.id==='bulkAdd'){const names=$('bulk').value.split('\n').map(x=>x.trim().replace(/\s+/g,' ')).filter(Boolean);if(!names.length)return;for(const n of names){const s=S.addStudent(n,null,curClass);if(s){const g=guessGender(n);if(g)S.updateStudent(s.id,{gender:g});newCodes[s.id]=await S.setStudentPin(s.id);}}addOpen=false;renderStudents();return;}
   if(t.id==='printCodes'){const k=curClass==='-'?null:S.klass(curClass);printCodes([{title:clsName(k),list:S.studentsOf(k?k.id:null)}]);return;}
   if(t.id==='printAll'){const gs=S.classes().map(c=>({title:clsName(c),list:S.studentsOf(c.id)}));const lo=S.studentsOf(null);if(lo.length)gs.push({title:'Без класса',list:lo});printCodes(gs);return;}
   const tr=t.closest('[data-id]');if(!tr)return;const id=tr.dataset.id,s=S.student(id);if(!s)return;
   if(t.closest('.eye')){if(!t.closest('.eye').disabled){showCode(id,!shown[id]);paintCode(id);}return;}
   if(t.classList.contains('pin')){newCodes[id]=await S.setStudentPin(id);showCode(id,true);renderStudents();return;}
-  if(t.classList.contains('sv')){S.updateStudent(id,{name:tr.querySelector('.nm').value,classId:tr.querySelector('.cl').value||null});renderStudents();return;}
+  if(t.classList.contains('sv')){S.updateStudent(id,{name:tr.querySelector('.nm').value,classId:tr.querySelector('.cl').value||null,gender:tr.querySelector('.gn').value});renderStudents();return;}
   if(t.classList.contains('del')&&confirm(`Перенести ученика «${s.name}» в архив? Результаты сохранятся.`)){S.archiveStudent(id);delete newCodes[id];if(sel===id)sel=null;renderStudents();}
 };
 

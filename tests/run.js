@@ -138,9 +138,9 @@ function makeCtx(xr){
   const stu=St.addStudent('Аня Петрова',null,k6.id);const pin=await St.setStudentPin(stu.id);
   ok(stu.grade===6&&/^\d{4}$/.test(pin)&&St.student(stu.id).pinHash,'ученик добавлен в 6А, код из 4 цифр, хранится только хэш');
   app.renderList();
-  doc("selClass").value=k6.id;doc("selClass").onchange();doc("selStu").value=stu.id;doc("selStu").onchange();
+  doc("selClass").value=k6.id;doc("selClass").onchange();const num=St.numOf(stu);ok(num===1,"номер ученика в классе = 1");doc("selNum").value=String(num);
   doc("selPin").value='0000'===pin?'1111':'0000';await doc("login").onsubmit({preventDefault(){}});
-  ok(doc("ready").hidden&&/Неверный код/.test(doc("pickErr").textContent),'неверный код не пускает');
+  ok(doc("ready").hidden&&/Неверный номер или пароль/.test(doc("pickErr").textContent),'неверный пароль не пускает, причина не раскрывается');
   doc("selPin").value=pin;await doc("login").onsubmit({preventDefault(){}});
   ok(!C.sb.document.getElementById("ready").hidden&&C.sb.document.getElementById("who").textContent==="Аня Петрова"&&C.sb.document.getElementById("go").textContent==="Начать на экране","ученик выбран, кнопка «Начать на экране»");
   await app.go();
