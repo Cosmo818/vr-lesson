@@ -470,6 +470,7 @@ def merge_in(c, inc, role, ip='', principal=None):
     def deny(kind):
         rej[kind] = rej.get(kind, 0) + 1
     hard = {r[0] for r in c.execute('SELECT id FROM purged')}  # жёсткие надгробия: присланное клиентом purged не читаем никогда (Б74.2)
+    inc_ids = set()
     tomb = {}  # мягкие надгробия учеников и классов: применяются после lww, как в js/store.js merge (А11)
     if teacher:
         inc_ids = {str(x['id']) for key in ('students', 'classes') for x in (inc.get(key) or []) if isinstance(x, dict) and x.get('id')}
@@ -605,6 +606,10 @@ def merge_in(c, inc, role, ip='', principal=None):
         for k, ts in m.items():
             if num(ts) >= reset:
                 c.execute('INSERT INTO disc(sid, k, ts) VALUES(?, ?, ?) ON CONFLICT(sid, k) DO UPDATE SET ts = CASE WHEN ts < ? THEN excluded.ts ELSE min(ts, excluded.ts) END', (sid, k, num(ts), reset))
+    for k in inc_ids:  # запись пришла после надгробия неизвестного id (оно лежит в deleted): то же правило, что у клиента (del[id] > updated -> архив)
+        row = c.execute('SELECT ts FROM deleted WHERE id = ?', (k,)).fetchone()
+        if row and k not in hard:
+            tomb[k] = max(tomb.get(k, 0), num(row[0]))
     for k, ts in tomb.items():  # после lww: надгробие новее победителя и запись не в архиве -> архив с updated = ts
         for table, kind in (('students', 'student'), ('classes', 'class')):
             row = c.execute('SELECT updated, doc, status FROM %s WHERE id = ?' % table, (k,)).fetchone()

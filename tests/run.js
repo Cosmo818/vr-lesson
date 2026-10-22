@@ -604,15 +604,16 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
         ['надгробие равно updated',[10,'D'],null,10,0,['D','active',10]],['уже в архиве, надгробие новее',[10,'D','archived'],null,20,0,['D','archived',10]],
         ['возврат после надгробия, надгробие повторно',[50,'D'],null,20,0,['D','active',50]],['новая запись и надгробие',null,[20,'I'],25,0,['I','archived',25]],
         ['присланное старее базы, надгробие между',[30,'D'],[10,'I'],20,0,['D','active',30]],['присланное архивное новее базы, надгробие старее',[10,'D'],[20,'I','archived'],15,0,['I','archived',20]],
+        ['надгробие неизвестного id раньше записи',null,[20,'I'],25,0,['I','archived',25],1],
         ['id в purged',[10,'D'],[20,'I'],30,1,null]];
       let n=0,allOk=true,diffs=[];
-      for(const kind of['students','classes'])for(const [nm,D,I,T,hard,exp] of CASES){
-        if(kind==='classes'&&![0,3,5,12].includes(CASES.findIndex(c=>c[0]===nm)))continue;
+      for(const kind of['students','classes'])for(const [nm,D,I,T,hard,exp,early] of CASES){
         const id='eq'+(++n)+'-'+kind[0]+Date.now().toString(36);
         if(hard)purge(id);
         const d=D&&mk(kind,id,D[1],D[0],D[2]),i=I&&mk(kind,id,I[1],I[0],I[2]);
+        if(early)await post('teach-secret',{deleted:{[id]:u(T)}}); // надгробие неизвестного id записывается в deleted, запись приходит позже
         if(d)await post('teach-secret',{[kind]:[d]});
-        const sv=await post('teach-secret',{[kind]:i?[i]:[],deleted:T!==null?{[id]:u(T)}:{}});
+        const sv=await post('teach-secret',{[kind]:i?[i]:[],deleted:T!==null&&!early?{[id]:u(T)}:{}});
         const SA={students:[],classes:[],deleted:{},purged:hard?{[id]:1}:{}};if(d)SA[kind]=[d];
         const SB={[kind]:i?[i]:[],deleted:T!==null?{[id]:u(T)}:{}};
         const cl=V0.Store.merge(SA,SB)[kind].find(x=>x.id===id),sr=sv.state[kind].find(x=>x.id===id);
