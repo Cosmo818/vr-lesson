@@ -15,7 +15,8 @@ const fmt=ts=>ts?new Date(ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-dig
 /* ---------- общие помощники ---------- */
 function say(text,bad){const m=$('msg');m.textContent=text;m.hidden=!text;m.className='note'+(bad?' err':'');}
 function secErr(id,text){const e=$(id);e.textContent=text||'';e.hidden=!text;}
-function lock(text){S.account.clear();$('app').hidden=true;$('lock').hidden=false;$('lockErr').textContent=text||'';}
+/* вход у нас один — в кабинете (teacher.html); здесь только перенаправляем */
+function lock(text,stay){S.account.clear();$('app').hidden=true;$('lock').hidden=false;$('lockErr').textContent=text||'';if(!stay)location.replace('teacher.html?next=admin');}
 /* ответ API: сессия закончилась → вход; иначе текст ошибки */
 function bad(r,errId){
   if(r.data&&r.data.expired){lock('Сессия закончилась. Войдите снова.');return true;}
@@ -26,6 +27,7 @@ function bad(r,errId){
 async function safe(name,errId,fn){try{await fn();}catch(e){secErr(errId,'Раздел «'+name+'» временно недоступен.');try{console.log(name,e);}catch(_){}}}
 function dialog(title,body,okText){
   return new Promise(res=>{
+    for(const old of document.querySelectorAll('.shade'))old.remove();/* одно окно за раз: старый код не остаётся под новым */
     const sh=el('div',null,{class:'shade'}),d=el('div',null,{class:'dlg'});
     d.appendChild(el('h2',title));d.appendChild(body);
     const row=el('div',null,{class:'row'}),ok=el('button',okText||'Готово',{class:'btn'}),no=el('button',okText===null?'Закрыть':'Отмена',{class:'btn ghost'});
@@ -108,7 +110,7 @@ async function makeInvite(){
     const body={role,school};
     if(role==='director'){const pw=el('input',null,{type:'password',autocomplete:'current-password'});if(!await dialog('Подтвердите своим паролем',labelled('Ваш пароль',pw),'Подтвердить'))return;body.password=pw.value;}
     const r=await S.admin('invite.create',body);if(bad(r,'invErr'))return;
-    await showCode('Код приглашения',r.data.code,'Действует 7 дней, один раз. Человек вводит его на странице входа («У меня код приглашения»), задаёт логин и пароль.');loadInvites();
+    await showCode('Код приглашения: '+(role==='director'?'директор':role==='expert'?'специалист':'учитель')+' · '+schoolName(school),r.data.code,'Действует 7 дней, один раз. Человек вводит его на странице входа («У меня код приглашения»), задаёт логин и пароль.');loadInvites();
   });
 }
 
@@ -140,17 +142,32 @@ async function deviceCode(){
 async function loadSchools(){
   await safe('Школы','shErr',async()=>{
     secErr('shErr','');const o=await S.options({level:'school'});if(bad(o,'shErr'))return;schoolsCache=o.data.items;
-    const t=$('shTbl');t.textContent='';const h=el('tr');for(const c of['Школа','Регион','Код'])h.appendChild(el('th',c));t.appendChild(h);
-    for(const it of o.data.items){const tr=el('tr');tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.region||'—'));tr.appendChild(el('td',it.id));t.appendChild(tr);}
+    const t=$('shTbl');t.textContent='';const h=el('tr');for(const c of['Школа','Регион','Район','Код',''])h.appendChild(el('th',c));t.appendChild(h);
+    for(const it of o.data.items){const tr=el('tr');tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.region||'—'));tr.appendChild(el('td',it.district||'—'));tr.appendChild(el('td',it.id));
+      const td=el('td');if(isSuper()){const b=el('button','Изменить',{class:'btn ghost'});b.onclick=()=>editSchool(it);td.appendChild(b);}tr.appendChild(td);t.appendChild(tr);}
     for(const id of['invSchool','devSchool'])VR.regions.fill($(id),o.data.items,'— выберите школу —',true);
     if(o.data.items.length===1){for(const id of['invSchool','devSchool'])$(id).value=o.data.items[0].id;}
+    if(!$('app').hidden)fillClosedSchools();
   });
+}
+async function editSchool(it){
+  const n=el('input',null,{maxlength:'80',value:it.name}),rg=el('input',null,{maxlength:'60',value:it.region||''}),ds=el('input',null,{maxlength:'60',value:it.district||''});
+  const b=el('div');b.appendChild(labelled('Название',n));b.appendChild(labelled('Регион',rg));b.appendChild(labelled('Район',ds));
+  if(!await dialog('Школа',b,'Сохранить'))return;
+  const r=await S.admin('school.update',{id:it.id,name:n.value,region:rg.value.trim(),district:ds.value.trim()});if(bad(r,'shErr'))return;
+  say('Сохранено.');await refreshAll();
+}
+/* все списки школ и фильтров — на лету, без перезагрузки страницы */
+async function refreshAll(){
+  await loadSchools();
+  await safe('Фильтр','peopleErr',async()=>{await casc.refresh();});
+  loadInvites();loadDevices();
 }
 async function addSchool(){
   await safe('Школы','shErr',async()=>{
     secErr('shErr','');const name=$('shName').value.trim();if(!name){secErr('shErr','Введите название школы.');return;}
-    const r=await S.admin('school.create',{name,region:$('shReg').value.trim()});if(bad(r,'shErr'))return;
-    $('shName').value='';$('shReg').value='';say('Школа добавлена.');loadSchools();casc.init();
+    const r=await S.admin('school.create',{name,region:$('shReg').value.trim(),district:$('shDist').value.trim()});if(bad(r,'shErr'))return;
+    $('shName').value='';$('shReg').value='';$('shDist').value='';say('Школа добавлена.');await refreshAll();
   });
 }
 
@@ -166,16 +183,17 @@ async function loadClosed(){
   });
 }
 function fillClosedSchools(){
-  const s=$('clSchool');s.textContent='';
+  const s=$('clSchool'),old=$('clSchool').value;s.textContent='';
   const ids=isSuper()?schoolsCache.map(x=>[x.id,x.name]):S.account.roles().filter(r=>r.role==='expert').map(r=>[r.school,schoolName(r.school)]);
   for(const [v,n] of ids)s.appendChild(el('option',n,{value:v}));
+  if(old&&ids.some(x=>x[0]===old))s.value=old;
 }
 
 /* ---------- вход и запуск ---------- */
 function show(){
   $('lock').hidden=true;$('app').hidden=false;
   const roles=S.account.roles();
-  if(!isSuper()&&!isDir()&&!isExp()){lock('Эта страница для директора, специалиста и администратора. Откройте кабинет учителя.');return;}
+  if(!isSuper()&&!isDir()&&!isExp()){lock('Эта страница для директора, специалиста и администратора. Откройте кабинет учителя.',true);return;}
   const onlyExp=!isSuper()&&!isDir();
   $('who').textContent=(S.account.who()||'')+' · '+(isSuper()?'администратор':isDir()?'директор':'специалист');
   for(const id of['s-people','s-invites','s-devices'])$(id).hidden=onlyExp;
@@ -186,29 +204,26 @@ function show(){
   if(onlyExp){fillClosedSchools();return;}
   loadSchools().then(()=>safe('Фильтр','peopleErr',async()=>{await casc.init();})).then(()=>{loadInvites();loadDevices();fillClosedSchools();});
 }
-async function enter(r,errEl){
-  if(r.ok||r.status===200){show();}else $(errEl).textContent=r.msg||(r.data&&r.data.error)||'Не получилось.';
-}
 function bind(){
-  $('loginForm').onsubmit=async e=>{e.preventDefault();$('lockErr').textContent='Проверяю…';const r=await S.account.login(S.base(),$('lgn').value,$('lgp').value);$('lgp').value='';enter(r,'lockErr');};
-  $('actForm').onsubmit=async e=>{e.preventDefault();$('lockErr').textContent='Проверяю…';const r=await S.activate({code:$('acode').value,login:$('alog').value,password:$('apw').value,name:$('aname').value});$('apw').value='';enter(r,'lockErr');};
-  $('toAct').onclick=e=>{e.preventDefault();$('loginForm').hidden=true;$('actForm').hidden=false;$('lockErr').textContent='';};
-  $('toLogin').onclick=e=>{e.preventDefault();$('actForm').hidden=true;$('loginForm').hidden=false;$('lockErr').textContent='';};
-  $('out').onclick=async e=>{e.preventDefault();await S.account.logout();lock('');};
+  $('out').onclick=async e=>{e.preventDefault();await S.account.logout();location.replace('teacher.html');};
   $('kinds').onclick=e=>{const b=e.target.closest('[data-k]');if(!b)return;tab=b.dataset.k;page=1;for(const x of $('kinds').children)x.classList.toggle('on',x===b);loadPeople();};
   $('prev').onclick=()=>{if(page>1){page--;loadPeople();}};$('next').onclick=()=>{page++;loadPeople();};
   let tm=null;$('fQ').oninput=()=>{clearTimeout(tm);tm=setTimeout(()=>{page=1;loadPeople();},300);};
   $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
   $('devLimGo').onclick=async()=>{const r=await S.admin('school.update',{id:$('devSchool').value,device_limit:$('devLim').value});if(!bad(r,'devErr')){say('Лимит сохранён.');loadDevices();}};
-  casc=VR.regions.cascade({region:$('fRegion'),school:$('fSchool'),cls:$('fClass'),teacher:$('fTeacher')},()=>{page=1;loadPeople();});
+  casc=VR.regions.cascade({region:$('fRegion'),district:$('fDistrict'),school:$('fSchool'),cls:$('fClass'),teacher:$('fTeacher')},()=>{page=1;loadPeople();});
 }
+/* вернулись на вкладку — обновляем списки (директор мог добавить школу или приглашение с другого устройства) */
+let lastFocus=0;
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'||$('app').hidden||Date.now()-lastFocus<15000)return;lastFocus=Date.now();if(isSuper()||isDir())refreshAll().catch(()=>{});else if(isExp())fillClosedSchools();});
 async function start(){
   bind();
   if(!S.base()){$('lockMsg').textContent='Откройте эту страницу с адреса вашего сервера (например, https://vrklass.ru/admin.html).';return;}
   const on=await S.account.probe(S.base());
-  if(on===false){$('lockMsg').textContent='Учётные записи на сервере ещё не включены.';$('loginForm').hidden=true;return;}
+  if(on===false){$('lockMsg').textContent='Учётные записи на сервере ещё не включены.';return;}
   if(on===null)$('lockErr').textContent='Нет связи с сервером. Проверьте сеть и обновите страницу.';
   if(S.account.token()){const r=await S.me();if(r.status===200){show();return;}S.account.clear();}
+  if(on!==null)location.replace('teacher.html?next=admin');
 }
 /* запуск — в конце файла */
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();

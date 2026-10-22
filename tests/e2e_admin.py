@@ -51,9 +51,10 @@ def clear_throttle():
 def enter(pg, login, pw):
     pg.goto('http://127.0.0.1:8776/index.html')
     pg.evaluate('()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem("vrlesson.server",JSON.stringify({url:"http://127.0.0.1:8777",key:""}))}')
-    pg.goto('http://127.0.0.1:8776/admin.html'); pg.wait_for_timeout(700)
+    pg.goto('http://127.0.0.1:8776/admin.html'); pg.wait_for_timeout(1500)  # без входа страница сама ведёт на единый вход
+    assert 'teacher.html' in pg.url, pg.url
     clear_throttle()
-    pg.fill('#lgn', login); pg.fill('#lgp', pw); pg.click('#loginForm .btn'); pg.wait_for_timeout(2200)
+    pg.fill('#lgn', login); pg.fill('#lgp', pw); pg.click('#acctForm .btn'); pg.wait_for_timeout(2800)
 
 
 try:
@@ -61,9 +62,9 @@ try:
         b = p.chromium.launch(); pg = b.new_page(); errs = []
         pg.on('pageerror', lambda e: errs.append(str(e))); pg.on('dialog', lambda d: d.accept())
         enter(pg, 'dir.a', 'не-тот-пароль-1')
-        ok(pg.is_visible('#lock') and 'Неверный' in pg.inner_text('#lockErr'), 'неверный пароль: сообщение, страница закрыта')
+        ok(pg.is_visible('#lock') and 'Неверн' in pg.inner_text('#pinErr') and 'teacher.html' in pg.url, 'неверный пароль: сообщение на едином входе')
         enter(pg, 'dir.a', 'Pass-dirA-2026-Zq')
-        ok(pg.is_visible('#app') and not pg.is_visible('#lock'), 'директор входит')
+        ok('admin.html' in pg.url and pg.is_visible('#app') and not pg.is_visible('#lock'), 'директор входит единым входом и попадает в администрирование (%s)' % pg.url)
         ok(not pg.is_visible('#s-schools'), 'директору раздел «Школы» не показан')
         ok(pg.inner_text('#pager').startswith('Страница 1 из 41') and '2001' in pg.inner_text('#pager'), 'ученики: 2001 запись, 41 страница (%s)' % pg.inner_text('#pager'))
         ok(pg.locator('#tbl tr').count() == 51, 'на странице 50 строк + заголовок')
@@ -95,9 +96,23 @@ try:
         pg2 = b.new_page(); pg2.on('pageerror', lambda e: errs.append(str(e)))
         pg2.goto('http://127.0.0.1:8776/index.html')
         pg2.evaluate('()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem("vrlesson.server",JSON.stringify({url:"http://127.0.0.1:8777",key:""}))}')
-        pg2.goto('http://127.0.0.1:8776/admin.html'); pg2.wait_for_timeout(600); clear_throttle()
-        pg2.click('#toAct'); pg2.fill('#acode', code); pg2.fill('#alog', 'new.teacher'); pg2.fill('#aname', 'Новая'); pg2.fill('#apw', 'Long-Pass-2026-Xy'); pg2.click('#actForm .btn'); pg2.wait_for_timeout(1500)
-        ok(pg2.is_visible('#lock') and 'администратора' in pg2.inner_text('#lockErr'), 'учитель по приглашению активирован, но админку не получает')
+        pg2.goto('http://127.0.0.1:8776/admin.html'); pg2.wait_for_timeout(1500); clear_throttle()
+        pg2.click('#toInv'); pg2.fill('#icode', code); pg2.fill('#iname', 'Новая'); pg2.fill('#ilog', 'new.teacher'); pg2.fill('#ipw', 'Long-Pass-2026-Xy'); pg2.click('#invForm .btn'); pg2.wait_for_timeout(1500)
+        pg2.wait_for_timeout(1500)
+        ok('teacher.html' in pg2.url and pg2.is_visible('#app'), 'учитель по приглашению активирован и сразу попадает в кабинет учителя (%s)' % pg2.url)
+        # два приглашения подряд: разные коды и подписи роли; регистрация на странице учителя
+        pg.select_option('#invRole', 'teacher'); pg.click('#invGo'); pg.wait_for_timeout(900)
+        t1 = pg.inner_text('.code').strip(); h1 = pg.inner_text('.dlg h2'); pg.click('.dlg >> text=Закрыть'); pg.wait_for_timeout(300)
+        pg.select_option('#invRole', 'expert'); pg.click('#invGo'); pg.wait_for_timeout(900)
+        t2 = pg.inner_text('.code').strip(); h2 = pg.inner_text('.dlg h2'); pg.click('.dlg >> text=Закрыть'); pg.wait_for_timeout(300)
+        ok(t1 != t2 and 'учитель' in h1 and 'специалист' in h2, 'два приглашения подряд: разные коды, роль в заголовке (%s / %s)' % (h1, h2))
+        pg4 = b.new_page(); pg4.on('pageerror', lambda e: errs.append(str(e)))
+        pg4.goto('http://127.0.0.1:8776/index.html')
+        pg4.evaluate('()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem("vrlesson.server",JSON.stringify({url:"http://127.0.0.1:8777",key:""}))}')
+        pg4.goto('http://127.0.0.1:8776/teacher.html'); pg4.wait_for_timeout(900); clear_throttle()
+        ok(pg4.is_visible('#toInv'), 'на странице учителя есть «У меня код приглашения»')
+        pg4.click('#toInv'); pg4.fill('#icode', t1); pg4.fill('#iname', 'Вторая'); pg4.fill('#ilog', 'second.teacher'); pg4.fill('#ipw', 'Long-Pass-2026-Xy'); pg4.click('#invForm .btn'); pg4.wait_for_timeout(1800)
+        ok(pg4.is_visible('#app'), 'регистрация по коду на странице учителя открывает кабинет')
         ok(sqlite3.connect(os.path.join(tmp, 'vrlesson.db')).execute("SELECT COUNT(*) FROM users WHERE login = 'new.teacher'").fetchone()[0] == 1, 'учётка создана по коду')
         pg2.close()
         # суперадмин
@@ -107,8 +122,14 @@ try:
         ok(pg.locator('#fSchool option').count() == 2, 'регион «Юг» → одна школа в списке')
         pg.select_option('#fSchool', 's-b'); pg.wait_for_timeout(900)
         ok('Чужой Б' in pg.inner_text('#tbl') and '2001' not in pg.inner_text('#pager'), 'фильтр по школе показывает её учеников')
-        pg.fill('#shName', 'Школа В'); pg.fill('#shReg', 'Запад'); pg.click('#shGo'); pg.wait_for_timeout(1200)
+        pg.fill('#shName', 'Школа В'); pg.fill('#shReg', 'Запад'); pg.fill('#shDist', 'Северный'); pg.click('#shGo'); pg.wait_for_timeout(1200)
         ok('Школа В' in pg.inner_text('#shTbl'), 'суперадмин добавил школу')
+        ok('Северный' in pg.inner_text('#shTbl'), 'у школы есть район')
+        ok('Школа В' in pg.locator('#invSchool').inner_text() and 'Школа В' in pg.locator('#devSchool').inner_text(), 'новая школа сразу в списках приглашений и шлемов без перезагрузки')
+        ok('Школа В' in pg.locator('#clSchool').inner_text(), 'новая школа сразу в списке закрытых результатов без перезагрузки')
+        pg.select_option('#fRegion', 'Запад'); pg.wait_for_timeout(900)
+        ok(pg.locator('#fDistrict option').count() == 2 and pg.locator('#fSchool option').count() == 2, 'фильтр по району: регион «Запад» → район «Северный» → школа В')
+        pg.select_option('#fRegion', ''); pg.wait_for_timeout(900)
         # отказ одного раздела не ломает остальные
         pg.route('**/api/admin/device.list', lambda r: r.fulfill(status=500, body='{"error":"сбой"}', content_type='application/json'))
         pg.select_option('#devSchool', 's-a'); pg.wait_for_timeout(900)
@@ -132,7 +153,8 @@ try:
         pg.unroute('**/api/admin/device.list')
         pg.route('**/api/accounts*', lambda r: r.fulfill(status=401, body='{"error":"x"}', content_type='application/json'))
         pg.click('[data-k=teachers]'); pg.wait_for_timeout(900)
-        ok(pg.is_visible('#lock') and 'Сессия' in pg.inner_text('#lockErr'), '401: возврат ко входу с сообщением')
+        pg.wait_for_timeout(1200)
+        ok('teacher.html' in pg.url, '401: возврат к единому входу (%s)' % pg.url)
         ok(not errs, 'нет ошибок JS на странице: %s' % errs[:2])
         b.close()
 finally:

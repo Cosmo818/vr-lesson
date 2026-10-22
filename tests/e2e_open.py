@@ -44,11 +44,8 @@ SRV = 'http://127.0.0.1:8789'; WEB = 'http://127.0.0.1:8788'
 def login(pg, who, pw, page='teacher.html', sel='#app'):
     pg.goto(WEB + '/index.html')
     pg.evaluate('u=>{localStorage.clear();sessionStorage.clear();localStorage.setItem("vrlesson.server",JSON.stringify({url:u,key:""}))}', SRV)
-    pg.goto(WEB + '/' + page); pg.wait_for_timeout(900); clear()
-    if page == 'teacher.html':
-        pg.fill('#lgn', who); pg.fill('#lgp', pw); pg.click('#acctForm .btn')
-    else:
-        pg.fill('#lgn', who); pg.fill('#lgp', pw); pg.press('#lgp', 'Enter')
+    pg.goto(WEB + '/' + ('teacher.html?next=admin' if page == 'admin.html' else page)); pg.wait_for_timeout(900); clear()
+    pg.fill('#lgn', who); pg.fill('#lgp', pw); pg.click('#acctForm .btn')
     pg.wait_for_timeout(2200)
     return pg.is_visible(sel)
 

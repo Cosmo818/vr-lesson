@@ -43,11 +43,9 @@ th{color:var(--muted);font-weight:600;font-size:13px}
 <div class="wrap">
   <div id="lock" class="card">
     <h1>Администрирование</h1>
-    <p class="muted" id="lockMsg">Войдите по логину и паролю директора или администратора.</p>
-    <form id="loginForm"><label class="bdl">Логин<input id="lgn" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username"></label><label class="bdl">Пароль<input id="lgp" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password"></label><div class="row"><button class="btn">Войти</button><a href="#" id="toAct">У меня код приглашения</a></div></form>
-    <form id="actForm" hidden><label class="bdl">Код приглашения или сброса<input id="acode" autocapitalize="characters" autocomplete="off" spellcheck="false"></label><label class="bdl">Ваше имя (для приглашения)<input id="aname" autocomplete="name"></label><label class="bdl">Логин (для приглашения, латиницей)<input id="alog" autocapitalize="none" autocomplete="username" spellcheck="false"></label><label class="bdl">Новый пароль (не короче 10 знаков)<input id="apw" type="password" inputmode="text" autocomplete="new-password"></label><div class="row"><button class="btn">Активировать</button><a href="#" id="toLogin">Назад ко входу</a></div></form>
+    <p class="muted" id="lockMsg">Вход один для всех — на странице кабинета.</p>
     <p id="lockErr" class="muted"></p>
-    <p><a href="teacher.html">← В кабинет учителя</a></p>
+    <p><a class="btn" href="teacher.html?next=admin">Войти</a></p>
   </div>
 
   <div id="app" hidden>
@@ -59,6 +57,7 @@ th{color:var(--muted);font-weight:600;font-size:13px}
       <div class="card">
         <div class="row">
           <label class="small muted">Регион<br><select id="fRegion"></select></label>
+          <label class="small muted">Район<br><select id="fDistrict"></select></label>
           <label class="small muted">Школа<br><select id="fSchool"></select></label>
           <label class="small muted">Класс<br><select id="fClass"></select></label>
           <label class="small muted">Учитель<br><select id="fTeacher"></select></label>
@@ -106,7 +105,7 @@ th{color:var(--muted);font-weight:600;font-size:13px}
     <section id="s-schools" hidden>
       <h2>Школы</h2>
       <div class="card">
-        <div class="row"><label class="small muted">Название<br><input id="shName" maxlength="80"></label><label class="small muted">Регион<br><input id="shReg" maxlength="60"></label><button class="btn" id="shGo">Добавить школу</button></div>
+        <div class="row"><label class="small muted">Название<br><input id="shName" maxlength="80"></label><label class="small muted">Регион<br><input id="shReg" maxlength="60"></label><label class="small muted">Район<br><input id="shDist" maxlength="60"></label><button class="btn" id="shGo">Добавить школу</button></div>
         <div id="shErr" class="note err" hidden></div>
         <div class="scroll"><table id="shTbl"></table></div>
       </div>

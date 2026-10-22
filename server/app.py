@@ -262,6 +262,13 @@ def migrate_v4(c):
             status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')), created INTEGER, decided_by TEXT, decided INTEGER)''')
         c.execute('CREATE INDEX IF NOT EXISTS uploads_school ON uploads(school, status)')
         c.execute('''CREATE TABLE IF NOT EXISTS pair_codes(code_hash TEXT PRIMARY KEY, school TEXT NOT NULL, name TEXT, created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER)''')
+        if 'closed' not in {r[1] for r in c.execute('PRAGMA table_info(results)')}:  # закрытые результаты (Б56): отдельная колонка с индексом вместо разбора JSON на каждый запрос
+            c.execute('ALTER TABLE results ADD COLUMN closed INTEGER NOT NULL DEFAULT 0')
+            c.execute("UPDATE results SET closed = 1 WHERE COALESCE(json_extract(doc, '$.closed'), 0) = 1")
+        c.execute('CREATE INDEX IF NOT EXISTS results_closed ON results(closed, ts)')
+        c.execute('CREATE INDEX IF NOT EXISTS results_ts ON results(ts)')
+        if 'district' not in {r[1] for r in c.execute('PRAGMA table_info(schools)')}:
+            c.execute("ALTER TABLE schools ADD COLUMN district TEXT NOT NULL DEFAULT ''")
         if 'device_limit' not in {r[1] for r in c.execute('PRAGMA table_info(schools)')}:
             c.execute('ALTER TABLE schools ADD COLUMN device_limit INTEGER NOT NULL DEFAULT 20')
         c.execute('''CREATE TABLE IF NOT EXISTS login_fail(k TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0, until INTEGER NOT NULL DEFAULT 0, last INTEGER)''')
@@ -278,6 +285,7 @@ def migrate_v4(c):
         now = int(time.time() * 1000)
         c.execute("INSERT OR IGNORE INTO schools(id, name, region, status, network, created, updated) VALUES(?, 'Школа по умолчанию', '', 'active', '', ?, ?)", (DEFAULT_SCHOOL, now, now))
         for ddl in ('CREATE INDEX IF NOT EXISTS schools_region ON schools(region, status)',
+                    'CREATE INDEX IF NOT EXISTS schools_district ON schools(region, district)',
                     'CREATE INDEX IF NOT EXISTS user_roles_school ON user_roles(school, role, status)',
                     'CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)',
                     'CREATE INDEX IF NOT EXISTS invites_school ON invites(school)',
@@ -526,8 +534,8 @@ def merge_in(c, inc, role, ip='', principal=None):
         if (user or dev) and not sid_in_scope(c, sc, r['sid'], cache):
             deny('results')
             continue
-        c.execute('INSERT OR IGNORE INTO results(id, sid, subj, score, total, ts, doc) VALUES(?, ?, ?, ?, ?, ?, ?)',
-                  (r['id'], r['sid'], str(r.get('subj', '')), num(r.get('score')), num(r.get('total')), num(r.get('ts')), json.dumps(r, ensure_ascii=False)))
+        c.execute('INSERT OR IGNORE INTO results(id, sid, subj, score, total, ts, doc, closed) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+                  (r['id'], r['sid'], str(r.get('subj', '')), num(r.get('score')), num(r.get('total')), num(r.get('ts')), json.dumps(r, ensure_ascii=False), 1 if r.get('closed') else 0))
     for f in inc.get('feedback') or []:
         if not isinstance(f, dict) or not f.get('id') or f['id'] in deleted:
             continue
@@ -567,6 +575,13 @@ def get_settings(c):
     return json.loads(row[0]) if row else {}
 
 
+def open_results_sql(c):
+    """Условие «не закрытый результат»: по колонке closed, а для базы до миграции — по JSON."""
+    if any(r[1] == 'closed' for r in c.execute('PRAGMA table_info(results)')):
+        return '+closed = 0'
+    return "COALESCE(json_extract(doc, '$.closed'), 0) = 0"
+
+
 def state(c, hide_pins=False, principal=None):
     """Состояние для ответа. hide_pins: ключ шлема не получает видимые коды учеников (pinView).
     principal-пользователь получает только свой срез (scope): классы, их учеников, результаты и открытия этих учеников; тесты, отзывы, надгробия — общие."""
@@ -579,31 +594,48 @@ def state(c, hide_pins=False, principal=None):
     if sc['all']:
         classes = [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')]
         students = [stud(r[0]) for r in c.execute('SELECT doc FROM students')]
-        results = [json.loads(r[0]) for r in c.execute("SELECT doc FROM results WHERE COALESCE(json_extract(doc, '$.closed'), 0) = 0 ORDER BY ts")]
+        results = [json.loads(r[0]) for r in c.execute('SELECT doc FROM results WHERE %s ORDER BY ts' % open_results_sql(c))]
         disc = {}
         for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
             disc.setdefault(sid, {})[k] = ts
         settings = get_settings(c)
     else:
-        classes, ok_cls = [], set()
-        for cid, school, tid, raw in c.execute('SELECT id, school, teacherId, doc FROM classes'):
-            if class_in_scope(sc, school, tid):
-                ok_cls.add(cid)
-                classes.append(json.loads(raw))
-        students, ok_st = [], set()
-        for sid, raw in c.execute('SELECT id, doc FROM students'):
-            d = json.loads(raw)
-            if (d.get('classId') in ok_cls) if d.get('classId') else (d.get('school') in sc['dir']):
-                ok_st.add(sid)
-                students.append(stud(raw))
-        results = []
-        for sid, raw in c.execute("SELECT sid, doc FROM results WHERE COALESCE(json_extract(doc, '$.closed'), 0) = 0 ORDER BY ts"):
-            if sid in ok_st:
-                results.append(json.loads(raw))
-        disc = {}
-        for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
-            if sid in ok_st:
-                disc.setdefault(sid, {})[k] = ts
+        # выборка по индексам школ пользователя, а не просмотр всей базы (масштаб: десятки тысяч учеников)
+        mine = sorted(sc['dir'] | sc['tch'])
+        classes, ok_cls, students, ok_st, results, disc = [], set(), [], set(), [], {}
+        if mine:
+            ph = ','.join('?' * len(mine))
+            for cid, school, tid, raw in c.execute('SELECT id, school, teacherId, doc FROM classes WHERE school IN (%s)' % ph, mine):
+                if class_in_scope(sc, school, tid):
+                    ok_cls.add(cid)
+                    classes.append(json.loads(raw))
+            seen = set()
+
+            def take(sid, raw):
+                if sid in seen:
+                    return
+                seen.add(sid)
+                d = json.loads(raw)
+                if (d.get('classId') in ok_cls) if d.get('classId') else (d.get('school') in sc['dir']):
+                    ok_st.add(sid)
+                    students.append(stud(raw))
+            for sid, raw in c.execute('SELECT id, doc FROM students WHERE school IN (%s)' % ph, mine):
+                take(sid, raw)
+            cl = sorted(ok_cls)
+            for n in range(0, len(cl), 500):  # ученик, чья школа в записи не совпала со школой класса
+                part = cl[n:n + 500]
+                for sid, raw in c.execute("SELECT id, doc FROM students WHERE json_extract(doc, '$.classId') IN (%s)" % ','.join('?' * len(part)), part):
+                    take(sid, raw)
+            ids = sorted(ok_st)
+            rows = []
+            for n in range(0, len(ids), 500):
+                part = ids[n:n + 500]
+                q = ','.join('?' * len(part))
+                rows += c.execute('SELECT ts, doc FROM results WHERE sid IN (%s) AND %s' % (q, open_results_sql(c)), part).fetchall()
+                for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc WHERE sid IN (%s)' % q, part):
+                    disc.setdefault(sid, {})[k] = ts
+            rows.sort(key=lambda r: r[0] or 0)
+            results = [json.loads(r[1]) for r in rows]
         settings = {k: v for k, v in get_settings(c).items() if k != 'pinHash'}
     return {
         'v': SCHEMA,
@@ -1072,17 +1104,18 @@ def admin_action(c, p, act, b, ip):
             raise AdminError(400, 'Нужны название и код школы вида s-xxxx.')
         if c.execute('SELECT 1 FROM schools WHERE id = ?', (sid,)).fetchone():
             raise AdminError(400, 'Такая школа уже есть.')
-        c.execute('INSERT INTO schools(id, name, region, status, network, created, updated) VALUES(?, ?, ?, ?, ?, ?, ?)', (sid, name, S('region', 60), 'active', '', now, now))
+        c.execute('INSERT INTO schools(id, name, region, district, status, network, created, updated) VALUES(?, ?, ?, ?, ?, ?, ?, ?)', (sid, name, S('region', 60), S('district', 60), 'active', '', now, now))
         audit(c, who, 'school.create', 'school', sid, sid, {'name': name})
         return {'ok': True, 'id': sid}
     if act == 'school.update':
         if rank < 4:
             raise AdminError(403, 'Школы меняет суперадмин.')
-        row = c.execute('SELECT name, region, status FROM schools WHERE id = ?', (S('id'),)).fetchone()
+        row = c.execute('SELECT name, region, status, district FROM schools WHERE id = ?', (S('id'),)).fetchone()
         if not row:
             raise AdminError(404, 'Школы нет.')
         name = S('name').strip() or row[0]
         region = S('region', 60) if 'region' in b else row[1]
+        district = S('district', 60) if 'district' in b else row[3]
         status = b.get('status') if b.get('status') in ('pending', 'active', 'archived') else row[2]
         if S('id') == DEFAULT_SCHOOL and status == 'archived':
             raise AdminError(400, 'Школу по умолчанию архивировать нельзя.')
@@ -1094,7 +1127,7 @@ def admin_action(c, p, act, b, ip):
                 raise AdminError(400, 'Лимит шлемов — число.')
             if not 0 <= lim <= 1000:
                 raise AdminError(400, 'Лимит шлемов — от 0 до 1000.')
-        c.execute('UPDATE schools SET name = ?, region = ?, status = ?, updated = ?, device_limit = ? WHERE id = ?', (name, region, status, now, lim, S('id')))
+        c.execute('UPDATE schools SET name = ?, region = ?, district = ?, status = ?, updated = ?, device_limit = ? WHERE id = ?', (name, region, district, status, now, lim, S('id')))
         audit(c, who, 'school.update', 'school', S('id'), S('id'), {'status': status, 'device_limit': lim})
         return {'ok': True}
     if act in ('role.assign', 'role.remove'):
@@ -1214,7 +1247,7 @@ def admin_action(c, p, act, b, ip):
             if rank >= 4 and not sch or d.get('school') == sch:
                 studs[sid] = d
         out = []
-        for sid, raw in c.execute("SELECT sid, doc FROM results WHERE COALESCE(json_extract(doc, '$.closed'), 0) = 1 ORDER BY ts DESC LIMIT 1000"):
+        for sid, raw in c.execute("SELECT sid, doc FROM results WHERE closed = 1 ORDER BY ts DESC LIMIT 1000"):
             if sid in studs:
                 r = json.loads(raw)
                 out.append({'student': studs[sid].get('name', ''), 'grade': studs[sid].get('grade'), 'test': r.get('testTitle') or '', 'score': r.get('score'), 'total': r.get('total'), 'ts': r.get('ts')})
@@ -1373,9 +1406,15 @@ def options_api(c, p, q):
     if level == 'region':
         regs = sorted({r[0] for r in c.execute('SELECT region FROM schools WHERE id IN (%s)' % ','.join('?' * len(schools)), tuple(schools))} if schools else [])
         return {'items': [{'id': r, 'name': r or 'Без региона'} for r in regs]}
+    if level == 'district':
+        rows = c.execute('SELECT id, region, district FROM schools').fetchall()
+        ds = sorted({d for i, rg, d in rows if i in schools and rg == parent})
+        return {'items': [{'id': d, 'name': d or 'Без района'} for d in ds]}
     if level == 'school':
-        rows = c.execute('SELECT id, name, region, status FROM schools ORDER BY name').fetchall()
-        return {'items': [{'id': i, 'name': n, 'region': rg, 'status': st} for i, n, rg, st in rows if i in schools and (not q.get('parent') or rg == parent)]}
+        dist = q.get('district')
+        dist = None if dist is None else dist[:60]
+        rows = c.execute('SELECT id, name, region, status, district FROM schools ORDER BY name').fetchall()
+        return {'items': [{'id': i, 'name': n, 'region': rg, 'district': d, 'status': st} for i, n, rg, st, d in rows if i in schools and (not q.get('parent') or rg == parent) and (not dist or d == dist)]}
     if level == 'class':
         if parent not in schools:
             return {'items': []}
@@ -1388,7 +1427,7 @@ def options_api(c, p, q):
             return {'items': [{'id': u['id'], 'name': u['name'] or u['login'], 'login': u['login']}]}
         rows = c.execute("SELECT u.id, u.name, u.login FROM users u JOIN user_roles ur ON ur.user_id = u.id WHERE ur.role = 'teacher' AND ur.school = ? AND ur.status = 'active' AND u.status = 'active' ORDER BY u.name", (parent,)).fetchall()
         return {'items': [{'id': i, 'name': n or lg, 'login': lg} for i, n, lg in rows]}
-    raise AdminError(400, 'level: region, school, class или teacher.')
+    raise AdminError(400, 'level: region, district, school, class или teacher.')
 
 
 def accounts_api(c, p, q):
@@ -1406,6 +1445,9 @@ def accounts_api(c, p, q):
         return {'items': [], 'total': 0, 'page': page, 'size': size}
     if q.get('region'):
         rs = {r[0] for r in c.execute('SELECT id FROM schools WHERE region = ?', (q['region'][:60],))}
+        schools = schools & rs
+    if q.get('district'):
+        rs = {r[0] for r in c.execute('SELECT id FROM schools WHERE district = ?', (q['district'][:60],))}
         schools = schools & rs
     if want_school:
         schools = {want_school}
@@ -1526,7 +1568,47 @@ def cli(argv):
             audit(c, who, 'config.openRooms', 'config', 'openRooms', None, {'from': old, 'to': cfg['openRooms']})
         print('Открытые комнаты %s.' % ('включены' if cfg['openRooms'] else 'выключены'))
         return 0
-    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off', file=sys.stderr)
+    if cmd == 'backup' and len(argv) == 2:
+        # согласованный снимок базы «на лету» (backup API SQLite, без остановки сервера) + проверка целостности копии
+        dst = argv[1]
+        tmp = dst + '.part'
+        if os.path.exists(dst):
+            print('Файл уже есть, ничего не делаю: %s' % dst, file=sys.stderr)
+            return 1
+        src = sqlite3.connect(DB_PATH, timeout=30)
+        out = sqlite3.connect(tmp)
+        try:
+            src.backup(out)
+            out.execute('PRAGMA journal_mode=DELETE')  # копия самодостаточна: без -wal/-shm
+            res = out.execute('PRAGMA integrity_check').fetchone()[0]
+            n = out.execute('SELECT COUNT(*) FROM students').fetchone()[0]
+        finally:
+            out.close()
+            src.close()
+        if res != 'ok':
+            os.remove(tmp)
+            print('Снимок повреждён: %s' % res, file=sys.stderr)
+            return 1
+        os.replace(tmp, dst)
+        cfgp = os.path.join(DATA, 'config.json')
+        if os.path.exists(cfgp):
+            with open(cfgp, 'rb') as f, open(dst + '.config', 'wb') as g:
+                g.write(f.read())
+        print('Снимок готов: %s (учеников %d, целостность ok)' % (dst, n))
+        return 0
+    if cmd == 'check' and len(argv) == 2:
+        out = sqlite3.connect('file:%s?mode=ro' % argv[1], uri=True)
+        try:
+            res = out.execute('PRAGMA integrity_check').fetchone()[0]
+            n = out.execute('SELECT COUNT(*) FROM students').fetchone()[0]
+        except sqlite3.DatabaseError as e:
+            print('Снимок не читается: %s' % e, file=sys.stderr)
+            return 1
+        finally:
+            out.close()
+        print('Целостность %s, учеников %d' % (res, n))
+        return 0 if res == 'ok' else 1
+    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | backup <файл> | check <файл>', file=sys.stderr)
     return 2
 
 

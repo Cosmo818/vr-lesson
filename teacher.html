@@ -65,12 +65,14 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
     <p class="muted">Введите пароль учителя.</p>
     <form id="acctForm" class="row" hidden><input id="lgn" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="Логин"><input id="lgp" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password" placeholder="Пароль"><button class="btn">Войти</button></form>
     <form id="pinForm" class="row"><input id="pin" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password" placeholder="Пароль"><button class="btn">Войти</button></form>
+    <p id="toInvP" hidden><a href="#" id="toInv">У меня код приглашения или сброса пароля</a></p>
+    <form id="invForm" hidden><div class="row"><input id="icode" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="Код приглашения или сброса пароля"><input id="iname" autocomplete="name" placeholder="Ваше имя"></div><div class="row"><input id="ilog" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="Придумайте логин"><input id="ipw" type="password" autocomplete="new-password" placeholder="Придумайте пароль (не короче 12 знаков)"><button class="btn">Зарегистрироваться</button></div><p><a href="#" id="toLog">← Назад ко входу</a></p></form>
     <p id="pinErr" class="muted"></p>
     <p><a href="index.html">← К выбору ученика</a></p>
   </div>
 
   <div id="app" hidden>
-    <header><h1>VR-урок: прогресс учеников</h1><span style="display:flex;gap:18px"><a href="help-teacher.html">Справка</a><a href="index.html" id="toStudents">Выйти к ученикам</a></span></header>
+    <header><h1>VR-урок: прогресс учеников</h1><span style="display:flex;gap:18px"><a href="help-teacher.html">Справка</a><a href="admin.html" id="toAdmin" hidden>Администрирование</a><a href="index.html" id="toStudents">Выйти к ученикам</a></span></header>
     <div class="tabs" id="tabs">
       <button class="tab on" data-t="rating">Рейтинг</button>
       <button class="tab" data-t="students">Классы и ученики</button>
@@ -195,10 +197,17 @@ let sel=null;
 const TKEY='vrl.teacher',TTL=15*60*1000;
 function unlocked(){try{const t=+sessionStorage.getItem(TKEY);return t>Date.now();}catch(e){return false;}}
 let acctMode=false;/* true: на сервере включены учётки — вход по логину и паролю */
-function showForms(){$('acctForm').hidden=!acctMode;$('pinForm').hidden=acctMode;document.querySelector('#lock .muted').textContent=acctMode?'Введите логин и пароль.':'Введите пароль учителя.';}
+function showForms(){$('acctForm').hidden=!acctMode;$('toInvP').hidden=!acctMode;$('pinForm').hidden=acctMode;document.querySelector('#lock .muted').textContent=acctMode?'Введите логин и пароль.':'Введите пароль учителя.';}
 function touch(){try{if(unlocked())sessionStorage.setItem(TKEY,String(Date.now()+TTL));}catch(e){}}
 function lock(){try{sessionStorage.removeItem(TKEY);}catch(e){}if(S.account.token())S.account.logout();$('app').hidden=true;$('lock').hidden=false;$('pin').value='';$('lgp').value='';}
-function unlock(){try{sessionStorage.setItem(TKEY,String(Date.now()+TTL));}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();if(S.server())S.sync();}
+/* один вход для всех ролей: после входа учитель остаётся в кабинете, директор, специалист и администратор получают ссылку «Администрирование»; специалист (у него нет учебных данных) и переход с ?next=admin ведут сразу туда */
+function routeByRole(){
+  const rs=S.account.roles().map(r=>r.role),adm=rs.some(r=>r==='superadmin'||r==='director'||r==='expert'),work=rs.some(r=>r==='superadmin'||r==='director'||r==='teacher');
+  $('toAdmin').hidden=!adm;
+  const next=new URLSearchParams(location.search).get('next')==='admin';
+  if(adm&&(next||!work))location.replace('admin.html');
+}
+function unlock(){try{sessionStorage.setItem(TKEY,String(Date.now()+TTL));}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();if(S.server())S.sync();routeByRole();}
 for(const ev of['click','keydown','input'])document.addEventListener(ev,touch,true);
 setInterval(()=>{if(!$('app').hidden&&!unlocked())lock();},20000);
 $('toStudents').onclick=()=>lock();
@@ -216,8 +225,15 @@ $('acctForm').onsubmit=async e=>{
   const sv=S.server(),r=await S.account.login(sv?sv.url:defSrv(),$('lgn').value,$('lgp').value);$('lgp').value='';
   if(r.ok){$('pinErr').textContent='';unlock();}else $('pinErr').textContent=r.msg;
 };
+$('toInv').onclick=e=>{e.preventDefault();$('acctForm').hidden=true;$('toInvP').hidden=true;$('invForm').hidden=false;};
+$('toLog').onclick=e=>{e.preventDefault();$('invForm').hidden=true;showForms();};
+$('invForm').onsubmit=async e=>{
+  e.preventDefault();$('pinErr').textContent='Проверяю…';
+  const r=await S.activate({code:$('icode').value,login:$('ilog').value,password:$('ipw').value,name:$('iname').value});$('ipw').value='';
+  if(r.status===200){$('pinErr').textContent='';$('invForm').hidden=true;unlock();}else $('pinErr').textContent=(r.data&&r.data.error)||'Не получилось. Проверьте код.';
+};
 S.onStatus(st=>{if(st.expired){lock();$('pinErr').textContent=st.msg;}});
-(async()=>{const sv=S.server(),u=sv?sv.url:defSrv();try{const on=await S.account.probe(u);if(on===true){acctMode=true;showForms();if(unlocked()&&!S.account.token())lock();}}catch(e){}})();
+(async()=>{const sv=S.server(),u=sv?sv.url:defSrv();try{const on=await S.account.probe(u);if(on===true){acctMode=true;showForms();if(unlocked()&&!S.account.token())lock();else if(S.account.token()&&$('app').hidden){const m=await S.me();if(m.status===200)unlock();else S.account.clear();}}}catch(e){}})();
 
 /* ---- вкладки ---- */
 $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','rooms','builder','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
