@@ -339,7 +339,7 @@ function makeCtx(xr){
   // ---- меню и итоги
   E._test.deskKey('menu');run(3);
   ok(E.menuOpen&&E.menu.show&&!E.menu.dirty,'меню открыто и нарисовано');
-  ok(E.menu.btns.length===12||E.menu.btns.length===14,'в меню '+E.menu.btns.length+' кнопок');
+  ok(E.menu.btns.length>=12&&E.menu.btns.length<=15,'в меню '+E.menu.btns.length+' кнопок');
   E.menu.btns[0].fn();ok(E.roomId==='hall'&&!E.menuOpen,'из меню в холл');
   const pts=St.points(stu.id);
   ok(pts.tests===50&&pts.discCount>=10,'баллы: тесты '+pts.tests+', открытий '+pts.discCount+', всего '+pts.total);

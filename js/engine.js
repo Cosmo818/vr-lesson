@@ -773,7 +773,7 @@ void main(){
     const s=sens*MC.sens;D.yaw-=mx*s;D.pitch=Math.max(-1.5,Math.min(1.5,D.pitch-(MC.invY?-my:my)*s));
   }
   canvas.addEventListener('contextmenu',e=>e.preventDefault());
-  canvas.addEventListener('wheel',e=>{if(!locked)return;e.preventDefault();if(H[1].held)reach=Math.max(.3,Math.min(2.2,reach-Math.sign(e.deltaY)*.12));},{passive:false});
+  canvas.addEventListener('wheel',e=>{if(!locked)return;e.preventDefault();const b=H[1].held;if(b&&b.off){const z=b.off[14],st=Math.max(.06,Math.abs(z)*.12),nz=Math.max(-6,Math.min(-.3,z+Math.sign(e.deltaY)*st));b.off[14]=nz;}},{passive:false});  /* колесо от себя — предмет дальше, на себя — ближе, от любой дальности, где его взяли */
   canvas.addEventListener('pointerdown',e=>{
     if(e.pointerType==='mouse'&&canLock&&!lockFail&&E.deskInput){
       if(!locked){if(e.button===0)E.lockMouse();return;}/* первый щелчок только захватывает мышь */

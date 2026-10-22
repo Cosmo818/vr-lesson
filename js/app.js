@@ -118,8 +118,9 @@ function hooks(){
   $('gFps').onchange=()=>{E.setPerf({fps:$('gFps').checked});saveGfx();};
   $('gScale').oninput=()=>{E.setPerf({scale:$('gScale').value/100});syncGfx();saveGfx();};
   $('gFov').oninput=()=>{E.setPerf({fov:+$('gFov').value});syncGfx();saveGfx();};
-  const tab=n=>{for(const b of document.querySelectorAll('#deskPanel .tab'))b.classList.toggle('on',b.dataset.p===n);$('pKeys').hidden=n!=='keys';$('pMouse').hidden=n!=='mouse';$('pGfx').hidden=n!=='gfx';};
-  for(const b of document.querySelectorAll('#deskPanel .tab'))b.onclick=()=>tab(b.dataset.p);
+  const tabBtns=()=>typeof document.querySelectorAll==='function'?Array.from(document.querySelectorAll('#deskPanel .tab')):[];
+  const tab=n=>{for(const b of tabBtns())b.classList.toggle('on',b.dataset.p===n);$('pKeys').hidden=n!=='keys';$('pMouse').hidden=n!=='mouse';$('pGfx').hidden=n!=='gfx';};
+  for(const b of tabBtns())b.onclick=()=>tab(b.dataset.p);
   $('resetStand').onclick=()=>{E.resetStand();helpToggle(false);};
   const saveCfg=()=>S.setPref('mouse',{sens:E.mouseCfg.sens,smooth:E.mouseCfg.smooth,invY:E.mouseCfg.invY});
   const helpToggle=on=>{const p=$('deskPanel');const open=on===undefined?p.hidden:on;p.hidden=!open;if(open){syncPanel();syncGfx();if(E.unlockMouse)E.unlockMouse();showLockHint(false);}else if(E.deskInput){if(E.lockMouse)E.lockMouse();}};
@@ -139,7 +140,6 @@ function hooks(){
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';
       p.button(36+(i%2)*(bw+18),252+((i/2)|0)*100,bw,86,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(k);},{bg:E.roomId===k?'#f8fafc':sub.color,fg:'#0b1020',size:36});
     });
-    if(E.roomId&&E.roomId!=='hall')p.button(W-36-340,880,340,70,'Сбросить стенд',()=>{E.toggleMenu(false);E.resetStand();},{bg:'#475569',size:32});
     p.button(36,780,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
     p.button(54+bw,780,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
     if(E.roomId&&E.roomId!=='hall'){
@@ -150,7 +150,8 @@ function hooks(){
       p.button(400,880,(W-436-18)/2,70,'Нравится',()=>vote('like'),{bg:'#15803d',size:32});
       p.button(418+(W-436-18)/2,880,(W-436-18)/2,70,'Не нравится',()=>vote('dislike'),{bg:'#9a3412',size:32});
     }
-    p.text('Меню: кнопка A или X',W/2,968,{size:28,align:'center',color:'#94a3b8'});
+    if(E.roomId&&E.roomId!=='hall')p.button(W-36-300,940,300,60,'Сбросить стенд',()=>{E.toggleMenu(false);E.resetStand();},{bg:'#475569',size:30});
+    p.text('Меню: кнопка A или X',36,958,{size:28,color:'#94a3b8'});
   };
   E.hooks.onRoom=()=>{E.hud.dirty=true;};
 }
