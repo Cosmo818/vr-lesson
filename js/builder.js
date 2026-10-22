@@ -80,7 +80,7 @@ function costHtml(){
 const frameHtml=()=>`<div class="card"><div class="small muted" style="margin-bottom:6px">Вы внутри комнаты. Дверь «← Холл» ведёт в холл; вернуться к правке — кнопка «← Вернуться в редактор». В шлеме комната открывается по кнопке VR внутри окна.</div><iframe title="Комната" src="index.html?room=${encodeURIComponent(cur.id)}&t=${Date.now()}" allow="xr-spatial-tracking; fullscreen" style="width:100%;height:480px;border:1px solid var(--line);border-radius:10px;background:#000"></iframe></div>`;
 function editHtml(){
   const b=S.bandsOf('room',cur.id);
-  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><button class="btn ghost" data-bd="undo" id="bdUndo" title="Шаг назад (Ctrl+Z)" ${hist.length?'':'disabled'}>↶ Назад</button><button class="btn ghost" data-bd="redo" id="bdRedo" title="Шаг вперёд (Ctrl+Y)" ${fut.length?'':'disabled'}>↷ Вперёд</button><span id="bdDirty" class="small" style="display:inline-block;min-width:200px"></span><button class="btn ghost" data-bd="preview">${inRoom?'← Вернуться в редактор':'Войти в комнату'}</button><button class="btn ghost" data-bd="newtab">В новой вкладке</button><button class="btn ghost" data-bd="export">Текст комнаты</button><a href="help-rooms.html" class="small">Инструкция</a></div>
+  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><button class="btn ghost" data-bd="undo" id="bdUndo" title="Шаг назад (Ctrl+Z)" ${hist.length?'':'disabled'}>↶ Назад</button><button class="btn ghost" data-bd="redo" id="bdRedo" title="Шаг вперёд (Ctrl+Y)" ${fut.length?'':'disabled'}>↷ Вперёд</button><span id="bdDirty" class="small" style="display:inline-block;min-width:200px"></span><button class="btn ghost" data-bd="preview">${inRoom?'← Вернуться в редактор':'Войти в комнату'}</button><button class="btn ghost" data-bd="newtab">В новой вкладке</button><button class="btn ghost" data-bd="vredit" title="Откроет комнату с планшетом-редактором на левой руке">Править в VR</button><button class="btn ghost" data-bd="export">Текст комнаты</button><a href="help-rooms.html" class="small">Инструкция</a></div>
   <div id="bdFrame" ${inRoom?'':'hidden'}>${inRoom?frameHtml():''}</div>
   <div id="bdMsg" class="note small" ${msg?'':'hidden'}>${esc(msg)}</div><div id="bdIO">${io?ioHtml(JSON.stringify(cur,null,1)):''}</div>
   <div class="card"><div class="row"><label class="bdl" style="flex:1;min-width:220px">Название комнаты<input data-r="title" value="${esc(cur.title)}" maxlength="${RS.LIM.title}"></label>
@@ -191,6 +191,7 @@ function onClick(e){
   else if(a==='export'){io=!io;show();}
   else if(a==='back')leave();
   else if(a==='save')save();
+  else if(a==='vredit'){if(dirty&&!save())return;try{sessionStorage.setItem('vrl.editor',String(Date.now()+60*60*1000));}catch(e){}window.open('index.html?room='+encodeURIComponent(cur.id)+'&edit=1','_blank');}
   else if(a==='undo')undo();
   else if(a==='redo')redo();
   else if(a==='newtab'){if(dirty&&!save())return;window.open('index.html?room='+encodeURIComponent(cur.id),'_blank');}

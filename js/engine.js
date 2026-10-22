@@ -395,6 +395,9 @@ void main(){
     if(E.session&&baseRef){P.yaw=0;teleportTo(E.spawn.x,E.spawn.z);}
   }
   E.respawn=respawn;E.player=P;E.deskCam=D;
+  /* текущее место и поворот игрока и возврат на него: редактор пересобирает комнату после каждой правки, а человек остаётся где стоял */
+  E.poseNow=()=>{if(E.session&&baseRef){const w=headWorld();return{x:w.x,z:w.z,yaw:P.yaw};}return{x:D.x,z:D.z,yaw:D.yaw};};
+  E.setPose=(x,z,yaw)=>{if(E.session&&baseRef){P.yaw=yaw;teleportTo(x,z);}else{D.x=x;D.z=z;D.yaw=yaw;}};
   E.headPose=()=>{
     if(E.session&&curFrame&&refSpace){const vp=curFrame.getViewerPose(refSpace);if(vp){const m=vp.transform.matrix;const fx=-m[8],fz=-m[10],l=Math.hypot(fx,fz)||1;return{pos:[m[12],m[13],m[14]],f:[fx/l,fz/l]};}}
     return{pos:[D.x,1.6,D.z],f:[-Math.sin(D.yaw),-Math.cos(D.yaw)]};

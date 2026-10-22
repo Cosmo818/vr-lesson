@@ -75,6 +75,95 @@ function buildSpec(E,S,spec){
   S.showInfo=showInfo;S.find=find;S.sound=sound;
 }
 
+/* ---------- редактор прямо в шлеме: планшет на левой руке повторяет меню редактора (Б50) ---------- */
+const ED={on:false,id:null,sel:null,hist:[],fut:[]};
+const teacherOk=()=>{try{return +sessionStorage.getItem('vrl.editor')>Date.now();}catch(e){return false;}};
+const copy=o=>JSON.parse(JSON.stringify(o));
+const r05=v=>Math.round(v*20)/20;
+const clampC=v=>Math.max(-RS.LIM.coord,Math.min(RS.LIM.coord,r05(v)));
+const edBlock=(spec,id)=>spec&&spec.blocks.find(b=>b.id===id);
+const fld=(b,k)=>(RS.FIELDS[b.type]||[]).find(f=>f.k===k);
+function bump(b,k,d,mul){
+  const f=fld(b,k);if(!f||typeof b[k]!=='number')return false;
+  let v=mul?b[k]*d:b[k]+d;v=Math.round(Math.max(f.min,Math.min(f.max,v))*100)/100;
+  if(v===b[k])return false;b[k]=v;return true;
+}
+function rebuild(E){const at=E.poseNow();E.loadRoom(ED.id);E.setPose(at.x,at.z,at.yaw);}
+function commit(E,spec,before){
+  const res=VR.Store.saveRoom(spec);
+  if(!res.spec){E.toast(res.errors[0]||'Так нельзя','#fca5a5');E.beep(200,.2,'sawtooth',.05);return false;}
+  if(before!==undefined){ED.hist.push(before);if(ED.hist.length>100)ED.hist.shift();ED.fut=[];}
+  rebuild(E);return true;
+}
+function edit(E,fn){
+  const cur=VR.Store.customRoom(ED.id);if(!cur)return;
+  const spec=copy(cur),before=JSON.stringify(cur);
+  if(fn(spec)===false){E.beep(200,.12,'sawtooth',.04);return;}
+  commit(E,spec,before);
+}
+function undoRedo(E,back){
+  const from=back?ED.hist:ED.fut,to=back?ED.fut:ED.hist;if(!from.length)return;
+  const cur=VR.Store.customRoom(ED.id);to.push(JSON.stringify(cur));
+  const spec=JSON.parse(from.pop());
+  if(!commit(E,spec))from.push(to.pop());
+}
+/* вперёд для игрока: вектор взгляда и «вправо» от него */
+function dirs(E){const f=E.headPose().f;return{f,r:[-f[1],f[0]]};}
+function ahead(E,m){const h=E.headPose();return[clampC(h.pos[0]+h.f[0]*m),clampC(h.pos[2]+h.f[1]*m)];}
+function move(E,dx,dz){edit(E,s=>{const b=edBlock(s,ED.sel);if(!b)return false;const x=clampC(b.x+dx),z=clampC(b.z+dz);if(x===b.x&&z===b.z)return false;b.x=x;b.z=z;});}
+function vert(E,d){edit(E,s=>{const b=edBlock(s,ED.sel);if(!b)return false;return bump(b,b.type==='item'?'lift':b.type==='table'?'h':'y',d,false);});}
+function grow(E,m){edit(E,s=>{const b=edBlock(s,ED.sel);if(!b)return false;let ch=false;
+  if(b.type==='item')ch=bump(b,'size',m,true);else if(b.type==='table'){ch=bump(b,'w',m,true);ch=bump(b,'d',m,true)||ch;}else ch=bump(b,'w',m,true);return ch;});}
+function addBlock(E,type){edit(E,s=>{
+  const b=RS.blockDefault(type),p=ahead(E,1.5);b.x=p[0];b.z=p[1];
+  if(type==='portal'){b.to='hall';}
+  s.blocks.push(b);ED.sel=b.id;});}
+const MOVES=[['◀ Лево',d=>[-d.r[0],-d.r[1]]],['Право ▶',d=>d.r],['▲ Дальше',d=>d.f],['▼ Ближе',d=>[-d.f[0],-d.f[1]]]];
+function tabletDraw(E,S,c,p){
+  const spec=VR.Store.customRoom(ED.id),b=spec&&edBlock(spec,ED.sel),W=p.W;
+  p.text('Редактор: '+(spec?spec.title:''),30,18,{size:46,bold:true,maxW:W-60});
+  const t3=(W-60-2*14)/3,t4=(W-60-3*14)/4,X3=i=>30+i*(t3+14),X4=i=>30+i*(t4+14);
+  p.button(X3(0),88,t3,84,'↶ Назад',()=>undoRedo(E,true),{bg:'#475569',size:38,disabled:!ED.hist.length});
+  p.button(X3(1),88,t3,84,'↷ Вперёд',()=>undoRedo(E,false),{bg:'#475569',size:38,disabled:!ED.fut.length});
+  p.button(X3(2),88,t3,84,'Выйти',()=>{ED.on=false;try{sessionStorage.removeItem('vrl.editor');}catch(e){}rebuild(E);E.toast('Редактор закрыт.');},{bg:'#b91c1c',size:38});
+  p.text('Добавить перед собой:',30,196,{size:32,color:'#b8c7ea'});
+  const types=['text','item','table','question','quiz','portal'];
+  types.forEach((k,i)=>p.button(X3(i%3),236+((i/3)|0)*92,t3,80,RS.TYPES[k],()=>addBlock(E,k),{bg:'#2563eb',size:34}));
+  p.text(b?'Выбрано: '+blockTitle(b).slice(0,44):'Наведи луч на предмет или панель и нажми — он станет выбранным.',30,430,{size:32,color:b?'#fde68a':'#94a3b8',maxW:W-60,maxY:520});
+  const d=dirs(E),st=.25;
+  MOVES.forEach((m,i)=>p.button(X4(i),530,t4,84,m[0],()=>{const v=m[1](d);move(E,v[0]*st,v[1]*st);},{bg:'#0e7490',size:32,disabled:!b}));
+  p.button(X4(0),628,t4,84,'▲ Выше',()=>vert(E,.1),{bg:'#0e7490',size:32,disabled:!b});
+  p.button(X4(1),628,t4,84,'▼ Ниже',()=>vert(E,-.1),{bg:'#0e7490',size:32,disabled:!b});
+  p.button(X4(2),628,t4,84,'Крупнее',()=>grow(E,1.15),{bg:'#0e7490',size:32,disabled:!b});
+  p.button(X4(3),628,t4,84,'Мельче',()=>grow(E,1/1.15),{bg:'#0e7490',size:32,disabled:!b});
+  p.button(X3(0),726,t3,84,'К себе',()=>edit(E,s=>{const k=edBlock(s,ED.sel);if(!k)return false;const a=ahead(E,1.5);k.x=a[0];k.z=a[1];}),{bg:'#0e7490',size:34,disabled:!b});
+  p.button(X3(1),726,t3,84,'Копия',()=>edit(E,s=>{const k=edBlock(s,ED.sel);if(!k)return false;const n=copy(k);n.id=RS.newBlockId();n.x=clampC(k.x+.5);s.blocks.push(n);ED.sel=n.id;}),{bg:'#0e7490',size:34,disabled:!b});
+  p.button(X3(2),726,t3,84,'Удалить',()=>edit(E,s=>{if(!edBlock(s,ED.sel))return false;s.blocks=s.blocks.filter(k=>k.id!==ED.sel);ED.sel=null;}),{bg:'#b91c1c',size:34,disabled:!b});
+  p.text('Каждая правка сохраняется сразу. Подробности: «Конструктор комнат» в кабинете учителя.',30,830,{size:26,color:'#94a3b8',maxW:W-60,maxY:p.H-10});
+}
+const blockTitle=b=>(RS.TYPES[b.type]||b.type)+': '+(b.title||b.label||b.q||'');
+function blockPos(b){return b.type==='item'?[b.x,b.lift+b.size/2,b.z]:b.type==='table'?[b.x,b.h,b.z]:b.type==='portal'||b.type==='quiz'?[b.x,1.4,b.z]:[b.x,b.y,b.z];}
+function buildEditor(E,S,spec){
+  S.edit=true;
+  S.tablet=E.addPanel({w:.46,h:.46,res:1024,pos:[0,1.4,-1],yaw:0,accent:'#facc15',draw:(c,p)=>tabletDraw(E,S,c,p)});
+  /* на экране (без шлема) планшет стоит перед лицом чуть слева */
+  S.edTargets=spec.blocks.map(b=>{const c=blockPos(b),big=b.w?b.w*.3:.3;return{c,r:Math.max(.3,b.type==='item'?b.size*.8:big),id:'ed'+b.id,sel:()=>{ED.sel=b.id;S.tablet.dirty=true;E.beep(700,.05,'triangle',.04);}};});
+}
+function poseTablet(E,S){
+  const t=S.tablet;if(!t)return;
+  const hp=E.headPose().pos,L=E.H[0];let p;
+  if(E.session&&L&&L.has)p=[L.g[12],L.g[13]+.22,L.g[14]];
+  else{const h=E.headPose(),r=[-h.f[1],h.f[0]];p=[h.pos[0]+h.f[0]*.9-r[0]*.38,h.pos[1]-.12,h.pos[2]+h.f[1]*.9-r[1]*.38];}
+  t.setPose(p,yawTo(p[0],p[2],hp[0],hp[2]));
+}
+function startEdit(E,id){
+  if(!teacherOk()){E.toast('Редактор открывается из кабинета учителя: «Править в VR».','#fca5a5');return false;}
+  if(!VR.Store.customRoom(id))return false;
+  ED.on=true;ED.id=id;ED.sel=null;ED.hist=[];ED.fut=[];
+  if(E.roomId===id)rebuild(E);else E.loadRoom(id);
+  E.toast('Редактор: планшет у левой руки. Нажми на предмет, чтобы выбрать.','#fde68a');return true;
+}
+
 function register(id){
   if(ROOMS[id])return;
   ROOMS[id]={
@@ -89,8 +178,10 @@ function register(id){
       /* комнату удалили, пока ученик был в другой: возвращаем в холл, а не ломаем сцену */
       if(!spec){E.door(0,5.88,Math.PI,'hall','← Холл','#94a3b8');E.addPanel({w:2.6,h:.8,pos:[0,1.7,-5.86],yaw:0,accent:'#ef4444',draw:(c,p)=>p.text('Эту комнату убрал учитель.',36,26,{size:52,bold:true,maxW:p.W-72})});return;}
       buildSpec(E,S,spec);
+      if(ED.on&&ED.id===id)buildEditor(E,S,spec);
     },
     targets(E,S){
+      if(S.edit)return S.edTargets||[];
       return(S.items||[]).filter(it=>!it.grab).map((it,i)=>({c:[it.x,it.y,it.z],r:Math.max(.3,it.b.size*.7),id:'ci'+i,sel:()=>{
         S.sound(E,it.b.sound);E.burst([it.x,it.y,it.z],14);
         if(it.b.info||it.b.label)S.showInfo(it);
@@ -98,6 +189,11 @@ function register(id){
       }}));
     },
     draw(E,S,add){
+      if(S.edit){
+        poseTablet(E,S);
+        const b=ED.sel&&edBlock(VR.Store.customRoom(ED.id),ED.sel);
+        if(b){const q=blockPos(b),k=.07,y=q[1]+(b.type==='item'?b.size/2:b.type==='table'?0:(b.w||1)*.35)+.25+Math.sin(E.t*4)*.04;add(E.mesh.sphere,M.mul(M.trans(q[0],y,q[2]),M.scale(k,k,k)),[1,.85,.2],.9);}
+      }
       for(const it of S.items||[]){
         if(it.grab)continue;
         if(it.b.spin)it.rot+=.012;
@@ -134,5 +230,5 @@ function hallPanel(E,g){
   }});
 }
 
-VR.custom={refresh,hallPanel,register};
+VR.custom={refresh,hallPanel,register,startEdit,editing:()=>ED.on?ED.id:null,teacherOk};
 })();

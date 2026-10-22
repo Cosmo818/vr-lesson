@@ -67,7 +67,7 @@ async function go(){
   $('err').textContent='';
   E.audio();startSession();
   /* ссылка предпросмотра из конструктора: index.html?room=c-… сразу ведёт в комнату */
-  let pv=null;try{VR.custom.refresh();pv=new URLSearchParams(location.search).get('room');if(pv&&E.rooms[pv])E.goRoom(pv);else pv=null;}catch(e){pv=null;}
+  let pv=null;try{VR.custom.refresh();pv=new URLSearchParams(location.search).get('room');if(pv&&E.rooms[pv]){E.goRoom(pv);if(new URLSearchParams(location.search).get('edit')==='1')VR.custom.startEdit(E,pv);}else pv=null;}catch(e){pv=null;}
   if(xrOk){
     try{await E.enterXR();$('ov').hidden=true;}
     catch(e){$('err').textContent=e.message;}
@@ -81,6 +81,7 @@ function endSession(){
   const st=E.student;let msg='';
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
+  try{sessionStorage.removeItem('vrl.editor');}catch(e){}
   lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
@@ -122,7 +123,9 @@ function hooks(){
     p.button(36,780,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
     p.button(54+bw,780,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
     if(E.roomId&&E.roomId!=='hall'){
-      p.text('Как тебе эта комната?',36,892,{size:32,color:'#b8c7ea'});
+      const cr=VR.ROOMS[E.roomId];
+      if(cr&&cr.custom&&VR.custom.teacherOk())p.button(36,880,340,70,VR.custom.editing()===E.roomId?'Редактор открыт':'Править комнату',()=>{E.toggleMenu(false);VR.custom.startEdit(E,E.roomId);},{bg:'#a16207',size:32});
+      else p.text('Как тебе эта комната?',36,892,{size:32,color:'#b8c7ea'});
       const vote=k=>{const st=E.student||{};S.addFeedback({kind:k,room:E.roomId,grade:st.grade||null});E.toast('Спасибо за отзыв!');E.chime();};
       p.button(400,880,(W-436-18)/2,70,'Нравится',()=>vote('like'),{bg:'#15803d',size:32});
       p.button(418+(W-436-18)/2,880,(W-436-18)/2,70,'Не нравится',()=>vote('dislike'),{bg:'#9a3412',size:32});
@@ -178,6 +181,7 @@ async function init(){
 /* возврат кнопкой «Назад» из кэша браузера: WebGL и состояние могут быть уже неживыми — перезагружаем страницу */
 window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
 /* на экране учеников сессия учителя всегда закрыта */
-try{sessionStorage.removeItem('vrl.teacher');}catch(e){}
+/* внутри окна редактора (iframe) вкладка общая с кабинетом учителя: его сессию не трогаем */
+try{if(window.self===window.top)sessionStorage.removeItem('vrl.teacher');}catch(e){}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
