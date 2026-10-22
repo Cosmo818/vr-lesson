@@ -95,6 +95,8 @@ try:
     st, b = adm('xA', 'room.publish', {'school': 's-a', 'src': 'c-e', 'spec': spec}); ok(st == 403, 'специалист комнаты не публикует')
     st, b = adm('dA', 'room.reject', {'id': rid}); st2, b2 = call('GET', '/api/open/room/' + rid); ok(st == 200 and st2 == 404, 'отклонённая пропадает из открытого доступа')
     st, b = adm('tA', 'room.unpublish', {'id': rid}); ok(st == 200, 'автор снимает свою публикацию')
+    with app.db() as c:
+        ok(c.execute("SELECT count(*) FROM trash WHERE kind = 'open_room' AND id = ? AND school = 's-a'", (rid,)).fetchone()[0] == 1 and c.execute('SELECT count(*) FROM open_rooms WHERE id = ?', (rid,)).fetchone()[0] == 0, 'снятая публикация лежит в корзине (open_room), из open_rooms убрана')
     for _ in range(61):
         st, b = call('GET', '/api/open/rooms')
     ok(st == 429, 'публичный список ограничен по частоте')

@@ -17,6 +17,7 @@ CONFIG_PATH = os.path.join(DATA, 'config.json')
 MAX_BODY = 8 * 1024 * 1024
 VERSION = '3'
 SCHEMA = 4
+DB_VERSION = 6  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
 DEFAULT_SCHOOL = 'school-default'
 NEW_FIELDS = ('school', 'year', 'status')
 AUDIT_DETAIL_MAX = 2048
@@ -79,7 +80,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS results_sid ON results(sid);
         ''')
         ver = c.execute('PRAGMA user_version').fetchone()[0]
-        if ver < SCHEMA and existed:
+        if ver < DB_VERSION and existed:
             try:
                 path = backup_db('v%d' % max(ver, 2))
                 print('копия базы перед миграцией: %s' % path, flush=True)
@@ -88,6 +89,7 @@ def init_db():
                 sys.exit(1)
         migrate_v3(c)  # при каждом старте: идемпотентно, дозаполняет строки, записанные прежней версией
         migrate_v4(c)
+        migrate_b74(c)
         c.execute("CREATE INDEX IF NOT EXISTS students_class ON students(json_extract(doc, '$.classId'))")  # поиск и фильтр по классу (шаг 8); старому коду индекс не мешает
 
 
@@ -419,6 +421,40 @@ def record_in_scope(c, sc, rid, cache):
     return bool(row) and sid_in_scope(c, sc, row[0], cache)
 
 
+def migrate_b74(c):
+    """v5 -> v6 (Б74): жёсткие надгробия purged, корзина trash, архив файлов uploads. Ничего не удаляет, повторяема. Одна явная транзакция: обрыв -> ROLLBACK, база остаётся прежней."""
+    if c.in_transaction:
+        c.commit()
+    c.execute('BEGIN IMMEDIATE')
+    try:
+        c.execute('CREATE TABLE IF NOT EXISTS purged(id TEXT PRIMARY KEY, ts INTEGER NOT NULL, kind TEXT)')
+        c.execute('''CREATE TABLE IF NOT EXISTS trash(kind TEXT NOT NULL, id TEXT NOT NULL, school TEXT, doc TEXT NOT NULL, ts INTEGER NOT NULL, actor_kind TEXT, actor_id TEXT,
+            PRIMARY KEY(kind, id))''')
+        c.execute('CREATE INDEX IF NOT EXISTS trash_school ON trash(school, ts)')
+        cols = {r[1] for r in c.execute('PRAGMA table_info(uploads)')}
+        if 'archived_at' not in cols:
+            c.execute('ALTER TABLE uploads ADD COLUMN archived_at INTEGER')
+        if 'archived_by' not in cols:
+            c.execute('ALTER TABLE uploads ADD COLUMN archived_by TEXT')
+        # всё, удалённое до Б74, стёрто физически: это жёсткие надгробия
+        c.execute("INSERT OR IGNORE INTO purged(id, ts, kind) SELECT id, ts, 'legacy' FROM deleted")
+        if c.execute('PRAGMA user_version').fetchone()[0] < 6:
+            c.execute('PRAGMA user_version = 6')
+        c.execute('COMMIT')
+    except BaseException:
+        if c.in_transaction:
+            c.execute('ROLLBACK')
+        raise
+
+
+def to_trash(c, kind, rid, school, doc, who):
+    """Кладёт копию записи в корзину (kind: test, feedback, result, room, open_room) перед удалением; повтор не перезаписывает. who = (вид, id, ip) как в audit."""
+    if not isinstance(doc, str):
+        doc = json.dumps(doc, ensure_ascii=False)
+    c.execute('INSERT OR IGNORE INTO trash(kind, id, school, doc, ts, actor_kind, actor_id) VALUES(?, ?, ?, ?, ?, ?, ?)',
+              (kind, str(rid), school or DEFAULT_SCHOOL, doc, int(time.time() * 1000), who[0], who[1]))
+
+
 def merge_in(c, inc, role, ip='', principal=None):
     """Вносит присланное состояние в базу по тем же правилам, что и js/store.js (merge). Реальные изменения пишутся в журнал аудита (audit) в той же транзакции."""
     teacher = role == 'teacher'
@@ -454,6 +490,12 @@ def merge_in(c, inc, role, ip='', principal=None):
                     s = {k: v for k, v in s.items() if k != 'pinHash'}
                     if 'pinHash' in get_settings(c):
                         s['pinHash'] = get_settings(c)['pinHash']
+                old_rooms = get_settings(c).get('rooms')
+                new_rooms = s.get('rooms')
+                if isinstance(old_rooms, dict):  # комнаты, пропавшие из настроек, уходят в корзину (Б74)
+                    for rid, spec in old_rooms.items():
+                        if not isinstance(new_rooms, dict) or rid not in new_rooms:
+                            to_trash(c, 'room', rid, DEFAULT_SCHOOL, spec, who)
                 keys = changed_keys(get_settings(c), s)
                 if keys:
                     audit(c, who, 'settings.update', 'settings', None, DEFAULT_SCHOOL, {'keys': keys})  # настройки общие, школа пока одна
@@ -560,10 +602,15 @@ def merge_in(c, inc, role, ip='', principal=None):
                 c.execute('INSERT INTO disc(sid, k, ts) VALUES(?, ?, ?) ON CONFLICT(sid, k) DO UPDATE SET ts = min(ts, excluded.ts)', (sid, k, num(ts)))
     # подчистить удалённое и сброшенное
     c.execute('DELETE FROM students WHERE id IN (SELECT id FROM deleted)')
+    for t, kind in (('tests', 'test'), ('feedback', 'feedback')):  # в корзину и удалить — в одной транзакции со слиянием
+        for rid, doc in c.execute('SELECT id, doc FROM %s WHERE id IN (SELECT id FROM deleted)' % t).fetchall():
+            to_trash(c, kind, rid, DEFAULT_SCHOOL, doc, who)
+    for rid, doc, sch in c.execute('SELECT r.id, r.doc, s.school FROM results r LEFT JOIN students s ON s.id = r.sid WHERE r.id IN (SELECT id FROM deleted)').fetchall():
+        to_trash(c, 'result', rid, sch, doc, who)
     c.execute('DELETE FROM tests WHERE id IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM classes WHERE id IN (SELECT id FROM deleted)')
-    c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM deleted) OR id IN (SELECT id FROM deleted) OR ts < ?', (reset,))
-    c.execute('DELETE FROM disc WHERE sid IN (SELECT id FROM deleted) OR ts < ?', (reset,))
+    c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM deleted) OR id IN (SELECT id FROM deleted)')
+    c.execute('DELETE FROM disc WHERE sid IN (SELECT id FROM deleted)')
     c.execute('DELETE FROM feedback WHERE id IN (SELECT id FROM deleted)')
     if rej:
         audit(c, who, 'sync.rejected', 'sync', None, None, rej)  # только счётчики по видам, без содержимого (А13)
@@ -594,6 +641,7 @@ def state(c, hide_pins=False, principal=None):
     """Состояние для ответа. hide_pins: ключ шлема не получает видимые коды учеников (pinView).
     principal-пользователь получает только свой срез (scope): классы, их учеников, результаты и открытия этих учеников; тесты, отзывы, надгробия — общие."""
     sc = scope(c, principal)
+    reset = num(get_settings(c).get('resetAt'))  # строки до границы в базе остаются (Б74), клиентам не отдаются
     def stud(raw):
         d = json.loads(raw)
         if hide_pins:
@@ -602,9 +650,9 @@ def state(c, hide_pins=False, principal=None):
     if sc['all']:
         classes = [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')]
         students = [stud(r[0]) for r in c.execute('SELECT doc FROM students')]
-        results = [json.loads(r[0]) for r in c.execute('SELECT doc FROM results WHERE %s ORDER BY ts' % open_results_sql(c))]
+        results = [json.loads(r[0]) for r in c.execute('SELECT doc FROM results WHERE ts >= ? AND %s ORDER BY ts' % open_results_sql(c), (reset,))]
         disc = {}
-        for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
+        for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc WHERE ts >= ?', (reset,)):
             disc.setdefault(sid, {})[k] = ts
         settings = get_settings(c)
     else:
@@ -639,8 +687,8 @@ def state(c, hide_pins=False, principal=None):
             for n in range(0, len(ids), 500):
                 part = ids[n:n + 500]
                 q = ','.join('?' * len(part))
-                rows += c.execute('SELECT ts, doc FROM results WHERE sid IN (%s) AND %s' % (q, open_results_sql(c)), part).fetchall()
-                for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc WHERE sid IN (%s)' % q, part):
+                rows += c.execute('SELECT ts, doc FROM results WHERE sid IN (%s) AND ts >= ? AND %s' % (q, open_results_sql(c)), part + [reset]).fetchall()
+                for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc WHERE sid IN (%s) AND ts >= ?' % q, part + [reset]):
                     disc.setdefault(sid, {})[k] = ts
             rows.sort(key=lambda r: r[0] or 0)
             results = [json.loads(r[1]) for r in rows]
@@ -1399,6 +1447,8 @@ def admin_action(c, p, act, b, ip):
             audit(c, who, 'admin.denied', 'room', S('id', 20), row[0], {'why': 'scope', 'action': act})
             raise AdminError(403, 'Это комната чужой школы.')
         if act == 'room.unpublish':
+            orow = c.execute('SELECT id, school, owner, src, title, spec, status, created, updated, decided_by, decided FROM open_rooms WHERE id = ?', (S('id', 20),)).fetchone()
+            to_trash(c, 'open_room', orow[0], orow[1], dict(zip(('id', 'school', 'owner', 'src', 'title', 'spec', 'status', 'created', 'updated', 'decided_by', 'decided'), orow)), who)
             c.execute('DELETE FROM open_rooms WHERE id = ?', (S('id', 20),))
         else:
             c.execute('UPDATE open_rooms SET status = ?, decided_by = ?, decided = ? WHERE id = ?', ('approved' if act == 'room.approve' else 'rejected', p['id'], now, S('id', 20)))

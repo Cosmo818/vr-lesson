@@ -601,7 +601,7 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
     let p2=await start();
     try{
       ok(baks().length===1&&pyq(path.join(dir2,baks()[0]),'select count(*) from students')==='4','миграция: перед ней сделана копия базы v2 (4 ученика)');
-      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='5','миграция v2→v4: user_version = 4');
+      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='6','миграция v2→v4: user_version = 4');
       const exp=await (await fetch(url2+'/api/export',{headers:{'X-Key':'teach-secret'}})).json();
       const yr=id=>exp.students.find(x=>x.id===id).year;
       ok(exp.students.length===4&&exp.students.every(x=>x.school==='school-default'&&x.status==='active')&&yr('s1')===2025&&yr('s2')===2024&&yr('s3')===null&&yr('s4')===null&&exp.classes.find(x=>x.id==='c5a').year===2025,'миграция: ученики и классы дозаполнены, годы выведены');
@@ -612,7 +612,7 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
     await new Promise(r=>setTimeout(r,300));
     p2=await start();
     try{
-      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='5','миграция повторяема: после перезапуска новой копии нет');
+      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='6','миграция повторяема: после перезапуска новой копии нет');
     }finally{p2.kill();}
     /* обрыв миграции: на временной базе v2 ломаем заполнение на второй записи; база должна остаться целой v2, повторный запуск — дать ту же v3 */
     {
@@ -678,7 +678,7 @@ c=sqlite3.connect(sys.argv[1]);s=app.state(c);s.pop('v');print(json.dumps(s,ensu
     }finally{p4.kill();}
     await new Promise(r=>setTimeout(r,300));
     const d1=JSON.parse(py(dumpDb,db4));
-    ok(d1[0]===5&&NEWT.every(t=>d1[1].includes(t))&&d1[2].includes('teacherId'),'миграция v3→v4: user_version = 4, есть все новые таблицы и колонка classes.teacherId');
+    ok(d1[0]===6&&NEWT.every(t=>d1[1].includes(t))&&d1[2].includes('teacherId'),'миграция v3→v4: user_version = 4, есть все новые таблицы и колонка classes.teacherId');
     ok(py(stateJson,db4,srvDir,dir4)===before,'миграция v3→v4: состояние (state) до и после совпадает по всем данным, кроме номера схемы');
     ok(JSON.stringify([d1[3],d1[4],d1[5]])===JSON.stringify([d0[3],d0[4],d0[5]]),'миграция v3→v4: строки учеников, классов и число результатов не изменились');
     const cnt=(t,w)=>py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0])',db4,'select count(*) from '+t+(w?' where '+w:''));
@@ -742,7 +742,80 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
         ok(ex.v===4&&ex.students.length===5&&ex.students.some(x=>x.id==='rb1')&&ex.results.length===syN&&syN>0,'откат: новый сервер снова открывает базу после работы прежнего, данные не потеряны');
       }finally{p4.kill();}
       await new Promise(r=>setTimeout(r,300));
-      ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='5'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 4');
+      ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='6'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 4');
+    }
+    /* Б74, шаг 18: миграция v5→v6 и корзина */
+    {
+      const mk=()=>{const d=newDir(v3db);py(`import sys,os;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
+import app,sqlite3
+c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.execute("INSERT OR REPLACE INTO deleted(id,ts) VALUES('old-x',1760000000001)");c.commit();c.close()`,path.join(d,'vrlesson.db'),srvDir,d);return d;};
+      const dirB=mk(),dbB=path.join(dirB,'vrlesson.db');
+      const q=(db,sql)=>py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0])',db,sql);
+      ok(q(dbB,'pragma user_version')==='5'&&q(dbB,'select count(*) from deleted')==='2','Б74: исходная база v5 с надгробиями (gone1, old-x)');
+      const dumpB=`import sqlite3,sys,json;c=sqlite3.connect(sys.argv[1]);print(json.dumps([c.execute('pragma user_version').fetchone()[0],sorted(r[0] for r in c.execute("select name from sqlite_master")),(c.execute('select * from purged order by id').fetchall() if c.execute("select count(*) from sqlite_master where name='purged'").fetchone()[0] else []),c.execute('select id,doc from students order by id').fetchall(),c.execute('select count(*) from results').fetchone()[0]],ensure_ascii=False))`;
+      /* обрыв посреди migrate_b74: база остаётся v5 */
+      const crash=`import sys,os;sys.path.insert(0,sys.argv[2]);os.environ['DATA_DIR']=sys.argv[3]
+import app,sqlite3
+class P:
+    def __init__(s,c): s.c=c
+    @property
+    def in_transaction(s): return s.c.in_transaction
+    def commit(s): s.c.commit()
+    def execute(s,sql,*a):
+        if 'INTO purged' in sql: raise RuntimeError('обрыв')
+        return s.c.execute(sql,*a)
+c=sqlite3.connect(sys.argv[1])
+try:
+    app.migrate_b74(P(c))
+except RuntimeError:
+    print('crashed')`;
+      const b0=py(dumpB,dbB);
+      ok(py(crash,dbB,srvDir,dirB)==='crashed'&&py(dumpB,dbB)===b0&&JSON.parse(b0)[0]===5&&!JSON.parse(b0)[1].includes('purged'),'Б74: после обрыва migrate_b74 база прежняя (v5, таблиц purged/trash нет)');
+      let pB=await startOn(dirB,8801,path.join(srvDir,'app.py'));
+      try{
+        ok(baks(dirB,'v5').length===1&&q(path.join(dirB,baks(dirB,'v5')[0]),'pragma user_version')==='5','Б74: перед миграцией сделана копия bak-v5');
+        const h=await (await fetch('http://127.0.0.1:8801/api/health')).json();ok(h.ok&&h.schema===4,'Б74: /api/health schema = 4');
+      }finally{pB.kill();}
+      await new Promise(r=>setTimeout(r,300));
+      const A1=JSON.parse(py(dumpB,dbB));
+      ok(A1[0]===6&&JSON.stringify(A1[2].map(r=>[r[0],r[2]]))===JSON.stringify([['gone1','legacy'],['old-x','legacy']])&&A1[1].includes('trash')&&A1[4]===5,'Б74: user_version = 6, purged содержит все id из deleted, результаты на месте');
+      ok(q(dbB,"select count(*) from pragma_table_info('uploads') where name in ('archived_at','archived_by')")==='2','Б74: у uploads есть archived_at и archived_by');
+      const a1=py(dumpB,dbB);
+      pB=await startOn(dirB,8801,path.join(srvDir,'app.py'));
+      try{await new Promise(r=>setTimeout(r,200));}finally{pB.kill();}
+      await new Promise(r=>setTimeout(r,300));
+      ok(py(dumpB,dbB)===a1&&baks(dirB,'v5').length===1&&baks(dirB,'v6').length===0,'Б74: второй старт ничего не меняет и копий не делает');
+      /* откат на код v3 */
+      {
+        const dirR=newDir(dbB);let po=await startOn(dirR,8802,path.join(ROOT,'tests/fixtures/server_v3.py'));
+        try{const ex=await (await fetch('http://127.0.0.1:8802/api/export',{headers:{'X-Key':'teach-secret'}})).json();
+          ok(ex.students.length===4&&ex.results.length===5,'Б74: откат — сервер v3 открывает базу v6 с теми же данными');}finally{po.kill();}
+      }
+      /* корзина на живом сервере */
+      const T='http://127.0.0.1:8801',TK={'X-Key':'teach-secret','Content-Type':'application/json'},DK={'X-Key':'dev-secret','Content-Type':'application/json'};
+      const sync=async(body,hd)=>(await (await fetch(T+'/api/sync',{method:'POST',headers:hd||TK,body:JSON.stringify(Object.assign({v:4,classes:[],students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{}},body))})).json());
+      const tr=(k)=>q(dbB,`select count(*) from trash where kind='${k}'`);
+      pB=await startOn(dirB,8801,path.join(srvDir,'app.py'));
+      try{
+        const U=1790000000000;
+        await sync({tests:[{id:'t74',title:'Дроби',subj:'math',updated:U,qs:[]}],feedback:[{id:'f74',ts:U,kind:'room',room:'a',rating:5,text:'норм'}],settings:{updated:U,rooms:{rm1:{id:'rm1',title:'Комната'}}}});
+        let sd=await sync({},DK);
+        ok(sd.state.tests.some(x=>x.id==='t74')&&sd.state.feedback.some(x=>x.id==='f74'),'Б74: тест и отзыв дошли до шлема');
+        await sync({deleted:{t74:U+1,f74:U+1,r2:U+1}});
+        sd=await sync({},DK);
+        ok(!sd.state.tests.some(x=>x.id==='t74')&&!sd.state.feedback.some(x=>x.id==='f74')&&!sd.state.results.some(x=>x.id==='r2'),'Б74: удалённые тест, отзыв и результат у шлема пропали');
+        ok(tr('test')==='1'&&tr('feedback')==='1'&&tr('result')==='1'&&q(dbB,"select count(*) from tests where id='t74'")==='0'&&q(dbB,"select count(*) from results where id='r2'")==='0','Б74: тест, отзыв и результат — в trash, из своих таблиц убраны');
+        ok(JSON.parse(q(dbB,"select doc from trash where kind='test'")).title==='Дроби'&&q(dbB,"select school from trash where kind='result'")==='school-default'&&q(dbB,"select actor_kind from trash where kind='test'")==='legacy-teacher','Б74: в корзине полный документ, школа и автор действия');
+        await sync({deleted:{t74:U+2}});
+        ok(tr('test')==='1','Б74: повторное надгробие корзину не дублирует');
+        const nRes=q(dbB,'select count(*) from results');
+        await sync({settings:{updated:U+5,resetAt:1790000000000*2}});
+        sd=await sync({},DK);
+        ok(sd.state.results.length===0&&Object.keys(sd.state.disc).length===0&&q(dbB,'select count(*) from results')===nRes&&Number(nRes)>0,'Б74: «очистить результаты» — у шлема пусто, в базе строки прежние ('+nRes+')');
+        ok(tr('room')==='1'&&JSON.parse(q(dbB,"select doc from trash where kind='room'")).title==='Комната','Б74: комната, пропавшая из настроек, — в trash (kind room)');
+        const ex=await (await fetch(T+'/api/export',{headers:{'X-Key':'teach-secret'}})).json();
+        ok(ex.results.length===0,'Б74: выгрузка тоже не отдаёт скрытые результаты');
+      }finally{pB.kill();}
     }
   }
   /* учётки (шаги 4–7…): отдельные Python-файлы с живым сервером; их строки ok/FAIL входят в общий счёт */

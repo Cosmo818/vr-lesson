@@ -419,7 +419,7 @@ $('copyJson').onclick=async()=>{try{await navigator.clipboard.writeText(S.export
 function doImport(text){try{const r=S.importJSON(text);$('ioMsg').textContent=`Добавлено учеников: ${r.students}, результатов: ${r.results}.`;renderAll();}catch(e){$('ioMsg').textContent=e.message;}}
 $('upBtn').onclick=()=>{const f=$('upFile').files[0];if(!f){$('ioMsg').textContent='Выбери файл.';return;}const rd=new FileReader();rd.onload=()=>doImport(rd.result);rd.readAsText(f);};
 $('pasteBtn').onclick=()=>doImport($('paste').value);
-$('clearRes').onclick=()=>{if(confirm('Удалить ВСЕ результаты тестов и открытия? Список учеников останется.')&&confirm('Точно? Восстановить можно только из скачанной копии.')){S.clearResults();renderAll();}};
+$('clearRes').onclick=()=>{if(confirm('Скрыть ВСЕ результаты тестов и открытия? Список учеников останется. Результаты скроются; на сервере они сохраняются до окончательного стирания администратором.')&&confirm('Точно? В программе они пропадут; вернуть скрытое сможет только администратор.')){S.clearResults();renderAll();}};
 
 const KIND={idea:'Идея',bug:'Ошибка',like:'Понравилось',dislike:'Не понравилось',rate:'Оценка'};
 const roomName=k=>!k?'Всё приложение':k==='hall'?'Холл':D.subjects[k]?D.subjects[k].title:k;
@@ -432,7 +432,7 @@ function renderFeedback(){
   $('fTable').innerHTML=R.length?'<tr><th>Когда</th><th>Тип</th><th>Комната</th><th>Оценка</th><th>Текст</th><th>Кто</th><th></th></tr>'+R.map(x=>{const st=x.sid&&S.student(x.sid);return`<tr data-id="${x.id}"><td class="small">${dt(x.ts)}</td><td>${KIND[x.kind]||esc(x.kind)}</td><td>${esc(roomName(x.room))}</td><td>${x.rating?'★'.repeat(x.rating):''}</td><td>${esc(x.text||'')}</td><td class="small">${st?esc(st.name):(x.grade?x.grade+' кл., анонимно':'анонимно')}</td><td><button class="btn red del">Удалить</button></td></tr>`;}).join(''):'';
 }
 $('fbF').onchange=renderFeedback;
-$('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Удалить отзыв?')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
+$('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Убрать отзыв в корзину? Вернуть может директор или администратор.')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
 $('fbCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';download('vr-urok-otzyvy-'+stamp()+'.csv','\ufeff'+[['Дата','Тип','Комната','Оценка','Текст','Класс'].map(q).join(';'),...S.feedback().map(x=>[new Date(x.ts).toLocaleString('ru-RU'),KIND[x.kind]||x.kind,roomName(x.room),x.rating||'',x.text||'',x.grade||''].map(q).join(';'))].join('\r\n'),'text/csv');};
 // каждая вкладка рисуется отдельно: ошибка в одной не должна ломать остальные и статус сервера
 function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderRooms,renderBuilder,renderTests,renderQuestions,renderFeedback,renderArchive]){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
@@ -480,7 +480,7 @@ $('tTable').onclick=e=>{
   if(e.target.classList.contains('act')){S.saveTest(Object.assign({},t,{active:e.target.checked}));renderTests();}
   if(e.target.classList.contains('ed')){ed=toEd(t);edErr='';renderEditor();$('editor').scrollIntoView({behavior:'smooth'});}
   if(e.target.classList.contains('cp')){ed=toEd(t);delete ed.id;delete ed.created;ed.title+=' (копия)';ed.qs.forEach(q=>delete q.id);edErr='';renderEditor();}
-  if(e.target.classList.contains('del')&&confirm(`Удалить тест «${t.title}»? Результаты учеников останутся.`)){S.removeTest(t.id);if(ed&&ed.id===t.id)ed=null;renderTests();}
+  if(e.target.classList.contains('del')&&confirm(`Убрать тест «${t.title}» в корзину? Результаты учеников останутся. Вернуть может директор или администратор.`)){S.removeTest(t.id);if(ed&&ed.id===t.id)ed=null;renderTests();}
 };
 function renderEditor(){
   const box=$('editor');if(!ed){box.innerHTML='';return;}

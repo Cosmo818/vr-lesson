@@ -269,7 +269,7 @@ function onClick(e){
     const tr=t.closest('tr[data-id]');if(!tr)return;const id=tr.dataset.id;
     if(a==='open')open(id);
     else if(a==='copy'){const s=JSON.parse(JSON.stringify(S.customRoom(id)));s.id=RS.newRoomId();s.title=(s.title+' (копия)').slice(0,RS.LIM.title);create(s);}
-    else if(a==='del'){const r=S.customRoom(id);if(r&&confirm('Удалить комнату «'+r.title+'»? Ученики её больше не увидят.')){S.removeRoom(id);show();}}
+    else if(a==='del'){const r=S.customRoom(id);if(r&&confirm('Убрать комнату «'+r.title+'» в корзину? Ученики её больше не увидят. Вернуть может директор или администратор.')){S.removeRoom(id);show();}}
   }
 }
 function onInput(e){
