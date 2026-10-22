@@ -147,6 +147,8 @@ function run(root) {
     'js/store.js': [/VR\.(app|ROOMS|createEngine|makeQuiz)\b/, /\bdocument\./],
     'js/engine.js': [/VR\.(app|ROOMS|makeQuiz)\b/],
     'js/rooms.js': [/VR\.app\b/], 'js/rooms2.js': [/VR\.app\b/], 'js/inf.js': [/VR\.app\b/],
+    'js/roomspec.js': [/VR\.(Store|app|ROOMS|createEngine|errors|flags|makeQuiz)\b/, /localStorage/, /\bdocument\./],
+    'js/custom.js': [/VR\.app\b/], 'js/builder.js': [/VR\.(app|ROOMS|createEngine|makeQuiz)\b/, /localStorage/],
     'js/schema.js': [/VR\.(Store|app|ROOMS|createEngine|flags)\b/, /localStorage/],
     'js/errors.js': [/VR\.(Store|app|ROOMS|createEngine|flags)\b/, /localStorage/],
     'js/flags.js': [/VR\.(app|ROOMS|createEngine)\b/, /localStorage/]
@@ -162,7 +164,7 @@ function run(root) {
   add(!layerBad.length, 'слои (А2): запрещённые зависимости не найдены' + (layerBad.length ? ' — ' + layerBad.join('; ') : ''));
 
   /* L6 */
-  const shadowUnits = ['js/app.js', 'js/store.js', 'js/rooms.js', 'js/rooms2.js', 'js/inf.js'].filter(f => ex(root, f)).map(f => ({name: f, text: rd(root, f)}));
+  const shadowUnits = ['js/app.js', 'js/store.js', 'js/rooms.js', 'js/rooms2.js', 'js/inf.js', 'js/custom.js'].filter(f => ex(root, f)).map(f => ({name: f, text: rd(root, f)}));
   if (ex(root, 'teacher.html')) shadowUnits.push({name: 'teacher.html', text: inlineScripts(root, 'teacher.html').join('\n')});
   const shadow = [];
   for (const u of shadowUnits) {

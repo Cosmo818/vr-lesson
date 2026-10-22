@@ -198,6 +198,7 @@ const Store=VR.Store={
   bandsOf(kind,id){
     const c=(load().settings.content||{})[kind==='room'?'rooms':'packs'];
     if(c&&typeof c[id]==='string')return c[id];
+    if(kind==='room'&&/^c-/.test(id))return '';/* комната конструктора, пока учитель не отметил классы, — черновик */
     if(kind==='pack'){const p=((VR.DATA&&VR.DATA.packs)||[]).find(x=>x.id===id);return p?p.bands:'';}
     return 'abcd';
   },
@@ -211,6 +212,32 @@ const Store=VR.Store={
     c[k]=Object.assign({},c[k]);
     const v=['a','b','c','d'].filter(x=>String(bands).indexOf(x)>=0).join('');
     c[k][id]=v;d.settings.content=c;d.settings.updated=now();save();Store.syncSoon();
+  },
+  /* комнаты конструктора (settings.rooms, формат room/1 — js/roomspec.js) */
+  customRooms(){
+    const r=load().settings.rooms,RS=VR.roomspec,Q=VR.DATA&&VR.DATA.Q;
+    if(!r||!RS)return[];
+    return Object.keys(r).map(id=>RS.clean(r[id],v=>!!(Q&&Q[v])).spec).filter(s=>s&&s.id).sort((a,b)=>a.title.localeCompare(b.title,'ru'));
+  },
+  customRoom(id){return Store.customRooms().find(s=>s.id===id)||null;},
+  saveRoom(spec){
+    const RS=VR.roomspec,Q=VR.DATA&&VR.DATA.Q,d=load();
+    const c=RS.clean(spec,v=>!!(Q&&Q[v]));
+    if(!c.spec)return{spec:null,errors:c.errors};
+    const rooms=Object.assign({},d.settings.rooms||{}),isNew=!rooms[c.spec.id];
+    if(isNew&&Object.keys(rooms).length>=RS.LIM.rooms)return{spec:null,errors:['Комнат уже '+RS.LIM.rooms+': удалите ненужные.']};
+    c.spec.created=isNew?now():(rooms[c.spec.id].created||now());c.spec.updated=now();
+    rooms[c.spec.id]=c.spec;d.settings.rooms=rooms;
+    if(isNew){const ct=Object.assign({},d.settings.content||{});ct.rooms=Object.assign({},ct.rooms,{[c.spec.id]:''});d.settings.content=ct;}
+    d.settings.updated=now();save();Store.syncSoon();
+    return c;
+  },
+  removeRoom(id){
+    const d=load(),rooms=Object.assign({},d.settings.rooms||{});
+    if(!rooms[id])return false;
+    delete rooms[id];d.settings.rooms=rooms;
+    if(d.settings.content&&d.settings.content.rooms&&id in d.settings.content.rooms){const ct=Object.assign({},d.settings.content);ct.rooms=Object.assign({},ct.rooms);delete ct.rooms[id];d.settings.content=ct;}
+    d.settings.updated=now();save();Store.syncSoon();return true;
   },
   resetContent(){const d=load();delete d.settings.content;d.settings.updated=now();save();Store.syncSoon();},
   clearResults(){const d=load();d.settings.resetAt=now();d.settings.updated=now();d.results=[];d.disc={};save();Store.syncSoon();},

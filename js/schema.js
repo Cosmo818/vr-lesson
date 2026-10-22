@@ -46,6 +46,19 @@ function cleanContent(c){
   }
   return o;
 }
+/* settings.rooms: комнаты конструктора {id: room/1}. Ключ = id комнаты; каждая проходит VR.roomspec.clean (нет модуля — запись остаётся как есть) */
+function cleanRooms(r){
+  const o={};let n=0;
+  const RS=VR.roomspec;
+  for(const id of Object.keys(r)){
+    if(n>=30)break;
+    if(!/^c-[a-z0-9_-]{1,38}$/.test(id)||!isObj(r[id]))continue;
+    if(!RS){o[id]=r[id];n++;continue;}
+    const c=RS.clean(Object.assign({},r[id],{id}));
+    if(c.spec&&c.spec.id===id){o[id]=c.spec;n++;}
+  }
+  return o;
+}
 function settings(x){
   const s=Object.assign(blank().settings,x||{});
   if('flags' in s){
@@ -53,6 +66,7 @@ function settings(x){
     if(!f||typeof f!=='object'||Array.isArray(f))delete s.flags;
     else s.flags=cleanFlags(f);
   }
+  if('rooms' in s){if(!isObj(s.rooms)||Array.isArray(s.rooms))delete s.rooms;else s.rooms=cleanRooms(s.rooms);}
   if('content' in s){if(!isObj(s.content)||Array.isArray(s.content))delete s.content;else s.content=cleanContent(s.content);}
   return s;
 }

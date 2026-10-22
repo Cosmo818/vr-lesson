@@ -66,12 +66,14 @@ function startSession(){
 async function go(){
   $('err').textContent='';
   E.audio();startSession();
+  /* ссылка предпросмотра из конструктора: index.html?room=c-… сразу ведёт в комнату */
+  let pv=null;try{VR.custom.refresh();pv=new URLSearchParams(location.search).get('room');if(pv&&E.rooms[pv])E.goRoom(pv);else pv=null;}catch(e){pv=null;}
   if(xrOk){
     try{await E.enterXR();$('ov').hidden=true;}
     catch(e){$('err').textContent=e.message;}
   }else{
     $('ov').hidden=true;$('desk').hidden=false;E.deskInput=true;
-    E.toast(E.rooms.hall.hint);
+    if(!pv)E.toast(E.rooms.hall.hint);
   }
 }
 function endSession(){

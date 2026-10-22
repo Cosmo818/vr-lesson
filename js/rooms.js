@@ -106,6 +106,7 @@ ROOMS.hall={
     const gr=E.student&&E.student.grade?E.student.grade:5;
     for(const [k,x,z,yaw] of DOORS)if(VR.Store.roomOn(k,gr))E.door(x,z,yaw,k,D.subjects[k].title,D.subjects[k].color);
     makeQuiz(E,'gen',[0,1.6,5.86],Math.PI,{teacherOnly:true});
+    if(VR.custom)VR.custom.hallPanel(E,gr);
     /* разминка: стол с предметами */
     const T=E.addTable(-2.7,-3.7,.7,.35,.8);
     [[-3.2,'cube',[.9,.25,.25]],[-2.95,'cube',[.25,.8,.35]],[-2.7,'cube',[.3,.5,.95]],[-2.42,'ball',[.95,.8,.2]],[-2.15,'ball',[.95,.95,.95]]]

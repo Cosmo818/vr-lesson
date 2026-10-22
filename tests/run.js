@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/inf.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/inf.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -267,6 +267,50 @@ function makeCtx(xr){
     ok(VR.openRooms(10).indexOf('inf')<0&&VR.openRooms(3).indexOf('inf')>=0,'наполнение: закрытая комната не попадает в список холла и меню');
     ok(JSON.stringify(VR.schema.validate('settings',{content:{rooms:{inf:'zz',Bad:'a'},packs:{x:'ab'}}}).value.content)==='{"rooms":{},"packs":{"x":"ab"}}','наполнение: схема отбрасывает неверные записи');
     S0.resetContent();ok(S0.roomOn('inf',9),'наполнение: сброс возвращает стандарт');
+  }
+  /* ---- конструктор комнат: формат, хранение, сборка и работа комнаты в движке ---- */
+  {
+    const RS=VR.roomspec,St0=VR.Store;
+    const bad=RS.clean({id:'zzz',title:'<b>x</b>',blocks:[{type:'item',x:99,z:'a',shape:'evil'},{type:'exec',code:'alert(1)'},{type:'question',q:'q'},{type:'text',text:'x'.repeat(5000),onclick:'evil()'}]});
+    ok(bad.spec.id==='c-zzz'&&bad.spec.blocks.length===2&&bad.spec.blocks[0].x===5.4&&bad.spec.blocks[0].shape==='cube'&&bad.spec.blocks[1].text.length===700&&!('onclick' in bad.spec.blocks[1])&&bad.errors.length===2,'конструктор: чужие типы, поля и числа очищены, неполный вопрос убран');
+    const tpl=RS.clean(RS.TEMPLATES.quest.make()).spec;
+    ok(JSON.stringify(RS.clean(tpl).spec)===JSON.stringify(tpl),'конструктор: очистка идемпотентна (повторная очистка ничего не меняет)');
+    const many=RS.clean({blocks:Array.from({length:20},()=>({type:'text',title:'t'}))});
+    ok(many.spec.blocks.length===RS.LIM.panels&&many.errors.length===1,'конструктор: панелей не больше '+RS.LIM.panels);
+    const dsc=RS.clean({blocks:Array.from({length:10},()=>({type:'item',discover:true}))}).spec;
+    ok(dsc.blocks.filter(b=>b.discover).length===RS.LIM.discover,'конструктор: открытий (баллов) не больше '+RS.LIM.discover);
+    ok(RS.cost(RS.clean({blocks:Array.from({length:12},()=>({type:'text',title:'t'}))}).spec).level==='standard'&&RS.cost(tpl).level==='lite','конструктор: оценка нагрузки для Quest 1');
+    St0.removeRoom('c-nope');
+    const r1=St0.saveRoom(Object.assign(RS.TEMPLATES.quest.make(),{title:'Тест-викторина'}));
+    const rid=r1.spec&&r1.spec.id;
+    ok(!!rid&&St0.customRoom(rid).blocks.length===4&&St0.bandsOf('room',rid)===''&&!St0.roomOn(rid,5),'конструктор: новая комната сохранена как черновик (классы не отмечены)');
+    VR.custom.refresh();
+    ok(!!VR.ROOMS[rid]&&VR.ROOMS[rid].title==='Тест-викторина'&&VR.openRooms(5).indexOf(rid)<0,'конструктор: комната зарегистрирована, но в холле и меню скрыта');
+    St0.setBands('room',rid,'abcd');
+    ok(St0.roomOn(rid,5)&&St0.roomOn(rid,10),'конструктор: отмеченные классы открывают комнату');
+    E.goRoom('hall');run(4);
+    {const hp=E.panels.find(p=>p.btns.length===1);ok(!!hp&&(hp.btns[0].fn(),E.roomId===rid),'конструктор: кнопка комнаты учителя в холле ведёт в комнату');E.goRoom('hall');run(4);}
+    E.goRoom(rid);run(6);
+    ok(E.roomId===rid&&E.panels.every(p=>!p.dirty),'конструктор: комната входит и рисуется (панелей '+E.panels.length+')');
+    const qb=St0.customRoom(rid).blocks.find(b=>b.type==='question');
+    const qp=E.panels.find(p=>p.btns.length===3);
+    ok(!!qp,'конструктор: панель вопроса с тремя ответами');
+    const sid=E.student&&E.student.id;
+    qp.btns.forEach(b=>b.fn());run(2);
+    ok(E.panels.indexOf(qp)>=0&&(!sid||St0.addDiscovery(sid,'gen','c:'+rid+':'+qb.id)===false),'конструктор: верный ответ засчитан открытием один раз');
+    const e1=St0.saveRoom(Object.assign(RS.TEMPLATES.expo.make(),{title:'Тест-выставка'})).spec;
+    St0.setBands('room',e1.id,'abcd');VR.custom.refresh();
+    E.goRoom(e1.id);run(6);
+    const t0=E.targets.find(t=>t.id==='ci0');
+    ok(!!t0&&E.targets.filter(t=>/^ci/.test(t.id)).length===3,'конструктор: три предмета выставки можно выбирать лучом');
+    t0.sel({});run(3);
+    ok(E.panels.some(p=>p.show&&p.data&&p.data.label&&p.data.label.length>0),'конструктор: рассказ о предмете показан на панели');
+    ok(St0.removeRoom(rid)&&St0.removeRoom(e1.id)&&!St0.customRoom(rid)&&!Object.prototype.hasOwnProperty.call((St0.settings().content||{}).rooms||{},rid),'конструктор: удаление убирает комнату и её настройки');
+    VR.custom.refresh();ok(!VR.ROOMS[rid],'конструктор: удалённая комната пропала из списка комнат');
+    E.goRoom('hall');run(3);
+    const bad2=St0.saveRoom({title:'x',blocks:[]});St0.removeRoom(bad2.spec.id);
+    const sch=VR.schema.validate('settings',{rooms:{'c-ok1':RS.clean({title:'ok'}).spec,'bad id':{},'c-x':{blocks:[{type:'text'}]}}}).value.rooms;
+    ok(Object.keys(sch).sort().join()==='c-ok1,c-x','конструктор: схема настроек отбрасывает записи с неверным ключом');
   }
   const sq=VR.rooms2Test.seqGen('d');ok(sq.opts.length===4&&sq.opts.includes(sq.ans),'генератор рядов даёт 4 варианта');
   // ---- история
