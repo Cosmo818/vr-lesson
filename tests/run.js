@@ -332,14 +332,14 @@ function makeCtx(xr){
   St.removeTest(tt.id);
   // ---- отзыв из меню VR
   E.goRoom('space');run(5);E._test.deskKey('menu');run(3);
-  const lk=E.menu.btns.find((x,i)=>i===12);lk.fn();
-  ok(St.feedback().some(f=>f.kind==='like'&&f.room==='space'),'кнопка «Нравится» в меню сохранила отзыв');
+  const lk=E.menu.btns.find((x,i)=>i===16);lk.fn();
+  ok(St.feedback().some(f=>f.kind==='rate'&&f.rating===5&&f.room==='space'),'пятая звезда в меню сохранила оценку 5 из 5');
   E.toggleMenu(false);
   ok(typeof E.releaseInput==='function','есть сброс зажатых клавиш');
   // ---- меню и итоги
   E._test.deskKey('menu');run(3);
   ok(E.menuOpen&&E.menu.show&&!E.menu.dirty,'меню открыто и нарисовано');
-  ok(E.menu.btns.length>=12&&E.menu.btns.length<=15,'в меню '+E.menu.btns.length+' кнопок');
+  ok(E.menu.btns.length>=12&&E.menu.btns.length<=17,'в меню '+E.menu.btns.length+' кнопок');
   E.menu.btns[0].fn();ok(E.roomId==='hall'&&!E.menuOpen,'из меню в холл');
   const pts=St.points(stu.id);
   ok(pts.tests===50&&pts.discCount>=10,'баллы: тесты '+pts.tests+', открытий '+pts.discCount+', всего '+pts.total);
@@ -746,7 +746,7 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
     }
   }
   /* учётки (шаги 4–7…): отдельные Python-файлы с живым сервером; их строки ok/FAIL входят в общий счёт */
-  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы'],['open.py','открытые']]){
+  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы'],['open.py','открытые'],['hierarchy.py','иерархия'],['ai.py','помощник']]){
     if(!fs.existsSync(path.join(ROOT,'tests',file)))continue;
     let out='';
     try{out=cp.execFileSync('python3',['-I',path.join(ROOT,'tests',file)],{encoding:'utf-8',timeout:240000});}

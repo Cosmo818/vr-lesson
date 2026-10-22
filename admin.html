@@ -57,13 +57,13 @@ th{color:var(--muted);font-weight:600;font-size:13px}
       <div class="card">
         <div class="row">
           <label class="small muted">Регион<br><select id="fRegion"></select></label>
-          <label class="small muted">Район<br><select id="fDistrict"></select></label>
           <label class="small muted">Школа<br><select id="fSchool"></select></label>
           <label class="small muted">Класс<br><select id="fClass"></select></label>
           <label class="small muted">Учитель<br><select id="fTeacher"></select></label>
+          <label class="small muted" id="fRoleL" hidden>Роль<br><select id="fRole"><option value="">Все</option><option value="superadmin">суперадмин</option><option value="region_admin">региональный администратор</option><option value="director">директор</option></select></label>
           <label class="small muted">Поиск по имени<br><input id="fQ" maxlength="40" placeholder="часть имени"></label>
         </div>
-        <div class="tabs" id="kinds"><button class="tab on" data-k="students">Ученики</button><button class="tab" data-k="teachers">Учителя</button><button class="tab" data-k="classes">Классы</button></div>
+        <div class="tabs" id="kinds"><button class="tab on" data-k="students">Ученики</button><button class="tab" data-k="teachers">Учителя</button><button class="tab" data-k="classes">Классы</button><button class="tab" data-k="admins" id="tabAdm" hidden>Администраторы</button></div>
         <p><button class="btn" id="clsNew" hidden>＋ Создать класс</button></p>
         <div id="peopleErr" class="note err" hidden></div>
         <div class="scroll"><table id="tbl"></table></div>
@@ -106,7 +106,7 @@ th{color:var(--muted);font-weight:600;font-size:13px}
     <section id="s-schools" hidden>
       <h2>Школы</h2>
       <div class="card">
-        <div class="row"><label class="small muted">Название<br><input id="shName" maxlength="80"></label><label class="small muted">Регион<br><input id="shReg" maxlength="60"></label><label class="small muted">Район<br><input id="shDist" maxlength="60"></label><button class="btn" id="shGo">Добавить школу</button></div>
+        <div class="row"><label class="small muted">Название<br><input id="shName" maxlength="80"></label><label class="small muted">Регион<br><input id="shReg" maxlength="60"></label><button class="btn" id="shGo">Добавить школу</button></div>
         <div id="shErr" class="note err" hidden></div>
         <div class="scroll"><table id="shTbl"></table></div>
       </div>

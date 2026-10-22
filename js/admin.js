@@ -7,7 +7,10 @@ const VR=window.VR,S=VR.Store;
 const $=id=>document.getElementById(id);
 function el(tag,text,attrs){const e=document.createElement(tag);if(text!==undefined&&text!==null)e.textContent=String(text);for(const k in attrs||{})e.setAttribute(k,attrs[k]);return e;}
 const isSuper=()=>S.account.roles().some(r=>r.role==='superadmin');
-const isDir=()=>S.account.roles().some(r=>r.role==='director');
+const isReg=()=>S.account.roles().some(r=>r.role==='region_admin');
+const isDir=()=>S.account.roles().some(r=>r.role==='director'||r.role==='region_admin');  /* региональный администратор в своих школах — как директор, плюс выше */
+const ROLE_RU={superadmin:'суперадмин',region_admin:'региональный администратор',director:'директор',teacher:'учитель',expert:'специалист'};
+const roleText=x=>(ROLE_RU[x.role]||x.role)+(x.school?' · '+schoolName(x.school):'');
 const isExp=()=>S.account.roles().some(r=>r.role==='expert');
 let tab='students',page=1,total=0;const SIZE=50;let casc=null,schoolsCache=[];
 const fmt=ts=>ts?new Date(ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
@@ -41,14 +44,14 @@ function select(items,ph){const s=el('select');VR.regions.fill(s,items,ph);retur
 const labelled=(text,node)=>{const l=el('label',text,{class:'bdl'});l.appendChild(node);return l;};
 
 /* ---------- люди и классы ---------- */
-const COLS={students:['Имя','Класс','Школа','Код входа',''],teachers:['ФИО','Логин','Роли',''],classes:['Класс','Школа','Учитель','Учеников','']};
+const COLS={students:['Имя','Класс','Школа','Код входа',''],teachers:['ФИО','Логин','Роли',''],admins:['ФИО','Логин','Роли',''],classes:['Класс','Школа','Учитель','Учеников','']};
 function head(cols){const t=$('tbl');t.textContent='';const tr=el('tr');for(const c of cols)tr.appendChild(el('th',c));t.appendChild(tr);return t;}
-const schoolName=id=>(schoolsCache.find(s=>s.id===id)||{}).name||id;
+const schoolName=id=>String(id||'').startsWith('r:')?'регион «'+id.slice(2)+'»':(schoolsCache.find(s=>s.id===id)||{}).name||id;
 function actions(td,list){for(const [t,fn,cls] of list){const b=el('button',t,{class:'btn '+(cls||'ghost')});b.onclick=fn;td.appendChild(b);td.appendChild(document.createTextNode(' '));}}
 async function loadPeople(){
   await safe('Люди','peopleErr',async()=>{
-    secErr('peopleErr','');$('clsNew').hidden=tab!=='classes';
-    const f=casc.get(),r=await S.accounts({kind:tab,region:f.region,school:f.school,class:f.class,teacher:f.teacher,q:$('fQ').value.trim(),page,size:SIZE});
+    secErr('peopleErr','');$('clsNew').hidden=tab!=='classes';$('fRoleL').hidden=tab!=='admins';
+    const f=casc.get(),r=await S.accounts({kind:tab,role:tab==='admins'?$('fRole').value:'',region:f.region,school:f.school,class:f.class,teacher:f.teacher,q:$('fQ').value.trim(),page,size:SIZE});
     if(bad(r,'peopleErr')){head(COLS[tab]);total=0;pager();return;}
     const t=head(COLS[tab]);total=r.data.total;
     for(const it of r.data.items){
@@ -56,8 +59,8 @@ async function loadPeople(){
       if(tab==='students'){
         tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.className||'—'));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.hasPin?'есть':'нет'));
         const td=el('td');actions(td,[['Перенести',()=>moveStudent(it)],['Сбросить код',()=>resetPin(it)]]);tr.appendChild(td);
-      }else if(tab==='teachers'){
-        tr.appendChild(el('td',it.name||it.login));tr.appendChild(el('td',it.login));tr.appendChild(el('td',it.roles.map(x=>x.role+(x.school?' · '+schoolName(x.school):'')).join(', ')));
+      }else if(tab==='teachers'||tab==='admins'){
+        tr.appendChild(el('td',it.name||it.login));tr.appendChild(el('td',it.login));tr.appendChild(el('td',it.roles.map(roleText).join(', ')));
         const td=el('td');actions(td,[['Сбросить пароль',()=>resetPw(it)],['В архив',()=>archive(it),'red']]);tr.appendChild(td);
       }else{
         tr.appendChild(el('td',it.name));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.teacherName||'— не назначен —'));tr.appendChild(el('td',it.students));
@@ -83,20 +86,19 @@ async function moveStudent(it){
   if(!await dialog('Перенести «'+it.name+'»',labelled('В класс',sel),'Перенести')||!sel.value)return;
   if(await act('student.move',{student_id:it.id,class_id:sel.value},'Ученик перенесён.'))loadPeople();
 }
-/* выбор места назначения: регион → район → школа → учитель; списки приходят из Store.options и зависят друг от друга */
+/* выбор места назначения: регион → школа → учитель; списки приходят из Store.options и зависят друг от друга */
 async function pickTarget(title,school0,teacher0,okText,top){
-  const reg=select([],'— регион —'),dis=select([],'— все районы —'),sch=select([],'— выберите школу —'),tch=select([],'— без учителя —'),box=el('div');
+  const reg=select([],'— регион —'),sch=select([],'— выберите школу —'),tch=select([],'— без учителя —'),box=el('div');
   if(top)box.appendChild(top);
-  for(const [t,n] of [['Регион',reg],['Район',dis],['Школа',sch],['Учитель',tch]])box.appendChild(labelled(t,n));
+  for(const [t,n] of [['Регион',reg],['Школа',sch],['Учитель',tch]])box.appendChild(labelled(t,n));
   const items=r=>r.status===200?r.data.items:[];
-  const loadDis=async()=>VR.regions.fill(dis,items(await S.options({level:'district',parent:reg.value})).filter(x=>x.id),'— все районы —');
-  const loadSch=async()=>VR.regions.fill(sch,items(await S.options({level:'school',parent:reg.value,district:dis.value})),'— выберите школу —');
+  const loadSch=async()=>VR.regions.fill(sch,items(await S.options({level:'school',parent:reg.value})),'— выберите школу —');
   const loadT=async()=>VR.regions.fill(tch,sch.value?items(await S.options({level:'teacher',parent:sch.value})):[],'— без учителя —');
-  reg.onchange=async()=>{await loadDis();await loadSch();await loadT();};dis.onchange=async()=>{await loadSch();await loadT();};sch.onchange=loadT;
+  reg.onchange=async()=>{await loadSch();await loadT();};sch.onchange=loadT;
   const s0=schoolsCache.find(x=>x.id===school0)||{};
   VR.regions.fill(reg,items(await S.options({level:'region'})),'— регион —');
   if(s0.id!==undefined&&Array.from(reg.options).some(o=>o.value===(s0.region||'')))reg.value=s0.region||'';
-  await loadDis();dis.value=s0.district||'';await loadSch();if(school0)sch.value=school0;await loadT();if(teacher0)tch.value=teacher0;
+  await loadSch();if(school0)sch.value=school0;await loadT();if(teacher0)tch.value=teacher0;
   if(!await dialog(title,box,okText))return null;
   if(!sch.value){say('Выберите школу.');return null;}
   return {school:sch.value,teacher:tch.value};
@@ -124,7 +126,7 @@ async function loadInvites(){
     const r=await S.admin('invite.list',{});if(bad(r,'invErr'))return;
     const t=$('invTbl');t.textContent='';const h=el('tr');for(const c of['Кого','Школа','Действует до',''])h.appendChild(el('th',c));t.appendChild(h);
     for(const it of r.data.items){
-      const tr=el('tr');tr.appendChild(el('td',it.role==='director'?'Директор':it.role==='expert'?'Специалист':'Учитель'));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',fmt(it.expires)));
+      const tr=el('tr');tr.appendChild(el('td',(ROLE_RU[it.role]||it.role)));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',fmt(it.expires)));
       const td=el('td'),b=el('button','Отозвать',{class:'btn red'});b.onclick=async()=>{if(!ask('Отозвать приглашение? Код перестанет работать.'))return;const x=await S.admin('invite.revoke',{id:it.id});if(!bad(x,'invErr'))loadInvites();};td.appendChild(b);tr.appendChild(td);t.appendChild(tr);
     }
     if(!r.data.items.length){const tr=el('tr'),td=el('td','Действующих приглашений нет.',{colspan:'4',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
@@ -133,11 +135,12 @@ async function loadInvites(){
 async function makeInvite(){
   await safe('Приглашения','invErr',async()=>{
     secErr('invErr','');
-    const role=$('invRole').value,school=$('invSchool').value;if(!school){secErr('invErr','Выберите школу.');return;}
-    const body={role,school};
-    if(role==='director'){const pw=el('input',null,{type:'password',autocomplete:'current-password'});if(!await dialog('Подтвердите своим паролем',labelled('Ваш пароль',pw),'Подтвердить'))return;body.password=pw.value;}
+    const role=$('invRole').value;let school=$('invSchool').value;const body={role};
+    if(role==='region_admin'){const rs=el('select');VR.regions.fill(rs,[...new Set(schoolsCache.map(s=>s.region).filter(Boolean))].map(r=>({id:r,name:r})),'— регион —');if(!await dialog('Для какого региона',labelled('Регион',rs),'Дальше')||!rs.value){secErr('invErr','Выберите регион.');return;}body.region=rs.value;school='r:'+rs.value;}
+    else{if(!school){secErr('invErr','Выберите школу.');return;}body.school=school;}
+    if(role==='director'||role==='region_admin'){const pw=el('input',null,{type:'password',autocomplete:'current-password'});if(!await dialog('Подтвердите своим паролем',labelled('Ваш пароль',pw),'Подтвердить'))return;body.password=pw.value;}
     const r=await S.admin('invite.create',body);if(bad(r,'invErr'))return;
-    await showCode('Код приглашения: '+(role==='director'?'директор':role==='expert'?'специалист':'учитель')+' · '+schoolName(school),r.data.code,'Действует 7 дней, один раз. Человек вводит его на странице входа («У меня код приглашения»), задаёт логин и пароль.');loadInvites();
+    await showCode('Код приглашения: '+(ROLE_RU[role]||role)+' · '+schoolName(school),r.data.code,'Действует 7 дней, один раз. Человек вводит его на странице входа («У меня код приглашения»), задаёт логин и пароль.');loadInvites();
   });
 }
 
@@ -169,8 +172,8 @@ async function deviceCode(){
 async function loadSchools(){
   await safe('Школы','shErr',async()=>{
     secErr('shErr','');const o=await S.options({level:'school'});if(bad(o,'shErr'))return;schoolsCache=o.data.items;
-    const t=$('shTbl');t.textContent='';const h=el('tr');for(const c of['Школа','Регион','Район','Код',''])h.appendChild(el('th',c));t.appendChild(h);
-    for(const it of o.data.items){const tr=el('tr');tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.region||'—'));tr.appendChild(el('td',it.district||'—'));tr.appendChild(el('td',it.id));
+    const t=$('shTbl');t.textContent='';const h=el('tr');for(const c of['Школа','Регион','Код',''])h.appendChild(el('th',c));t.appendChild(h);
+    for(const it of o.data.items){const tr=el('tr');tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.region||'—'));tr.appendChild(el('td',it.id));
       const td=el('td');if(isSuper()){const b=el('button','Изменить',{class:'btn ghost'});b.onclick=()=>editSchool(it);td.appendChild(b);}tr.appendChild(td);t.appendChild(tr);}
     for(const id of['invSchool','devSchool'])VR.regions.fill($(id),o.data.items,'— выберите школу —',true);
     if(o.data.items.length===1){for(const id of['invSchool','devSchool'])$(id).value=o.data.items[0].id;}
@@ -178,10 +181,10 @@ async function loadSchools(){
   });
 }
 async function editSchool(it){
-  const n=el('input',null,{maxlength:'80',value:it.name}),rg=el('input',null,{maxlength:'60',value:it.region||''}),ds=el('input',null,{maxlength:'60',value:it.district||''});
-  const b=el('div');b.appendChild(labelled('Название',n));b.appendChild(labelled('Регион',rg));b.appendChild(labelled('Район',ds));
+  const n=el('input',null,{maxlength:'80',value:it.name}),rg=el('input',null,{maxlength:'60',value:it.region||''});
+  const b=el('div');b.appendChild(labelled('Название',n));b.appendChild(labelled('Регион',rg));
   if(!await dialog('Школа',b,'Сохранить'))return;
-  const r=await S.admin('school.update',{id:it.id,name:n.value,region:rg.value.trim(),district:ds.value.trim()});if(bad(r,'shErr'))return;
+  const r=await S.admin('school.update',{id:it.id,name:n.value,region:rg.value.trim()});if(bad(r,'shErr'))return;
   say('Сохранено.');await refreshAll();
 }
 /* все списки школ и фильтров — на лету, без перезагрузки страницы */
@@ -193,8 +196,8 @@ async function refreshAll(){
 async function addSchool(){
   await safe('Школы','shErr',async()=>{
     secErr('shErr','');const name=$('shName').value.trim();if(!name){secErr('shErr','Введите название школы.');return;}
-    const r=await S.admin('school.create',{name,region:$('shReg').value.trim(),district:$('shDist').value.trim()});if(bad(r,'shErr'))return;
-    $('shName').value='';$('shReg').value='';$('shDist').value='';say('Школа добавлена.');await refreshAll();
+    const r=await S.admin('school.create',{name,region:$('shReg').value.trim()});if(bad(r,'shErr'))return;
+    $('shName').value='';$('shReg').value='';say('Школа добавлена.');await refreshAll();
   });
 }
 
@@ -222,11 +225,12 @@ function show(){
   const roles=S.account.roles();
   if(!isSuper()&&!isDir()&&!isExp()){lock('Эта страница для директора, специалиста и администратора. Откройте кабинет учителя.',true);return;}
   const onlyExp=!isSuper()&&!isDir();
-  $('who').textContent=(S.account.who()||'')+' · '+(isSuper()?'администратор':isDir()?'директор':'специалист');
+  $('who').textContent=(S.account.who()||'')+' · '+(isSuper()?'администратор':isReg()?'региональный администратор':isDir()?'директор':'специалист');
+  $('tabAdm').hidden=!(isSuper()||isReg());
   for(const id of['s-people','s-invites','s-devices'])$(id).hidden=onlyExp;
   $('s-closed').hidden=!(isSuper()||isExp());
   $('s-schools').hidden=!isSuper();
-  const roleSel=$('invRole');roleSel.textContent='';for(const [v,t] of isSuper()?[['teacher','Учитель'],['director','Директор'],['expert','Специалист']]:[['teacher','Учитель'],['expert','Специалист']])roleSel.appendChild(el('option',t,{value:v}));
+  const roleSel=$('invRole');roleSel.textContent='';for(const [v,t] of isSuper()?[['teacher','Учитель'],['director','Директор'],['expert','Специалист'],['region_admin','Региональный администратор']]:[['teacher','Учитель'],['expert','Специалист']])roleSel.appendChild(el('option',t,{value:v}));
   say('');
   if(onlyExp){fillClosedSchools();return;}
   loadSchools().then(()=>safe('Фильтр','peopleErr',async()=>{await casc.init();})).then(()=>{loadInvites();loadDevices();fillClosedSchools();});
@@ -234,12 +238,12 @@ function show(){
 function bind(){
   $('out').onclick=async e=>{e.preventDefault();await S.account.logout();location.replace('teacher.html');};
   $('kinds').onclick=e=>{const b=e.target.closest('[data-k]');if(!b)return;tab=b.dataset.k;page=1;for(const x of $('kinds').children)x.classList.toggle('on',x===b);loadPeople();};
-  $('clsNew').onclick=createClass;
+  $('clsNew').onclick=createClass;$('fRole').onchange=()=>{page=1;loadPeople();};
   $('prev').onclick=()=>{if(page>1){page--;loadPeople();}};$('next').onclick=()=>{page++;loadPeople();};
   let tm=null;$('fQ').oninput=()=>{clearTimeout(tm);tm=setTimeout(()=>{page=1;loadPeople();},300);};
   $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
   $('devLimGo').onclick=async()=>{const r=await S.admin('school.update',{id:$('devSchool').value,device_limit:$('devLim').value});if(!bad(r,'devErr')){say('Лимит сохранён.');loadDevices();}};
-  casc=VR.regions.cascade({region:$('fRegion'),district:$('fDistrict'),school:$('fSchool'),cls:$('fClass'),teacher:$('fTeacher')},()=>{page=1;loadPeople();});
+  casc=VR.regions.cascade({region:$('fRegion'),school:$('fSchool'),cls:$('fClass'),teacher:$('fTeacher')},()=>{page=1;loadPeople();});
 }
 /* вернулись на вкладку — обновляем списки (директор мог добавить школу или приглашение с другого устройства) */
 let lastFocus=0;

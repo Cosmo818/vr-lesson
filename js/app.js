@@ -131,6 +131,7 @@ function hooks(){
   $('mInv').onchange=()=>{E.setMouseCfg({invY:$('mInv').checked});saveCfg();};
   E.hooks.onMouseCfg=()=>{syncPanel();saveCfg();};
   window.addEventListener('keydown',e=>{if(e.code==='KeyH'&&E.deskInput&&!(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))&&!e.repeat){helpToggle();e.preventDefault();}});
+  const rated={};  /* оценка комнаты в этом сеансе: звёзды остаются закрашенными */
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
@@ -147,9 +148,13 @@ function hooks(){
       const cr=VR.ROOMS[E.roomId];
       if(cr&&cr.custom&&VR.custom.teacherOk())p.button(36,880,340,70,VR.custom.editing()===E.roomId?'Редактор открыт':'Править комнату',()=>{E.toggleMenu(false);VR.custom.startEdit(E,E.roomId);},{bg:'#a16207',size:32});
       else p.text('Как тебе эта комната?',36,892,{size:32,color:'#b8c7ea'});
-      const vote=k=>{const st=E.student||{};S.addFeedback({kind:k,room:E.roomId,grade:st.grade||null});E.toast('Спасибо за отзыв!');E.chime();};
-      p.button(400,880,(W-436-18)/2,70,'Нравится',()=>vote('like'),{bg:'#15803d',size:32});
-      p.button(418+(W-436-18)/2,880,(W-436-18)/2,70,'Не нравится',()=>vote('dislike'),{bg:'#9a3412',size:32});
+      /* оценка комнаты: пять звёзд, при наведении закрашиваются до наведённой, по щелчку сохраняется оценка */
+      const rate=n=>{const st=E.student||{};S.addFeedback({kind:'rate',room:E.roomId,rating:n,grade:st.grade||null,sid:st.id||null});rated[E.roomId]=n;E.toast('Спасибо за оценку: '+n+' из 5!');E.chime();E.menu.dirty=true;};
+      const sx=400,sw=(W-sx-36)/5;let hovI=-1;
+      for(let k=0;k<5;k++)if(p.area(sx+k*sw,880,sw,70,()=>rate(k+1)))hovI=k;
+      const full=hovI>=0?hovI+1:(rated[E.roomId]||0);
+      for(let k=0;k<5;k++){const cx=sx+k*sw+sw/2;p.ctx.font='bold 64px sans-serif';p.ctx.textAlign='center';p.ctx.textBaseline='middle';p.ctx.fillStyle=k<full?'#facc15':'#475569';p.ctx.fillText(k<full?'★':'☆',cx,915);}
+      p.ctx.textAlign='left';p.ctx.textBaseline='top';
     }
     p.text('Меню: кнопка A или X',W/2,968,{size:28,align:'center',color:'#94a3b8'});
   };

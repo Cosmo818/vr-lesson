@@ -421,7 +421,7 @@ $('upBtn').onclick=()=>{const f=$('upFile').files[0];if(!f){$('ioMsg').textConte
 $('pasteBtn').onclick=()=>doImport($('paste').value);
 $('clearRes').onclick=()=>{if(confirm('Удалить ВСЕ результаты тестов и открытия? Список учеников останется.')&&confirm('Точно? Восстановить можно только из скачанной копии.')){S.clearResults();renderAll();}};
 
-const KIND={idea:'Идея',bug:'Ошибка',like:'Понравилось',dislike:'Не понравилось'};
+const KIND={idea:'Идея',bug:'Ошибка',like:'Понравилось',dislike:'Не понравилось',rate:'Оценка'};
 const roomName=k=>!k?'Всё приложение':k==='hall'?'Холл':D.subjects[k]?D.subjects[k].title:k;
 function renderFeedback(){
   const L=S.feedback(),agg={};
