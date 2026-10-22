@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/inf.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/inf.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -56,6 +56,38 @@ function makeCtx(xr){
   for(const s of['math','phys','chem','space','bio','soc','logic','hist'])for(const b of['a','b','c','d']){const L=D.Q[s][b];if(!L||L.length<5)bad.push(s+b+' мало вопросов');for(const q of L){qn++;if(q.a.length!==4||new Set(q.a).size!==4)bad.push(q.id+' ответы');if(!q.q||!q.e)bad.push(q.id+' текст');}}
   ok(!bad.length,'вопросы корректны: '+qn+' шт. '+bad.join(', '));
   ok(D.elements.length===20&&new Set(D.elements.map(e=>e[4]+'-'+e[5])).size===20,'таблица: 20 элементов без наложений');
+  /* ---------- полная таблица и ядерная модель (Б65, шаги 28–29) ---------- */
+  {
+    const PT=D.ptable,N=V0.nuc,en=(z,a)=>({z,a}),near=(v,t,d)=>Math.abs(v-t)<=d;
+    ok(PT.length===118&&new Set(PT.map(r=>r[0])).size===118,'ptable: 118 элементов с уникальными символами');
+    ok(D.elements.every((e,i)=>PT[i][0]===e[1]&&PT[i][1]===e[2]&&PT[i][2]===e[3]),'ptable: первые 20 совпадают с D.elements');
+    ok(PT.every(r=>D.elCats[r[4]]),'ptable: каждая категория есть в elCats');
+    ok(PT.every((r,i)=>Number.isInteger(r[3])&&r[3]>=i+1&&r[3]<=300&&(i===0||r[3]>=2*(i+1)-2)),'ptable: массовые числа A разумны (Z ≤ A ≤ 300, A ≥ 2Z−2)');
+    const sy={};PT.forEach(r=>sy[r[0]]=r[3]);
+    ok(sy.H===1&&sy.He===4&&sy.C===12&&sy.O===16&&sy.Fe===56&&sy.Au===197&&sy.Pb===208&&sy.U===238&&sy.Og===294,'ptable: контрольные A (H, He, C, O, Fe, Au, Pb, U, Og)');
+    ok(PT.every((r,i)=>{const z=i+1,brk=/^\[\d+\]$/.test(r[2]);return(brk===(z===43||z===61||z>=84&&z!==90&&z!==91&&z!==92))&&(brk||/^\d+(,\d+)?$/.test(r[2]));}),'ptable: масса — число, а [A] ровно у радиоактивных без Th, Pa, U');
+    ok(V0.flags.on('chemLab')===true,'flags: chemLab включён по умолчанию');
+    const cs=new Set();let cOk=true;for(let z=1;z<=118;z++){const c=N.cell(z);cs.add(c.row+','+c.col);if(c.col<1||c.col>18||![1,2,3,4,5,6,7,9,10].includes(c.row))cOk=false;}
+    ok(cs.size===118&&cOk&&N.el(0)===null&&N.el(119)===null&&N.el(26).sym==='Fe'&&N.el(26).period===4&&N.el(92).rad&&!N.el(26).rad,'nuc: cell даёт 118 разных ячеек, el(Z) корректен');
+    ok(Array.from({length:20},(_,i)=>N.be(i+1,PT[i][3])).every(b=>b&&b.exact),'nuc: у 20 первых элементов изотоп из таблицы есть в EX');
+    const f1=N.fuse(en(6,12),en(2,4)),f2=N.fuse(en(8,16),en(2,4)),f3=N.fuse(en(6,12),en(6,12)),f4=N.fuse(en(6,12),en(8,16)),f5=N.fuse(en(1,1),en(3,7)),f6=N.fuse(en(2,4),en(2,4));
+    ok(f1.ok&&f1.to[0].z===8&&f1.to[0].a===16&&near(f1.q,7.16,.01)&&f1.exact,'nuc: C-12 + He-4 → O-16, 7,16 МэВ');
+    ok(near(f2.q,4.73,.01)&&near(f3.q,13.93,.02)&&f3.to[0].z===12&&near(f4.q,16.76,.02)&&near(f5.q,17.25,.02),'nuc: O+He, C+C, C+O, H+Li — энергии');
+    ok(near(f6.q,-.09,.01)&&/распад[а-я]* на два/.test(V0.nuc.note(f6)),'nuc: He-4 + He-4 → Be-8, −0,09 МэВ, пояснение про распад');
+    ok(N.fuse(en(1,1),en(1,1)).why==='pp'&&N.fuse(en(118,294),en(1,1)).why==='z>118','nuc: pp и Z > 118 — отказы');
+    const ff=N.fuse(en(26,56),en(26,56));ok(ff.q<0&&!ff.exact,'nuc: Fe-56 + Fe-56 поглощает энергию, оценка');
+    const sU=N.split(en(92,238)),fq=N.fissionQ(92,238);
+    ok(sU.kind==='alpha'&&sU.to[0].z===90&&sU.to[0].a===234&&sU.to[1].z===2&&sU.q>2&&sU.q<9,'nuc: U-238 → Th-234 + He-4, альфа-распад');
+    ok(N.split(en(92,235)).kind==='alpha'&&N.split(en(82,208)).kind==='fission'&&N.split(en(82,208)).q>0,'nuc: U-235 альфа; Pb-208 — деление с выигрышем');
+    ok(fq.q>150&&fq.q<230&&N.split(en(26,56)).q<0,'nuc: деление U-238 ≈ 183 МэВ; Fe-56 — поглощение');
+    const sh=N.split(en(2,4)),sl=N.split(en(3,7));
+    ok(sh.n===2&&sh.to.length===2&&sh.to.every(t=>t.z===1&&t.a===1)&&near(sh.q,-28.30,.02),'nuc: He-4 → 2 H-1 + 2 n, −28,30 МэВ');
+    ok(sl.n===2&&sl.to[0].z===1&&sl.to[1].z===2&&sl.to[1].a===4&&near(sl.q,-10.95,.02),'nuc: Li-7 → H-1 + He-4 + 2 n, −10,95 МэВ');
+    ok(N.split(en(1,1)).why==='h','nuc: у водорода делить нечего');
+    ok(near(N.semf(26,56)/N.REF['26-56'],1,.01)&&near(N.semf(92,238)/N.REF['92-238'],1,.015),'nuc: формула Вайцзеккера в пределах 1 % / 1,5 % от справочника');
+    ok(near(N.perGram(17.6,5)/3.4e8,1,.01)&&N.coalT(N.perGram(183,238))>2&&N.coalT(N.perGram(183,238))<3&&N.num(1.4e8)==='140 млн'&&N.fmtQ(f1)==='7,16 МэВ'&&N.fmtQ(ff).startsWith('≈ −'),'nuc: энергия на грамм, уголь, num и fmtQ');
+    const cv=N.curve();ok(cv.length>60&&cv.every(p=>p[1]>=0&&p[1]<9.5)&&cv.some(p=>p[0]===56||p[0]>=55&&p[0]<=58),'nuc: curve() — график энергии связи на нуклон');
+  }
   for(const m of D.molecules){const cnt={};for(const a of m.atoms)cnt[a[0]]=(cnt[a[0]]||0)+1;const okm=Object.keys(m.f).every(k=>m.f[k]===cnt[k])&&Object.keys(cnt).length===Object.keys(m.f).length;if(!okm)bad.push(m.key);}
   ok(!bad.length,'модели молекул совпадают с формулами');
   const ico=V0.geo.icosaVF(),dod=V0.geo.dodecaVF();
@@ -212,6 +244,15 @@ function makeCtx(xr){
   ok(E.bodies.filter(b=>b.data.el).length===20,'атомов не больше 20');
   run(10);
   const pt=Ch.pt;ok(pt.btns.length===20,'в таблице 20 кнопок-элементов');pt.btns[5].fn();ok(Ch.el===5,'выбран углерод');
+  {/* движок: keepTex и labelTex (Б65, шаг 27) */
+    let nk=0,nn=0;
+    const pk=E.addPanel({w:.5,h:.5,res:64,pos:[0,1.5,-3],keepTex:true,draw:()=>{nk++;}}),pn=E.addPanel({w:.5,h:.5,res:64,pos:[0,1.5,-3.1],draw:()=>{nn++;}});
+    run(3);const k0=nk,n0=nn;pk.hover=3;pn.hover=3;run(3);
+    ok(nk===k0&&nn>n0,'движок: панель keepTex не перерисовывается при наведении, обычная — перерисовывается');
+    let lf=0;const f=()=>{lf++;};const t1=E.labelTex('t-a',f),t2=E.labelTex('t-a',f);
+    ok(t1===t2&&lf===1,'движок: labelTex кэширует текстуру');
+    pk.show=false;pn.show=false;
+  }
 
   // ---- космос
   E.goRoom('space');run(25);

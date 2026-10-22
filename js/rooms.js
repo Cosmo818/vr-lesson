@@ -324,7 +324,7 @@ ROOMS.chem={
       const ix=1090;
       if(S.el<0){
         p.text('Нажми на элемент',ix,110,{size:42,bold:true,maxW:480});
-        let y=180;for(const k in D.elCats){c.fillStyle=D.elCats[k][1];c.fillRect(ix,y+6,28,28);p.text(D.elCats[k][0],ix+44,y,{size:30,maxW:440});y+=48;}
+        let y=180;for(const k in D.elCats){if(!D.elements.some(e=>e[6]===k))continue;c.fillStyle=D.elCats[k][1];c.fillRect(ix,y+6,28,28);p.text(D.elCats[k][0],ix+44,y,{size:30,maxW:440});y+=48;}
       }else{
         const [n,sym,name,mass,,,cat,fact]=D.elements[S.el];
         p.text(sym,ix,96,{size:150,bold:true,color:D.elCats[cat][1]});

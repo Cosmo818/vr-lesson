@@ -53,10 +53,11 @@ VR.ROOMS.id = {
   title, hint, env:{floor,wall,trim,grid,open}, spawn:{x,z},
   build(E,S){},          // создать статику, панели, предметы; S — состояние комнаты
   targets(E,S){return[]},// объекты под лучом: {c:[x,y,z], r, id, sel(hand)}
-  update(E,S,dt){}, draw(E,S,add){}, onGrab(E,S,b){}, onRelease(E,S,b,speed){}
+  update(E,S,dt){}, draw(E,S,add){}, onGrab(E,S,b){}, onRelease(E,S,b,speed){},
+  pick(E,S,h,hit){}      // необязательный: «держать» по панели без предмета на луче -> вернуть новое тело (E.addBody) или null; hit={t,kind:'panel',p,bi}
 };
 ```
-Инструменты движка для комнат: `E.addPanel({w,h,pos,yaw,draw(c,p)})` (в `draw`: `p.text`, `p.button`, `p.area`), `E.addBody`, `E.addStatic`, `E.addTable`, `E.door`, `E.discover(subj,key,label)`, `E.toast`, `E.burst`, `E.beep/chime/fanfare`, `VR.makeQuiz(E,subj,pos,yaw)`.
+Опция панели `keepTex:true` — движок не перерисовывает её при наведении и нажатии (большие статичные панели). `E.labelTex(key,draw(ctx,128))` — кэш текстур-плашек 128x128 (до 160, иначе null). Стик Y при удержании предмета в VR двигает его вдоль руки (`off[14]`, −6…0; проверить в шлеме). Инструменты движка для комнат: `E.addPanel({w,h,pos,yaw,draw(c,p)})` (в `draw`: `p.text`, `p.button`, `p.area`), `E.addBody`, `E.addStatic`, `E.addTable`, `E.door`, `E.discover(subj,key,label)`, `E.toast`, `E.burst`, `E.beep/chime/fanfare`, `VR.makeQuiz(E,subj,pos,yaw)`.
 
 Чтобы добавить комнату: 1) код по контракту в `rooms2.js` или новом файле; 2) предмет в `D.subjects` и `VR.ORDER`; 3) дверь в `DOORS` холла; 4) вопросы в `questions.js`; 5) новый файл — в `index.html` и `sw.js` (поднять версию кэша); 6) тест в `tests/run.js`.
 
