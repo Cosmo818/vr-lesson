@@ -6,19 +6,31 @@
   device  — для шлемов: ученики, результаты, открытия.
 Эндпоинты: GET /api/health, POST /api/sync, GET /api/export (только учитель).
 """
-import json, os, re, secrets, sqlite3, sys, threading, time, hmac
+import base64, getpass, hashlib, ipaddress, json, os, re, secrets, sqlite3, sys, threading, time, hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DATA = os.environ.get('DATA_DIR', '/data')
 PORT = int(os.environ.get('PORT', '8787'))
 DB_PATH = os.path.join(DATA, 'vrlesson.db')
 KEYS_PATH = os.path.join(DATA, 'keys.json')
+CONFIG_PATH = os.path.join(DATA, 'config.json')
 MAX_BODY = 8 * 1024 * 1024
 VERSION = '3'
 SCHEMA = 4
 DEFAULT_SCHOOL = 'school-default'
 NEW_FIELDS = ('school', 'year', 'status')
 AUDIT_DETAIL_MAX = 2048
+PW_ITER = 600000  # число итераций PBKDF2; хранится в строке хэша, поднять можно без миграции (перехэш при входе)
+SESSION_CAP = 12 * 3600 * 1000  # потолок сессии, не настраивается (решение владельца, PLAN 5.5)
+SESSION_MIN_DEFAULT, SESSION_MIN_LO, SESSION_MIN_HI = 15, 5, 300
+LOGIN_FREE_TRIES = 5  # ошибок подряд без паузы; дальше пауза 30 с, растёт вдвое до 15 мин
+IP_PER_MIN = 20
+RESERVED_LOGINS = ('admin', 'root', 'superadmin', 'director', 'teacher')
+ROLES = ('superadmin', 'director', 'teacher', 'expert')
+LOGIN_RE = re.compile(r'^[A-Za-z0-9._-]{3,32}$')
+COMMON_PW = frozenset('''1234567890 0123456789 12345678910 1q2w3e4r5t 1qaz2wsx3edc qwertyuiop qwerty1234 qwerty12345 qwertyuiop1 asdfghjkl1 password12 password123 password1234
+password12345 passw0rd123 iloveyou123 administrator qazwsxedc12 zaq12wsxcde 9876543210 1234554321 abcdefghij abcd123456 123456789a 1234567890q admin12345 admin123456 adminadmin
+teacher1234 teacher12345 school12345 schooluser1 yfcnhjqrf1 qwertyuiopasdfghjkl 11111111111 0000000000 1111111111 vrlesson123 vrlesson1234'''.split())
 lock = threading.Lock()
 
 
@@ -451,6 +463,286 @@ def role_of(key):
     return None
 
 
+# ---------- учётки (шаги 4–5 PLAN.md): пароли, настройки, вход, сессии ----------
+def load_config():
+    """/data/config.json: accounts (по умолчанию false — новые эндпоинты отвечают 404), legacyTeacher (true), sessionMinutes (15). Читается на каждый запрос: выключатель действует без перезапуска.
+    Это НЕ settings.flags: те синхронизируются и меняются ключом teacher, а флаг безопасности старым ключом включаться не должен."""
+    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT}
+    try:
+        with open(CONFIG_PATH, encoding='utf-8') as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            if isinstance(raw.get('accounts'), bool):
+                cfg['accounts'] = raw['accounts']
+            if isinstance(raw.get('legacyTeacher'), bool):
+                cfg['legacyTeacher'] = raw['legacyTeacher']
+            m = raw.get('sessionMinutes')
+            if isinstance(m, int) and not isinstance(m, bool) and SESSION_MIN_LO <= m <= SESSION_MIN_HI:
+                cfg['sessionMinutes'] = m
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+def save_config(cfg):
+    tmp = CONFIG_PATH + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=1)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CONFIG_PATH)
+
+
+def hash_pw(pw, iters=None):
+    iters = iters or PW_ITER
+    salt = secrets.token_bytes(16)
+    h = hashlib.pbkdf2_hmac('sha256', pw.encode('utf-8'), salt, iters)
+    return 'pbkdf2_sha256$%d$%s$%s' % (iters, base64.b64encode(salt).decode(), base64.b64encode(h).decode())
+
+
+def parse_hash(stored):
+    try:
+        alg, it, salt, h = str(stored).split('$')
+        it = int(it)
+        if alg != 'pbkdf2_sha256' or it < 1 or it > 10_000_000:
+            return None
+        return it, base64.b64decode(salt, validate=True), base64.b64decode(h, validate=True)
+    except (ValueError, TypeError):
+        return None
+
+
+def check_pw(pw, stored):
+    """Сравнение за постоянное время; число итераций берётся из строки хэша. Битая или пустая строка — False."""
+    p = parse_hash(stored)
+    if not p or not isinstance(pw, str):
+        return False
+    it, salt, h = p
+    return hmac.compare_digest(hashlib.pbkdf2_hmac('sha256', pw.encode('utf-8'), salt, it), h)
+
+
+def needs_rehash(stored):
+    p = parse_hash(stored)
+    return bool(p) and p[0] < PW_ITER
+
+
+_dummy = []
+
+
+def dummy_hash():
+    if not _dummy:
+        _dummy.append(hash_pw('нет-такого-пользователя'))
+    return _dummy[0]
+
+
+def pw_error(pw, login=''):
+    """Правила пароля (PLAN 1.3): 10–128 символов, не равен логину, не из списка частых, не из одного повторяющегося символа. Возвращает текст ошибки или None."""
+    if not isinstance(pw, str):
+        return 'Пароль не задан.'
+    if len(pw) < 10:
+        return 'Пароль короче 10 символов. Лучше длинная фраза.'
+    if len(pw) > 128:
+        return 'Пароль длиннее 128 символов.'
+    low = pw.lower()
+    if login and low == str(login).lower():
+        return 'Пароль не должен совпадать с логином.'
+    if low in COMMON_PW or len(set(pw)) == 1:
+        return 'Слишком частый пароль. Придумайте другой.'
+    return None
+
+
+def login_error(login):
+    if not isinstance(login, str) or not LOGIN_RE.match(login):
+        return 'Логин: латиница, цифры, точка, подчёркивание, дефис, 3–32 символа.'
+    if login.lower() in RESERVED_LOGINS:
+        return 'Этот логин зарезервирован.'
+    return None
+
+
+def user_create(c, login, name, password, who):
+    """Создать пользователя (без ролей). Бросает ValueError с понятным текстом. В журнал — без пароля и хэша."""
+    err = login_error(login) or pw_error(password, login)
+    if err:
+        raise ValueError(err)
+    if c.execute('SELECT 1 FROM users WHERE login = ?', (login,)).fetchone():
+        raise ValueError('Такой логин уже занят.')
+    uid = 'u-' + secrets.token_hex(8)
+    now = int(time.time() * 1000)
+    c.execute('INSERT INTO users(id, login, name, email, pw, status, pw_changed, created, updated) VALUES(?, ?, ?, NULL, ?, ?, ?, ?, ?)',
+              (uid, login, str(name or '')[:80], hash_pw(password), 'active', now, now, now))
+    audit(c, who, 'user.create', 'user', uid, None, {'login': login})
+    return uid
+
+
+def role_add(c, user_id, role, school, who, created_by=None):
+    if role not in ROLES:
+        raise ValueError('Неизвестная роль.')
+    school = '' if role == 'superadmin' else str(school or '')
+    if role != 'superadmin' and not c.execute('SELECT 1 FROM schools WHERE id = ?', (school,)).fetchone():
+        raise ValueError('Такой школы нет.')
+    if not c.execute('SELECT 1 FROM users WHERE id = ?', (user_id,)).fetchone():
+        raise ValueError('Такого пользователя нет.')
+    c.execute('INSERT OR IGNORE INTO user_roles(user_id, role, school, status, created, created_by) VALUES(?, ?, ?, ?, ?, ?)',
+              (user_id, role, school, 'active', int(time.time() * 1000), created_by or who[1]))
+    audit(c, who, 'role.add', 'user', user_id, school or None, {'role': role})
+
+
+def user_roles(c, user_id):
+    return [{'role': r, 'school': s} for r, s in c.execute("SELECT role, school FROM user_roles WHERE user_id = ? AND status = 'active' ORDER BY role, school", (user_id,))]
+
+
+def revoke_sessions(c, user_id):
+    c.execute('DELETE FROM sessions WHERE user_id = ?', (user_id,))
+
+
+def set_password(c, user_id, password, who, action):
+    now = int(time.time() * 1000)
+    c.execute('UPDATE users SET pw = ?, pw_changed = ?, updated = ? WHERE id = ?', (hash_pw(password), now, now, user_id))
+    revoke_sessions(c, user_id)
+    audit(c, who, action, 'user', user_id, None, {})
+
+
+def client_ip(h):
+    """Адрес клиента. За Caddy соединение приходит с частного адреса: тогда берём X-Forwarded-For (последнее значение дописывает наш Caddy)."""
+    peer = h.client_address[0]
+    try:
+        priv = ipaddress.ip_address(peer).is_private
+    except ValueError:
+        priv = False
+    if priv:
+        xff = (h.headers.get('X-Forwarded-For') or '').split(',')[-1].strip()
+        try:
+            return str(ipaddress.ip_address(xff))
+        except ValueError:
+            pass
+    return peer
+
+
+def thash(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def throttle(c, login, ip, now):
+    """Пауза после ошибок и лимит по IP (PLAN 4). Возвращает секунды ожидания или 0. Вызывать под lock."""
+    row = c.execute('SELECT n, until, last FROM login_fail WHERE k = ?', ('i:' + ip,)).fetchone()
+    n, last = (row[0], row[2] or 0) if row else (0, 0)
+    if now - last > 60000:
+        n, last = 0, now
+    n += 1
+    until = 0
+    if n > IP_PER_MIN:
+        until = last + 60000
+    c.execute('INSERT OR REPLACE INTO login_fail(k, n, until, last) VALUES(?, ?, ?, ?)', ('i:' + ip, n, until, last))
+    if n > IP_PER_MIN:
+        return max(1, (until - now + 999) // 1000)
+    row = c.execute('SELECT until FROM login_fail WHERE k = ?', ('u:' + login,)).fetchone()
+    if row and row[0] > now:
+        return (row[0] - now + 999) // 1000
+    return 0
+
+
+def register_fail(c, login, ip, now):
+    row = c.execute('SELECT n FROM login_fail WHERE k = ?', ('u:' + login,)).fetchone()
+    n = (row[0] if row else 0) + 1
+    until = 0
+    if n >= LOGIN_FREE_TRIES:
+        until = now + min(30000 * 2 ** (n - LOGIN_FREE_TRIES), 900000)
+        if n == LOGIN_FREE_TRIES:
+            audit(c, ('user', None, ip), 'auth.lockout', 'login', login[:40], None, {})
+    c.execute('INSERT OR REPLACE INTO login_fail(k, n, until, last) VALUES(?, ?, ?, ?)', ('u:' + login, n, until, now))
+    if n == 1:
+        c.execute("DELETE FROM login_fail WHERE last < ? AND until < ?", (now - 86400000, now))
+
+
+def session_start(c, user_id, ip, now):
+    token = secrets.token_urlsafe(32)
+    idle = load_config()['sessionMinutes'] * 60000
+    c.execute('INSERT INTO sessions(token_hash, user_id, created, last_seen, expires, ip) VALUES(?, ?, ?, ?, ?, ?)',
+              (thash(token), user_id, now, now, min(now + idle, now + SESSION_CAP), ip))
+    return token, min(now + idle, now + SESSION_CAP)
+
+
+def session_user(c, token):
+    """Пользователь по токену или None. Срок считается от last_seen по текущей настройке (смена настройки действует на открытые сессии), потолок 12 ч от входа.
+    Роли здесь не читаются из токена: вызывающий берёт их из базы заново."""
+    if not token:
+        return None
+    now = int(time.time() * 1000)
+    th = thash(token)
+    row = c.execute('SELECT user_id, created, last_seen FROM sessions WHERE token_hash = ?', (th,)).fetchone()
+    if not row:
+        return None
+    uid, created, seen = row
+    idle = load_config()['sessionMinutes'] * 60000
+    if now > seen + idle or now > created + SESSION_CAP:
+        c.execute('DELETE FROM sessions WHERE token_hash = ?', (th,))
+        return None
+    u = c.execute("SELECT id, login, name FROM users WHERE id = ? AND status = 'active'", (uid,)).fetchone()
+    if not u:
+        c.execute('DELETE FROM sessions WHERE token_hash = ?', (th,))
+        return None
+    c.execute('UPDATE sessions SET last_seen = ?, expires = ? WHERE token_hash = ?', (now, min(now + idle, created + SESSION_CAP), th))
+    return {'id': u[0], 'login': u[1], 'name': u[2], 'expires': min(now + idle, created + SESSION_CAP)}
+
+
+def cli(argv):
+    """Команды суперадмина на сервере: пароль только через getpass (не в аргументах, не в истории оболочки, А14)."""
+    cmd = argv[0] if argv else ''
+    who = ('cli', 'cli', '')
+    init_db()
+    if cmd in ('create-superadmin', 'reset-password') and len(argv) == 2:
+        login = argv[1]
+        p1 = getpass.getpass('Пароль: ')
+        p2 = getpass.getpass('Пароль ещё раз: ')
+        if p1 != p2:
+            print('Пароли не совпали.', file=sys.stderr)
+            return 1
+        try:
+            with lock, db() as c:
+                if cmd == 'create-superadmin':
+                    uid = user_create(c, login, login, p1, who)
+                    role_add(c, uid, 'superadmin', '', who)
+                    print('Суперадмин создан: %s' % login)
+                else:
+                    r = c.execute('SELECT id FROM users WHERE login = ?', (login,)).fetchone()
+                    if not r:
+                        raise ValueError('Такого логина нет.')
+                    err = pw_error(p1, login)
+                    if err:
+                        raise ValueError(err)
+                    set_password(c, r[0], p1, who, 'user.password_reset')
+                    print('Пароль заменён, все сессии пользователя закрыты.')
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        return 0
+    if cmd == 'set-session-minutes' and len(argv) == 2:
+        try:
+            m = int(argv[1])
+        except ValueError:
+            m = -1
+        if not SESSION_MIN_LO <= m <= SESSION_MIN_HI:
+            print('Срок простоя — от %d до %d минут.' % (SESSION_MIN_LO, SESSION_MIN_HI), file=sys.stderr)
+            return 1
+        cfg = load_config()
+        old = cfg['sessionMinutes']
+        cfg['sessionMinutes'] = m
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.session_minutes', 'config', 'sessionMinutes', None, {'from': old, 'to': m})
+        print('Срок простоя сессии: %d мин (действует на открытые сессии со следующего запроса).' % m)
+        return 0
+    if cmd == 'accounts' and len(argv) == 2 and argv[1] in ('on', 'off'):
+        cfg = load_config()
+        old = cfg['accounts']
+        cfg['accounts'] = argv[1] == 'on'
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.accounts', 'config', 'accounts', None, {'from': old, 'to': cfg['accounts']})
+        print('Учётки %s.' % ('включены' if cfg['accounts'] else 'выключены'))
+        return 0
+    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off', file=sys.stderr)
+    return 2
+
+
 class H(BaseHTTPRequestHandler):
     server_version = 'vr-lesson/' + VERSION
 
@@ -459,7 +751,7 @@ class H(BaseHTTPRequestHandler):
 
     def cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Key')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Key, Authorization')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Max-Age', '86400')
 
@@ -496,9 +788,108 @@ class H(BaseHTTPRequestHandler):
                 return self.reply(403, {'error': 'teacher only'})
             with lock, db() as c:
                 return self.reply(200, state(c))
+        if self.path.startswith('/api/auth/'):
+            return self.auth_api('GET')
         self.reply(404, {'error': 'not found'})
 
+    def bearer(self):
+        a = self.headers.get('Authorization') or ''
+        return a[7:].strip() if a[:7].lower() == 'bearer ' else ''
+
+    def auth_api(self, method):
+        """/api/auth/login, logout, me, password. Пока флаг accounts выключен — 404, как будто их нет."""
+        if not load_config()['accounts']:
+            return self.reply(404, {'error': 'not found'})
+        route = self.path.split('?')[0]
+        ip = client_ip(self)
+        body = {}
+        if method == 'POST':
+            n = num(self.headers.get('Content-Length'))
+            if n <= 0 or n > 4096:
+                return self.reply(413, {'error': 'body size'})
+            try:
+                body = json.loads(self.rfile.read(n).decode('utf-8'))
+                if not isinstance(body, dict):
+                    raise ValueError
+            except ValueError:
+                return self.reply(400, {'error': 'bad json'})
+        if route == '/api/auth/login' and method == 'POST':
+            return self.do_login(body, ip)
+        if route == '/api/auth/me' and method == 'GET':
+            with lock, db() as c:
+                u = session_user(c, self.bearer())
+                out = (200, {'user': {'id': u['id'], 'login': u['login'], 'name': u['name']}, 'roles': user_roles(c, u['id']), 'expires': u['expires']}) if u else (401, {'error': 'no session'})
+            return self.reply(*out)  # ответ — после фиксации транзакции: клиент сразу использует результат
+        if route == '/api/auth/logout' and method == 'POST':
+            with lock, db() as c:
+                u = session_user(c, self.bearer())
+                if u:
+                    c.execute('DELETE FROM sessions WHERE token_hash = ?', (thash(self.bearer()),))
+                    audit(c, ('user', u['id'], ip), 'auth.logout', 'user', u['id'], None, {})
+            return self.reply(200, {'ok': True})
+        if route == '/api/auth/password' and method == 'POST':
+            return self.do_password(body, ip)
+        self.reply(404, {'error': 'not found'})
+
+    def do_login(self, body, ip):
+        login = body.get('login')
+        pw = body.get('password')
+        if not isinstance(login, str) or not isinstance(pw, str) or len(login) > 64 or len(pw) > 256:
+            return self.reply(401, {'error': 'bad login'})
+        login = login.strip().lower()
+        now = int(time.time() * 1000)
+        with lock, db() as c:
+            wait = throttle(c, login, ip, now)
+        if wait:
+            return self.reply(429, {'error': 'too many attempts', 'retry': wait})
+        with db() as c0:
+            row = c0.execute("SELECT id, pw, status FROM users WHERE login = ?", (login,)).fetchone()
+        good = bool(row) and row[2] == 'active'
+        stored = row[1] if good else dummy_hash()  # для неизвестного логина считаем тот же хэш: одинаковое время ответа
+        okp = check_pw(pw, stored) and good
+        with lock, db() as c:
+            if not okp:
+                register_fail(c, login, ip, now)
+                out = (401, {'error': 'bad login'})
+            else:
+                out = None
+                c.execute('DELETE FROM login_fail WHERE k = ?', ('u:' + login,))
+                if needs_rehash(stored):
+                    c.execute('UPDATE users SET pw = ? WHERE id = ?', (hash_pw(pw), row[0]))
+                token, exp = session_start(c, row[0], ip, now)
+                u = c.execute('SELECT id, login, name FROM users WHERE id = ?', (row[0],)).fetchone()
+                audit(c, ('user', row[0], ip), 'auth.login', 'user', row[0], None, {})
+                out = (200, {'token': token, 'user': {'id': u[0], 'login': u[1], 'name': u[2]}, 'roles': user_roles(c, row[0]), 'expires': exp})
+        return self.reply(*out)
+
+    def do_password(self, body, ip):
+        old, new = body.get('old'), body.get('new')
+        tok = self.bearer()
+        now = int(time.time() * 1000)
+        with lock, db() as c:
+            u = session_user(c, tok)
+            if not u:
+                return self.reply(401, {'error': 'no session'})
+            wait = throttle(c, 'pw:' + u['login'], ip, now)
+            stored = c.execute('SELECT pw FROM users WHERE id = ?', (u['id'],)).fetchone()[0]
+        if wait:
+            return self.reply(429, {'error': 'too many attempts', 'retry': wait})
+        if not isinstance(old, str) or len(old) > 256 or not check_pw(old, stored):
+            with lock, db() as c:
+                register_fail(c, 'pw:' + u['login'], ip, now)
+            return self.reply(403, {'error': 'bad password'})
+        err = pw_error(new, u['login'])
+        if err:
+            return self.reply(400, {'error': err})
+        with lock, db() as c:
+            c.execute('DELETE FROM login_fail WHERE k = ?', ('u:pw:' + u['login'],))
+            set_password(c, u['id'], new, ('user', u['id'], ip), 'user.password_change')
+            token, exp = session_start(c, u['id'], ip, now)
+        self.reply(200, {'ok': True, 'token': token, 'expires': exp})
+
     def do_POST(self):
+        if self.path.startswith('/api/auth/'):
+            return self.auth_api('POST')
         if not self.path.startswith('/api/sync'):
             return self.reply(404, {'error': 'not found'})
         r = self.auth()
@@ -520,6 +911,8 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        sys.exit(cli(sys.argv[1:]))
     init_db()
     print('VR-урок: сервер слушает порт %d, база %s' % (PORT, DB_PATH), flush=True)
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

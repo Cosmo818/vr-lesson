@@ -701,6 +701,16 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
       ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='4'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 4');
     }
   }
+  /* учётки (шаги 4–5): отдельный Python-файл с живым сервером; его строки ok/FAIL входят в общий счёт */
+  {
+    let out='';
+    try{out=cp.execFileSync('python3',['-I',path.join(ROOT,'tests/accounts.py')],{encoding:'utf-8',timeout:240000});}
+    catch(e){out=(e.stdout||'')+'\nFAIL: tests/accounts.py завершился с ошибкой '+String(e.stderr||e.message).slice(-300);}
+    for(const ln of out.split('\n')){
+      if(ln.startsWith('ok  : '))ok(true,'учётки: '+ln.slice(6));
+      else if(ln.startsWith('FAIL: '))ok(false,'учётки: '+ln.slice(6));
+    }
+  }
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');
   process.exit(fails?1:0);
 })().catch(e=>{console.log('EXCEPTION',e&&e.stack||e);process.exit(2);});
