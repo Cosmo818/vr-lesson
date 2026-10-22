@@ -238,6 +238,12 @@ try:
     st, b = adm('dirA', 'device.code', {'school': 's-b'}); ok(st == 403, 'директор А не выпускает код для школы Б')
     st, b = adm('sup', 'school.update', {'id': 's-a', 'device_limit': 1}); ok(st == 200, 'суперадмин задаёт лимит шлемов школы')
     st, b = adm('dirA', 'school.update', {'id': 's-a', 'device_limit': 99}); ok(st == 403, 'директор лимит менять не может')
+    st, b = adm('sup', 'school.update', {'id': 's-a', 'district': 'Неверный'}); ok(st == 200 and sql("select district from schools where id='s-a'")[0][0] == 'Неверный', 'школе поставлен район')
+    st, b = adm('dirA', 'school.update', {'id': 's-a', 'district': ''}); ok(st == 403 and sql("select district from schools where id='s-a'")[0][0] == 'Неверный', 'директор район не очищает')
+    n_upd = sql("select count(*) from audit_log where action='school.update'")[0][0]
+    st, b = adm('sup', 'school.update', {'id': 's-a', 'district': ''}); ok(st == 200, 'суперадмин очищает район пустой строкой')
+    ok(sql("select district from schools where id='s-a'")[0][0] == '' and sql("select name from schools where id='s-a'")[0][0] == 'Школа А', 'район в базе пустой, школа на месте')
+    ok(sql("select count(*) from audit_log where action='school.update'")[0][0] == n_upd + 1, 'очистка района записана в журнал')
     st, b = adm('dirA', 'device.code', {'school': 's-a', 'name': 'Шлем 1'}); pc = b.get('code', ''); ok(st == 200 and len(pc) == 8, 'директор выпускает код привязки (8 знаков)')
     st, b = adm('dirA', 'device.code', {'school': 's-a'}); ok(st == 400 and 'Лимит' in b['error'], 'сверх лимита код не выдаётся, текст понятный')
     st, b = req('POST', '/api/device/pair', {'code': 'NOPE2345'}); ok(st == 400, 'неверный код привязки отклонён')

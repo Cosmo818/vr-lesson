@@ -189,7 +189,10 @@ async function loadSchools(){
 }
 async function editSchool(it){
   const n=el('input',null,{maxlength:'80',value:it.name}),rg=el('input',null,{maxlength:'60',value:it.region||''}),ds=el('input',null,{maxlength:'60',value:it.district||''});
-  const b=el('div');b.appendChild(labelled('Название',n));b.appendChild(labelled('Регион',rg));b.appendChild(labelled('Район',ds));
+  const b=el('div');b.appendChild(labelled('Название',n));b.appendChild(labelled('Регион',rg));
+  const dl=el('datalist',null,{id:'dsList'});for(const d of [...new Set((schoolsCache||[]).map(s=>s.district).filter(Boolean))])dl.appendChild(el('option',null,{value:d}));ds.setAttribute('list','dsList');
+  b.appendChild(labelled('Район',ds));b.appendChild(dl);
+  const clr=el('button','Убрать район',{class:'btn ghost',id:'dsClear',type:'button'});clr.onclick=()=>{ds.value='';};b.appendChild(clr);
   if(!await dialog('Школа',b,'Сохранить'))return;
   const r=await S.admin('school.update',{id:it.id,name:n.value,region:rg.value.trim(),district:ds.value.trim()});if(bad(r,'shErr'))return;
   say('Сохранено.');await refreshAll();
