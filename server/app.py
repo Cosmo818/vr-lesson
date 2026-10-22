@@ -323,13 +323,90 @@ def find_record(c, rid):
     return 'unknown', None
 
 
-def merge_in(c, inc, role, ip=''):
+# ---------- права по поддереву (шаг 6 PLAN.md, А10, А17) ----------
+def scope(c, p):
+    """Что видит и меняет принципал. legacy-teacher и device (и вызовы без принципала) — как раньше, всё (all). Пользователь: суперадмин — всё; директор — школы,
+    где у него роль director; учитель — свои классы (teacherId = он) в школах, где он учитель. Роли берутся из базы на каждом запросе (p['roles']), не из токена."""
+    if not p or p.get('kind') != 'user':
+        return {'all': True, 'dir': set(), 'tch': set(), 'uid': None, 'user': False}
+    roles = p.get('roles') or []
+    if any(r['role'] == 'superadmin' for r in roles):
+        return {'all': True, 'dir': set(), 'tch': set(), 'uid': p['id'], 'user': True}
+    return {'all': False, 'dir': {r['school'] for r in roles if r['role'] == 'director'},
+            'tch': {r['school'] for r in roles if r['role'] == 'teacher'}, 'uid': p['id'], 'user': True}
+
+
+def can_write(sc):
+    return sc['all'] or bool(sc['dir']) or bool(sc['tch'])
+
+
+def class_in_scope(sc, school, teacher_id):
+    return sc['all'] or school in sc['dir'] or (school in sc['tch'] and teacher_id is not None and teacher_id == sc['uid'])
+
+
+def class_row(c, cid):
+    if not cid:
+        return None
+    return c.execute('SELECT school, teacherId FROM classes WHERE id = ?', (str(cid),)).fetchone()
+
+
+def student_in_scope(c, sc, doc):
+    """Ученик в срезе, если его класс в срезе; ученик без класса — только у директора его школы."""
+    if sc['all']:
+        return True
+    if not isinstance(doc, dict):
+        return False
+    cid = doc.get('classId')
+    if cid:
+        r = class_row(c, cid)
+        return bool(r) and class_in_scope(sc, r[0], r[1])
+    return doc.get('school') in sc['dir']
+
+
+def sid_in_scope(c, sc, sid, cache):
+    if sc['all']:
+        return True
+    if sid not in cache:
+        row = c.execute('SELECT doc FROM students WHERE id = ?', (sid,)).fetchone()
+        cache[sid] = bool(row) and student_in_scope(c, sc, load_doc(row[0]))
+    return cache[sid]
+
+
+def record_in_scope(c, sc, rid, cache):
+    """Можно ли удалить запись с таким id: только своя. Неизвестный id — нельзя (надгробие на чужой или будущий id запретило бы запись)."""
+    if sc['all']:
+        return True
+    row = c.execute('SELECT doc FROM students WHERE id = ?', (rid,)).fetchone()
+    if row:
+        return student_in_scope(c, sc, load_doc(row[0]))
+    r = class_row(c, rid)
+    if r:
+        return class_in_scope(sc, r[0], r[1])
+    if c.execute('SELECT 1 FROM tests WHERE id = ?', (rid,)).fetchone() or c.execute('SELECT 1 FROM feedback WHERE id = ?', (rid,)).fetchone():
+        return can_write(sc)
+    row = c.execute('SELECT sid FROM results WHERE id = ?', (rid,)).fetchone()
+    return bool(row) and sid_in_scope(c, sc, row[0], cache)
+
+
+def merge_in(c, inc, role, ip='', principal=None):
     """Вносит присланное состояние в базу по тем же правилам, что и js/store.js (merge). Реальные изменения пишутся в журнал аудита (audit) в той же транзакции."""
     teacher = role == 'teacher'
-    who = ('legacy-teacher' if teacher else 'device', role, ip)  # ключ в журнал не попадает, только его роль
+    sc = scope(c, principal)
+    user = sc['user']
+    if user and not can_write(sc):
+        return {'rejected': {'all': 1}}
+    who = ('user', principal['id'], ip) if user else ('legacy-teacher' if teacher else 'device', role, ip)  # ключ в журнал не попадает, только его роль
+    rej = {}
+    cache = {}
+
+    def deny(kind):
+        rej[kind] = rej.get(kind, 0) + 1
     if teacher:
         for k, ts in (inc.get('deleted') or {}).items():
             k = str(k)
+            if user and not record_in_scope(c, sc, k, cache):
+                deny('deleted')
+                continue
             if c.execute('SELECT 1 FROM deleted WHERE id = ?', (k,)).fetchone() is None:  # пишем только новое удаление, повтор не дублируем
                 kind, school = find_record(c, k)
                 detail = {}
@@ -341,6 +418,10 @@ def merge_in(c, inc, role, ip=''):
         if s:
             row = c.execute('SELECT updated FROM settings WHERE id = 1').fetchone()
             if not row or num(s.get('updated')) > row[0]:
+                if user:  # пользователь не видит и не меняет хэш пароля старой страницы учителя: берём его из текущих настроек сервера
+                    s = {k: v for k, v in s.items() if k != 'pinHash'}
+                    if 'pinHash' in get_settings(c):
+                        s['pinHash'] = get_settings(c)['pinHash']
                 keys = changed_keys(get_settings(c), s)
                 if keys:
                     audit(c, who, 'settings.update', 'settings', None, DEFAULT_SCHOOL, {'keys': keys})  # настройки общие, школа пока одна
@@ -357,7 +438,17 @@ def merge_in(c, inc, role, ip=''):
             continue  # ключ шлема может только добавлять новых учеников, но не менять существующих (имя, класс, код входа, архив)
         if not row or upd > row[0]:
             old_d = None if not row else load_doc(row[1])
+            if user:
+                if row and not student_in_scope(c, sc, old_d):
+                    deny('students')
+                    continue
+                ncl = class_row(c, s.get('classId'))
+                if not ncl or not class_in_scope(sc, ncl[0], ncl[1]):
+                    deny('students')
+                    continue
             d = fill_v4(s, old_d, 'students', device_new=not teacher)
+            if user:
+                d['school'] = ncl[0]  # школа ученика — школа его класса, присланное значение не берём
             if not teacher and d.get('classId'):
                 kr = c.execute('SELECT status FROM classes WHERE id = ?', (d['classId'],)).fetchone()
                 if kr and kr[0] == 'archived':
@@ -378,7 +469,21 @@ def merge_in(c, inc, role, ip=''):
             row = c.execute('SELECT updated, doc FROM classes WHERE id = ?', (k['id'],)).fetchone()
             if not row or num(k.get('updated')) > row[0]:
                 old_d = load_doc(row[1]) if row else None
+                if user and row:
+                    orow = class_row(c, k['id'])
+                    if not class_in_scope(sc, orow[0], orow[1]):
+                        deny('classes')
+                        continue
                 d = fill_v4(k, old_d, 'classes')
+                if user and row:
+                    d['school'] = orow[0]  # класс не переезжает в другую школу
+                elif user and not sc['all']:
+                    if sc['dir']:
+                        d['school'] = d['school'] if d['school'] in sc['dir'] else sorted(sc['dir'])[0]
+                        d.pop('teacherId', None)
+                    else:
+                        d['school'] = d['school'] if d['school'] in sc['tch'] else sorted(sc['tch'])[0]
+                        d['teacherId'] = sc['uid']  # новый класс учителя принадлежит ему
                 c.execute('INSERT OR REPLACE INTO classes(id, name, updated, doc, school, year, status, teacherId) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
                           (k['id'], '%s%s' % (num(k.get('grade')), str(k.get('letter', ''))[:4]), num(k.get('updated')), json.dumps(d, ensure_ascii=False), d['school'], d['year'], d['status'], d.get('teacherId')))
                 name = '%s%s' % (num(k.get('grade')), str(k.get('letter', ''))[:4])
@@ -396,6 +501,9 @@ def merge_in(c, inc, role, ip=''):
     for r in inc.get('results') or []:
         if not isinstance(r, dict) or not r.get('id') or not r.get('sid') or r['sid'] in deleted or num(r.get('ts')) < reset:
             continue
+        if user and not sid_in_scope(c, sc, r['sid'], cache):
+            deny('results')
+            continue
         c.execute('INSERT OR IGNORE INTO results(id, sid, subj, score, total, ts, doc) VALUES(?, ?, ?, ?, ?, ?, ?)',
                   (r['id'], r['sid'], str(r.get('subj', '')), num(r.get('score')), num(r.get('total')), num(r.get('ts')), json.dumps(r, ensure_ascii=False)))
     for f in inc.get('feedback') or []:
@@ -405,6 +513,9 @@ def merge_in(c, inc, role, ip=''):
                   (f['id'], num(f.get('ts')), str(f.get('kind', ''))[:20], str(f.get('room') or '')[:20], num(f.get('rating'), None), str(f.get('text', ''))[:1000], json.dumps(f, ensure_ascii=False)))
     for sid, m in (inc.get('disc') or {}).items():
         if sid in deleted or not isinstance(m, dict):
+            continue
+        if user and not sid_in_scope(c, sc, sid, cache):
+            deny('disc')
             continue
         for k, ts in m.items():
             if num(ts) >= reset:
@@ -416,6 +527,9 @@ def merge_in(c, inc, role, ip=''):
     c.execute('DELETE FROM results WHERE sid IN (SELECT id FROM deleted) OR id IN (SELECT id FROM deleted) OR ts < ?', (reset,))
     c.execute('DELETE FROM disc WHERE sid IN (SELECT id FROM deleted) OR ts < ?', (reset,))
     c.execute('DELETE FROM feedback WHERE id IN (SELECT id FROM deleted)')
+    if rej:
+        audit(c, who, 'sync.rejected', 'sync', None, None, rej)  # только счётчики по видам, без содержимого (А13)
+    return {'rejected': rej}
 
 
 def load_doc(raw):
@@ -431,26 +545,54 @@ def get_settings(c):
     return json.loads(row[0]) if row else {}
 
 
-def state(c, hide_pins=False):
-    """Состояние для ответа. hide_pins: ключ шлема не получает видимые коды учеников (pinView)."""
+def state(c, hide_pins=False, principal=None):
+    """Состояние для ответа. hide_pins: ключ шлема не получает видимые коды учеников (pinView).
+    principal-пользователь получает только свой срез (scope): классы, их учеников, результаты и открытия этих учеников; тесты, отзывы, надгробия — общие."""
+    sc = scope(c, principal)
     def stud(raw):
         d = json.loads(raw)
         if hide_pins:
             d.pop('pinView', None)
         return d
-    disc = {}
-    for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
-        disc.setdefault(sid, {})[k] = ts
+    if sc['all']:
+        classes = [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')]
+        students = [stud(r[0]) for r in c.execute('SELECT doc FROM students')]
+        results = [json.loads(r[0]) for r in c.execute('SELECT doc FROM results ORDER BY ts')]
+        disc = {}
+        for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
+            disc.setdefault(sid, {})[k] = ts
+        settings = get_settings(c)
+    else:
+        classes, ok_cls = [], set()
+        for cid, school, tid, raw in c.execute('SELECT id, school, teacherId, doc FROM classes'):
+            if class_in_scope(sc, school, tid):
+                ok_cls.add(cid)
+                classes.append(json.loads(raw))
+        students, ok_st = [], set()
+        for sid, raw in c.execute('SELECT id, doc FROM students'):
+            d = json.loads(raw)
+            if (d.get('classId') in ok_cls) if d.get('classId') else (d.get('school') in sc['dir']):
+                ok_st.add(sid)
+                students.append(stud(raw))
+        results = []
+        for sid, raw in c.execute('SELECT sid, doc FROM results ORDER BY ts'):
+            if sid in ok_st:
+                results.append(json.loads(raw))
+        disc = {}
+        for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
+            if sid in ok_st:
+                disc.setdefault(sid, {})[k] = ts
+        settings = {k: v for k, v in get_settings(c).items() if k != 'pinHash'}
     return {
         'v': SCHEMA,
-        'classes': [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')],
-        'students': [stud(r[0]) for r in c.execute('SELECT doc FROM students')],
+        'classes': classes,
+        'students': students,
         'tests': [json.loads(r[0]) for r in c.execute('SELECT doc FROM tests')],
-        'results': [json.loads(r[0]) for r in c.execute('SELECT doc FROM results ORDER BY ts')],
+        'results': results,
         'disc': disc,
         'feedback': [json.loads(r[0]) for r in c.execute('SELECT doc FROM feedback ORDER BY ts')],
         'deleted': {k: ts for k, ts in c.execute('SELECT id, ts FROM deleted')},
-        'settings': get_settings(c),
+        'settings': settings,
     }
 
 
@@ -777,17 +919,43 @@ class H(BaseHTTPRequestHandler):
             self.reply(401, {'error': 'bad key'})
         return r
 
+    def principal(self):
+        """Кто пришёл: пользователь по Authorization: Bearer (только при accounts=true) или принципал по старому ключу. Ответ об ошибке отправляет сам, возвращает None."""
+        cfg = load_config()
+        ip = client_ip(self)
+        tok = self.bearer()
+        if tok and cfg['accounts']:
+            with lock, db() as c:
+                u = session_user(c, tok)
+                roles = user_roles(c, u['id']) if u else []
+            if not u:
+                self.reply(401, {'error': 'no session'})
+                return None
+            if not roles:
+                self.reply(403, {'error': 'no roles'})
+                return None
+            return {'kind': 'user', 'id': u['id'], 'login': u['login'], 'roles': roles, 'ip': ip}
+        r = role_of(self.headers.get('X-Key'))
+        if r == 'teacher' and not cfg['legacyTeacher']:
+            r = None
+        if not r:
+            time.sleep(1)
+            self.reply(401, {'error': 'bad key'})
+            return None
+        return {'kind': 'legacy-teacher' if r == 'teacher' else 'device', 'id': r, 'ip': ip}
+
     def do_GET(self):
         if self.path.startswith('/api/health'):
             return self.reply(200, {'ok': True, 'version': VERSION, 'schema': SCHEMA})
         if self.path.startswith('/api/export'):
-            r = self.auth()
-            if not r:
+            p = self.principal()
+            if not p:
                 return
-            if r != 'teacher':
+            if p['kind'] == 'device':
                 return self.reply(403, {'error': 'teacher only'})
             with lock, db() as c:
-                return self.reply(200, state(c))
+                st = state(c, False, p)
+            return self.reply(200, st)
         if self.path.startswith('/api/auth/'):
             return self.auth_api('GET')
         self.reply(404, {'error': 'not found'})
@@ -892,9 +1060,10 @@ class H(BaseHTTPRequestHandler):
             return self.auth_api('POST')
         if not self.path.startswith('/api/sync'):
             return self.reply(404, {'error': 'not found'})
-        r = self.auth()
-        if not r:
+        p = self.principal()
+        if not p:
             return
+        r = 'device' if p['kind'] == 'device' else 'teacher'  # у пользователя права «учителя» ограничены его срезом (scope)
         n = num(self.headers.get('Content-Length'))
         if n <= 0 or n > MAX_BODY:
             return self.reply(413, {'error': 'body size'})
@@ -905,9 +1074,13 @@ class H(BaseHTTPRequestHandler):
         except ValueError:
             return self.reply(400, {'error': 'bad json'})
         with lock, db() as c:
-            merge_in(c, inc, r, self.client_address[0])
-            st = state(c, r != 'teacher')
-        self.reply(200, {'role': r, 'state': st, 'time': int(time.time() * 1000)})
+            res = merge_in(c, inc, r, p['ip'], p)
+            st = state(c, r != 'teacher', p)
+        out = {'role': r, 'state': st, 'time': int(time.time() * 1000)}
+        if p['kind'] == 'user':
+            out['user'] = p['login']
+            out['rejected'] = (res or {}).get('rejected', {})
+        self.reply(200, out)
 
 
 if __name__ == '__main__':
