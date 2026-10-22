@@ -1847,6 +1847,8 @@ def history_api(c, p, q):
         t_to = int(q['to']) if q.get('to') else None
     except ValueError:
         raise AdminError(400, 'page, size, from и to — числа.')
+    if page > 1000 or any(t is not None and not 0 <= t <= 10 ** 14 for t in (t_from, t_to)):
+        raise AdminError(400, 'page не больше 1000, from и to — миллисекунды от 0 до 10^14.')
     is_super = sc['all']
     teacher_only = False
     if school == '-':
@@ -1857,7 +1859,7 @@ def history_api(c, p, q):
         if school not in scope_schools(c, sc):
             raise AdminError(403, 'Нет доступа к этой школе.')
         if is_super or school in sc['dir']:
-            where = '(school = ? OR (target_kind = \'user\' AND target_id IN (SELECT user_id FROM user_roles WHERE school = ?)))'
+            where = '(school = ? OR (target_kind = \'user\' AND (school IS NULL OR school = \'\') AND target_id IN (SELECT user_id FROM user_roles WHERE school = ?)))'
             par = [school, school]
         else:  # учитель: только ученики и классы его классов
             teacher_only = True
@@ -1886,19 +1888,25 @@ def history_api(c, p, q):
             return {}
         return {r[0]: f(r) for r in c.execute('SELECT %s FROM %s WHERE id IN (%s)' % ('id, doc' if table in ('students', 'classes') else 'id, name, login' if table == 'users' else 'id, name', table, ','.join('?' * len(ids))), ids)}
     tg = lambda k: [r[3] for r in rows if r[2] == k]  # noqa: E731
-    nm = {'student': names('students', tg('student'), lambda r: (load_doc(r[1]) or {}).get('name', '')),
-          'class': names('classes', tg('class'), lambda r: '%s%s' % ((load_doc(r[1]) or {}).get('grade', ''), (load_doc(r[1]) or {}).get('letter', ''))),
-          'user': names('users', tg('user') + [r[5] for r in rows if r[4] == 'user'], lambda r: r[1] or r[2]),
+    def stu(r):
+        return (load_doc(r[1]) or {}).get('name', '')
+
+    def cls_name(r):
+        d0 = load_doc(r[1]) or {}
+        return '%s%s' % (d0.get('grade', ''), d0.get('letter', ''))
+    nm = {'student': names('students', tg('student'), stu), 'class': names('classes', tg('class'), cls_name),
+          'user': names('users', tg('user') + [r[5] for r in rows if r[4] == 'user'], lambda r: (r[1], r[2])),
           'school': names('schools', tg('school'), lambda r: r[1])}
     items = []
     for ts, action, tk, tid, ak, aid, det, ip in rows:
         d = load_doc(det) if det else {}
         d = d if isinstance(d, dict) else {}
         if ak == 'user':
-            actor = nm['user'].get(aid, '')
+            actor = nm['user'].get(aid, ('', ''))
+            actor = actor[0] or actor[1]
         else:
             actor = {'legacy-teacher': 'ключ учителя', 'device': 'шлем'}.get(ak, 'сервер')
-        it = {'ts': ts, 'action': action, 'kind': tk or '', 'target': tid or '', 'name': nm.get(tk, {}).get(tid, ''), 'actor': actor,
+        it = {'ts': ts, 'action': action, 'kind': tk or '', 'target': tid or '', 'name': (nm.get(tk, {}).get(tid, '') or ('', ''))[0] if tk == 'user' else nm.get(tk, {}).get(tid, ''), 'actor': actor,
               'detail': {k: d[k] for k in HISTORY_DETAIL if k in d}}
         if is_super:
             it['ip'] = ip or ''

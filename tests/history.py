@@ -33,6 +33,9 @@ with app.db() as c:
         UID[k] = app.user_create(c, LOGIN[k], k, PW[k], WHO)
         for r, s in roles:
             app.role_add(c, UID[k], r, s, WHO)
+    UID['multi'] = app.user_create(c, 'multi.one', '', 'Pass-multi-2026-Zq', WHO)
+    app.role_add(c, UID['multi'], 'teacher', 's-a', WHO)
+    app.role_add(c, UID['multi'], 'teacher', 's-b', WHO)
     classes = [('cA1', 's-a', 'tA1', 5, 'А'), ('cA2', 's-a', 'tA2', 5, 'Б'), ('cB1', 's-b', None, 7, 'А')]
     inc = {'classes': [{'id': i, 'grade': g, 'letter': l, 'created': NOW, 'updated': NOW, 'school': sch} for i, sch, t, g, l in classes],
            'students': [], 'results': [], 'disc': {}, 'settings': {'updated': NOW, 'minutes': 8}}
@@ -150,6 +153,17 @@ try:
         d = hist(k, 'school=s-a&size=1')[1]['items'][0]
         ok(d['action'] == 'test.detail' and d['detail'] == {'name': '5А', 'count': 3}, 'белый список detail (%s)' % k)
     ok(hist('sup', 'school=s-a&size=1')[1]['items'][0]['ip'] == '10.1.2.3' and 'ip' not in hist('dirA', 'school=s-a&size=1')[1]['items'][0], 'ip: суперадмину да, директору нет')
+    # --- совместитель A+B: событие школы Б не видно директору А; пустое имя не заменяется логином
+    sql("insert into audit_log(ts,actor_kind,actor_id,action,target_kind,target_id,school,detail,ip) values(?,?,?,?,?,?,?,?,?)",
+        NOW + 650000, 'cli', 'x', 'role.assign', 'user', UID['multi'], 's-b', '{"role": "teacher"}', '')
+    ha = hist('dirA', 'school=s-a&size=100')[1]['items']
+    hb = hist('dirB', 'school=s-b&size=100')[1]['items']
+    ok(not any(i['action'] == 'role.assign' and i['target'] == UID['multi'] and i['ts'] == NOW + 650000 for i in ha), 'совместитель: событие школы Б не видно директору А')
+    ok(any(i['ts'] == NOW + 650000 for i in hb), 'совместитель: директор Б своё событие видит')
+    ok(all(i['name'] == '' for i in hb if i['target'] == UID['multi']), 'name пользователя без имени пуст, логин не подставляется')
+    ok(hist('sup', 'school=s-a&page=1001')[0] == 400 and hist('sup', 'school=s-a&from=99999999999999999999999')[0] == 400
+       and hist('sup', 'school=s-a&to=-5')[0] == 400 and hist('sup', 'school=s-a&from=abc')[0] == 400, 'page > 1000 и дикие from/to -> 400')
+    ok(hist('sup', 'school=s-a&page=1000&from=0&to=%d' % 10 ** 14)[0] == 200, 'граничные page, from, to допустимы')
     # --- страницы
     sql("create temp table x(i)") if False else None
     c = sqlite3.connect(os.path.join(tmp, 'vrlesson.db'))
@@ -165,7 +179,7 @@ try:
     c.commit()
     c.execute('analyze')
     plans = {
-        'директор': c.execute("explain query plan select ts from audit_log where (school = ? or (target_kind = 'user' and target_id in (select user_id from user_roles where school = ?))) order by ts desc, id desc limit 51", ('s-a', 's-a')).fetchall(),
+        'директор': c.execute("explain query plan select ts from audit_log where (school = ? or (target_kind = 'user' and (school is null or school = '') and target_id in (select user_id from user_roles where school = ?))) order by ts desc, id desc limit 51", ('s-a', 's-a')).fetchall(),
         'учитель': c.execute("explain query plan select ts from audit_log where school = ? and ((target_kind = 'class' and target_id in (select id from classes where teacherId = ? and school = ?)) or (target_kind = 'student' and target_id in (select id from students where json_extract(doc, '$.classId') in (select id from classes where teacherId = ? and school = ?)))) order by ts desc, id desc limit 51", ('s-a', 'u', 's-a', 'u', 's-a')).fetchall()}
     c.close()
     for n, pl in plans.items():
