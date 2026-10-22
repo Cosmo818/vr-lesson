@@ -324,6 +324,9 @@ try:
     st, b = adm('tA1', 'trash.restore', {'kind': 'test', 'id': 'tt-1'}); nid = b.get('id'); ok(st == 200 and nid != 'tt-1' and sql("select json_extract(doc, '$.author') from tests where id=?", nid)[0][0] == UID['tA1'], 'автор возвращает свой тест копией с новым id')
     st, b = req('POST', '/api/sync', {}, {'X-Key': 'dev-secret'}); ok(nid in [t['id'] for t in b['state']['tests']] and 'tt-1' not in [t['id'] for t in b['state']['tests']], 'возвращённый тест дошёл до шлема, старый id — нет')
     st, b = adm('dirA', 'trash.restore', {'kind': 'test', 'id': 'tt-3'}); ok(st == 200, 'директор возвращает любой тест')
+    ntest = sql('select count(*) from tests')[0][0]
+    st, b = adm('tA1', 'trash.restore', {'kind': 'test', 'id': 'tt-1'}); ok(st == 400 and 'Уже возвращено' in b.get('error', '') and sql('select count(*) from tests')[0][0] == ntest, 'повторный возврат — 400, дубля нет')
+    st, b = adm('tA1', 'trash.list', {}); ok(any(x['id'] == 'tt-1' and x['restored_at'] for x in b['items']), 'trash.list отдаёт restored_at')
     st, b = adm('dirA', 'trash.restore', {'kind': 'test', 'id': 'нет'}); ok(st == 404, 'нет в корзине — 404')
     sql("insert into trash(kind, id, school, doc, ts) values('room', 'c-old', 'school-default', ?, 1)", json.dumps({'id': 'c-old', 'title': 'Комната', 'blocks': []}))
     st, b = adm('dirA', 'trash.restore', {'kind': 'room', 'id': 'c-old'}); rid = b.get('id', '')

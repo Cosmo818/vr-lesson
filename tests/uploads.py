@@ -131,6 +131,13 @@ try:
     st, raw, hd = call('GET', '/api/asset/' + mid, h=H('tA')); ok(st == 200, 'после возврата автор снова читает файл')
     st, r = adm('tA', 'upload.restore', {'id': mid}); ok(st == 404, 'возврат не архивного — 404')
     st, r = adm('dA', 'upload.delete', {'id': mid}); st2, r2 = adm('dA', 'upload.restore', {'id': mid}); ok(st == 200 and st2 == 200, 'директор архивирует и возвращает файл школы')
+    st, r = adm('dA', 'upload.delete', {'id': mid}); st2, r2 = adm('tA', 'upload.restore', {'id': mid}); ok(st == 200 and st2 == 403, 'автор не возвращает файл, убранный директором')
+    st, r = adm('dA', 'upload.restore', {'id': mid}); ok(st == 200, 'директор возвращает файл')
+    with sqlite3.connect(os.path.join(tmp, 'vrlesson.db')) as k:
+        k.execute("INSERT INTO uploads(id, school, owner, kind, name, size, ext, sha, status, created, archived_at) VALUES('ffffffffffff', 's-a', NULL, 'model', 'x', ?, 'glb', '', 'approved', 1, 1)", (100 * 1024 * 1024 - 100,))
+    st, r = up('dA', 'texture', png(16, 16), 'q'); ok(st == 413, 'архивные файлы занимают место школы: загрузка сверх объёма отклонена (%s)' % st)
+    with sqlite3.connect(os.path.join(tmp, 'vrlesson.db')) as k:
+        k.execute("DELETE FROM uploads WHERE id = 'ffffffffffff'")
     st, r = adm('sup', 'upload.list', {}); ok(st == 200 and any(i['id'] == bid for i in r['items']), 'суперадмин видит файлы всех школ')
     # лимит в час
     for i in range(31):

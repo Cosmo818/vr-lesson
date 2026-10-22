@@ -449,6 +449,8 @@ def migrate_b74(c):
             c.execute('ALTER TABLE uploads ADD COLUMN archived_at INTEGER')
         if 'archived_by' not in cols:
             c.execute('ALTER TABLE uploads ADD COLUMN archived_by TEXT')
+        if 'restored_at' not in {r[1] for r in c.execute('PRAGMA table_info(trash)')}:  # независимо от user_version: база на VPS уже v6
+            c.execute('ALTER TABLE trash ADD COLUMN restored_at INTEGER')
         # всё, удалённое до Б74, стёрто физически: это жёсткие надгробия
         if c.execute('PRAGMA user_version').fetchone()[0] < 6:  # только при переходе: позже в deleted лежат мягкие надгробия
             c.execute("INSERT OR IGNORE INTO purged(id, ts, kind) SELECT id, ts, 'legacy' FROM deleted")
@@ -1176,7 +1178,7 @@ def upload_create(c, p, kind, name, school, data, ip):
     who = ('user', p['id'], ip) if p['kind'] == 'user' else ('legacy', p.get('id', ''), ip)
     if p['kind'] == 'user' and c.execute('SELECT COUNT(*) FROM uploads WHERE owner = ? AND created > ?', (p['id'], now - 3600000)).fetchone()[0] >= UPLOAD_PER_HOUR:
         raise AdminError(429, 'Слишком много загрузок за час. Попробуйте позже.')
-    n, tot = c.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM uploads WHERE school = ? AND status != 'rejected' AND archived_at IS NULL", (school,)).fetchone()
+    n, tot = c.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM uploads WHERE school = ? AND status != 'rejected' ", (school,)).fetchone()  # архивные файлы лежат на диске и считаются
     if n >= UPLOAD_FILES or tot + len(data) > UPLOAD_BYTES:
         raise AdminError(413, 'Лимит файлов школы исчерпан: удалите ненужные.')
     uid = secrets.token_hex(6)
@@ -1507,13 +1509,16 @@ def admin_action(c, p, act, b, ip):
                              'WHERE (? = \'\' OR u.school = ?) AND u.archived_at IS %s NULL ORDER BY u.created DESC LIMIT 500' % ('NOT' if arch else ''), (sch, sch)).fetchall()
             return {'items': [{'id': i, 'school': sc_, 'kind': k, 'name': n, 'size': z, 'status': st, 'created': cr, 'owner': ow or 'администратор', 'mine': o == p['id'], 'archived': ar is not None}
                               for i, sc_, o, k, n, z, st, cr, ow, ar in rows if upload_visible(c, p, (sc_, o, st, None, ar), arch)]}
-        row = c.execute('SELECT school, owner, status, ext, archived_at FROM uploads WHERE id = ?', (S('id', 20),)).fetchone()
+        row = c.execute('SELECT school, owner, status, ext, archived_at, archived_by FROM uploads WHERE id = ?', (S('id', 20),)).fetchone()
         if act == 'upload.restore':
             if not row or row[4] is None or not upload_visible(c, p, row, True):
                 raise AdminError(404, 'Файла нет в архиве.')
         elif not row or not upload_visible(c, p, row):
             raise AdminError(404, 'Файла нет.')
         own = row[1] == p['id'] and act in ('upload.delete', 'upload.restore')
+        if act == 'upload.restore' and own and rank < SUPER and row[0] not in dir_schools(p) and row[5] != p['id']:
+            audit(c, who, 'admin.denied', 'upload', S('id', 20), row[0], {'why': 'archived_by', 'action': act})
+            raise AdminError(403, 'Файл убрал директор или администратор: вернуть его может только он.')
         if not own and rank < SUPER and row[0] not in dir_schools(p):
             audit(c, who, 'admin.denied', 'upload', S('id', 20), row[0], {'why': 'scope', 'action': act})
             raise AdminError(403, 'Это файл чужой школы.')
@@ -1698,19 +1703,21 @@ def admin_action(c, p, act, b, ip):
                 ds = sorted(dir_schools(p))
                 where.append("(kind IN ('test', 'feedback', 'room') OR school IN (%s))" % ','.join('?' * len(ds)))
                 args += ds
-            rows = c.execute('SELECT kind, id, school, doc, ts, actor_kind, actor_id FROM trash' + (' WHERE ' + ' AND '.join(where) if where else '') + ' ORDER BY ts DESC, id LIMIT ? OFFSET ?',
+            rows = c.execute('SELECT kind, id, school, doc, ts, actor_kind, actor_id, restored_at FROM trash' + (' WHERE ' + ' AND '.join(where) if where else '') + ' ORDER BY ts DESC, id LIMIT ? OFFSET ?',
                              args + [size + 1, (page - 1) * size]).fetchall()
             return {'items': [trash_item(*r_) for r_ in rows[:size]], 'page': page, 'size': size, 'more': len(rows) > size}
         kind, rid = S('kind', 12), S('id', 60)
         if kind not in TRASH_RESTORABLE:
             raise AdminError(400, 'Этот вид не возвращается.')
-        row = c.execute('SELECT school, doc FROM trash WHERE kind = ? AND id = ?', (kind, rid)).fetchone()
+        row = c.execute('SELECT school, doc, restored_at FROM trash WHERE kind = ? AND id = ?', (kind, rid)).fetchone()
         d = load_doc(row[1]) if row else None
         if not d:
             raise AdminError(404, 'В корзине такого нет.')
         if mine_only and not (kind == 'test' and d.get('author') == p['id']):
             audit(c, who, 'admin.denied', 'trash', rid, None, {'why': 'scope', 'action': act})
             raise AdminError(403, 'Вернуть можно только свои тесты.')
+        if row[2]:
+            raise AdminError(400, 'Уже возвращено.')
         nid = None
         if kind == 'test':
             nid = 't-' + secrets.token_hex(6)
@@ -1734,6 +1741,7 @@ def admin_action(c, p, act, b, ip):
             st['rooms'], st['content'] = rooms, ct
             st['updated'] = max(now, num(st.get('updated')) + 1)
             c.execute('INSERT OR REPLACE INTO settings(id, updated, doc) VALUES(1, ?, ?)', (st['updated'], json.dumps(st, ensure_ascii=False)))
+        c.execute('UPDATE trash SET restored_at = ? WHERE kind = ? AND id = ?', (now, kind, rid))
         audit(c, who, 'trash.restore', kind, nid, row[0], {'from': rid})
         return {'ok': True, 'id': nid}
     raise AdminError(404, 'Нет такого действия.')
@@ -1744,7 +1752,7 @@ TRASH_RESTORABLE = ('test', 'feedback', 'room')
 ROOMS_MAX = 30  # RS.LIM.rooms в js/roomspec.js
 
 
-def trash_item(kind, rid, school, raw, ts, actor_kind, actor_id):
+def trash_item(kind, rid, school, raw, ts, actor_kind, actor_id, restored_at=None):
     """Строка корзины для списка: короткое описание, без самого документа (ни pinHash, ни pinView, ни sid)."""
     d = load_doc(raw) or {}
     if kind == 'test':
@@ -1755,7 +1763,7 @@ def trash_item(kind, rid, school, raw, ts, actor_kind, actor_id):
         title, extra = d.get('subj'), {'score': d.get('score'), 'total': d.get('total')}
     else:
         title, extra = d.get('title'), {}
-    return dict({'kind': kind, 'id': rid, 'school': school, 'title': str(title or '')[:120], 'ts': ts, 'by': actor_kind}, **extra)
+    return dict({'kind': kind, 'id': rid, 'school': school, 'title': str(title or '')[:120], 'ts': ts, 'by': actor_kind, 'restored_at': restored_at}, **extra)
 
 
 # ---------- поиск и фильтры (шаг 8 PLAN.md): только доступное принципалу, страницы, без хэшей ----------
