@@ -159,18 +159,22 @@ function bindPlan(){
 /* ---------- «Мои файлы»: модели, звуки и текстуры учителя (Б51, этап 2) ---------- */
 const KIND_T={model:'модель',sound:'звук',texture:'текстура'},ST_T={pending:'на проверке',approved:'одобрен',rejected:'отклонён'};
 const canModerate=()=>S.account.roles().some(r=>r.role==='director'||r.role==='superadmin');
+let filesArch=false;
 function filesHtml(){
   if(!S.account.token())return'<div class="card"><p class="muted">Загрузка файлов доступна после входа по логину и паролю (кабинет учителя → «Войти»).</p></div>';
   const mod=canModerate();
-  const rows=S.files.map(x=>`<tr><td>${esc(x.name)}</td><td>${KIND_T[x.kind]||''}</td><td>${ST_T[x.status]||''}</td><td>${esc(x.owner||'')}</td><td>${mod&&x.status==='pending'?`<button class="btn" data-bd="fok" data-id="${x.raw}">Одобрить</button> <button class="btn ghost" data-bd="fno" data-id="${x.raw}">Отклонить</button> `:''}${x.mine||mod?`<button class="btn red" data-bd="fdel" data-id="${x.raw}">Удалить</button>`:''}</td></tr>`).join('');
+  const list=filesArch?S.filesArch:S.files;
+  const rows=list.map(x=>`<tr><td>${esc(x.name)}</td><td>${KIND_T[x.kind]||''}</td><td>${ST_T[x.status]||''}</td><td>${esc(x.owner||'')}</td><td>${mod&&x.status==='pending'?`<button class="btn" data-bd="fok" data-id="${x.raw}">Одобрить</button> <button class="btn ghost" data-bd="fno" data-id="${x.raw}">Отклонить</button> `:''}${x.mine||mod?(filesArch?`<button class="btn" data-bd="frest" data-id="${x.raw}">Вернуть</button>`:`<button class="btn red" data-bd="fdel" data-id="${x.raw}">В архив</button>`):''}</td></tr>`).join('');
   return`<div class="card"><p class="muted small">Модель — .glb до 4 МБ (до 20 000 треугольников), звук — .wav до 1 МБ, текстура — PNG или JPEG до 1024×1024. ${mod?'Ваши файлы одобрены сразу.':'Новый файл виден вам сразу, ученикам — после одобрения директором.'}</p>
   <div class="row"><input type="file" id="bdFile" accept=".glb,.wav,.png,.jpg,.jpeg"><input id="bdFName" maxlength="60" placeholder="Название (необязательно)"><button class="btn" data-bd="fup">Загрузить</button></div>
+  <div class="row"><button class="btn ghost" data-bd="farch">${filesArch?'Действующие файлы':'Архив файлов'}</button></div>
   <div id="bdFMsg" class="small muted">${esc(filesMsg)}</div>
-  <div style="overflow-x:auto"><table style="width:100%;min-width:480px">${S.files.length?'<tr><th align="left">Название</th><th align="left">Что это</th><th align="left">Статус</th><th align="left">Автор</th><th></th></tr>'+rows:'<tr><td class="muted">Файлов пока нет.</td></tr>'}</table></div></div>`;
+  <div style="overflow-x:auto"><table style="width:100%;min-width:480px">${list.length?'<tr><th align="left">Название</th><th align="left">Что это</th><th align="left">Статус</th><th align="left">Автор</th><th></th></tr>'+rows:`<tr><td class="muted">${filesArch?'В архиве пусто.':'Файлов пока нет.'}</td></tr>`}</table></div></div>`;
 }
 function showFiles(){const h=$('bdFiles');if(h)h.innerHTML=filesOpen?filesHtml():'';refreshPanels();}
 async function filesAct(a,t){
   if(a==='files'){filesOpen=!filesOpen;if(filesOpen)await S.refreshFiles();showFiles();return;}
+  if(a==='farch'){filesArch=!filesArch;if(filesArch)await S.refreshArchivedFiles();showFiles();return;}
   if(a==='fup'){
     const f=$('bdFile')&&$('bdFile').files[0];if(!f){filesMsg='Выберите файл.';showFiles();return;}
     const ext=(f.name.split('.').pop()||'').toLowerCase(),kind={glb:'model',wav:'sound',png:'texture',jpg:'texture',jpeg:'texture'}[ext];
@@ -181,8 +185,8 @@ async function filesAct(a,t){
     filesMsg=r.status===200?(r.data.status==='pending'?'Загружено. Файл на проверке у директора.':'Загружено.'):(r.data.error||'Не удалось загрузить.');
     await S.refreshFiles();showFiles();return;
   }
-  const act={fok:'upload.approve',fno:'upload.reject',fdel:'upload.delete'}[a];
-  if(act){if(a==='fdel'&&!confirm('Удалить файл? Комнаты, где он используется, останутся без него.'))return;const r=await S.admin(act,{id:t.dataset.id});filesMsg=r.status===200?'Готово.':(r.data.error||'Не получилось.');await S.refreshFiles();showFiles();}
+  const act={fok:'upload.approve',fno:'upload.reject',fdel:'upload.delete',frest:'upload.restore'}[a];
+  if(act){if(a==='fdel'&&!confirm('Убрать файл в архив? Комнаты, где он используется, останутся без него; вернуть файл можно из архива.'))return;const r=await S.admin(act,{id:t.dataset.id});filesMsg=r.status===200?'Готово.':(r.data.error||'Не получилось.');await S.refreshFiles();if(filesArch)await S.refreshArchivedFiles();showFiles();}
 }
 /* ---------- «Открытая комната» (Б54): публикация для всех без входа; у учителя — на одобрение директору ---------- */
 const PUB_T={pending:'ждёт директора',approved:'открыта для всех',rejected:'отклонена'};
@@ -244,7 +248,7 @@ function onClick(e){
   const t=e.target.closest('[data-bd]');if(!t)return;
   const a=t.dataset.bd;
   if(a==='new'){const tpl=RS.TEMPLATES[t.dataset.t].make();create(tpl);}
-  else if(a==='files'||a==='fup'||a==='fok'||a==='fno'||a==='fdel')filesAct(a,t);
+  else if(a==='files'||a==='fup'||a==='fok'||a==='fno'||a==='fdel'||a==='frest'||a==='farch')filesAct(a,t);
   else if(a==='pub'||a==='rpub'||a==='rok'||a==='rno'||a==='rdel')pubAct(a,t);
   else if(a==='import'){io=!io;show();}
   else if(a==='closeio'){io=false;show();}

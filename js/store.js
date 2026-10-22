@@ -26,7 +26,9 @@ function merge(A,B){
      Ученики и классы (kind): сначала lww, потом мягкое надгробие новее победителя превращает запись в архив (updated = время надгробия); у остальных видов надгробие скрывает запись. Правило то же в merge_in (А11) */
   const lww=(a,b,kind)=>{const m=new Map();for(const x of a.concat(b)){if(hard[x.id]||(!kind&&del[x.id]))continue;const o=m.get(x.id);if(!o)m.set(x.id,x);else if((x.updated||0)>(o.updated||0))m.set(x.id,kind?SC.carry(x,o,kind):x);else if(kind)m.set(o.id,SC.carry(o,x,kind));}
     return[...m.values()].map(x=>kind&&del[x.id]>(x.updated||0)&&x.status!=='archived'?Object.assign({},x,{status:'archived',updated:del[x.id]}):x);};
-  const students=lww(A.students,B.students,'students').map(i=>SC.fill('students',i)),tests=lww(A.tests,B.tests),classes=lww(A.classes,B.classes,'classes').map(i=>SC.fill('classes',i));
+  /* автор теста (Б74.8): правда на сервере, клиент поле не выдумывает; у победителя без author берём его у любой версии с author (как fill_test в server/app.py, А11) */
+  const carryAuthor=(win,a,b)=>{const au=new Map();for(const x of a.concat(b))if(typeof x.author==='string'&&x.author&&!au.has(x.id))au.set(x.id,x.author);return win.map(x=>!x.author&&au.has(x.id)?Object.assign({},x,{author:au.get(x.id)}):x);};
+  const students=lww(A.students,B.students,'students').map(i=>SC.fill('students',i)),tests=carryAuthor(lww(A.tests,B.tests),A.tests,B.tests),classes=lww(A.classes,B.classes,'classes').map(i=>SC.fill('classes',i));
   const rm=new Map();for(const r of A.results.concat(B.results))if(!rm.has(r.id)&&!hard[r.sid]&&!del[r.id]&&!hard[r.id]&&(r.ts||0)>=reset)rm.set(r.id,r);
   const disc={};
   for(const src of[A.disc,B.disc])for(const sid in src){if(hard[sid])continue;const m=disc[sid]=disc[sid]||{};for(const k in src[sid]){const t=src[sid][k];if(t>=reset&&(!m[k]||t<m[k]))m[k]=t;}}
@@ -334,6 +336,13 @@ const Store=VR.Store={
     }catch(e){return{status:0,data:{error:'нет связи с сервером'}};}
   },
   files:[],/* список файлов, доступных пользователю: {id:'up:…', kind, name, status, mine} */
+  filesArch:[],/* архивные файлы (Б74): видят автор, директор, суперадмин */
+  async refreshArchivedFiles(){
+    if(!Store.account.token())return Store.filesArch;
+    const r=await Store.admin('upload.list',{archived:1});
+    if(r.status===200)Store.filesArch=r.data.items.map(i=>({raw:i.id,kind:i.kind,name:i.name,status:i.status,mine:i.mine,owner:i.owner}));
+    return Store.filesArch;
+  },
   async refreshFiles(){
     if(!Store.account.token())return Store.files;
     const r=await Store.admin('upload.list',{});

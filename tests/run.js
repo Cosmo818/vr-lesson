@@ -78,6 +78,8 @@ function makeCtx(xr){
     ok(V0.schema.acadYear(1720000000000)===2023&&V0.schema.acadYear(0)===null,'schema v3: acadYear(июль 2024)=2023');
     const s1n=byId(nF.students,'s1');
     const mc=V0.Store.merge({students:[Object.assign({},s1n,{status:'archived',school:'school-default',year:2025,updated:5})]},{students:[{id:'s1',name:'Новое',grade:5,updated:9}]});
+    const mt=V0.Store.merge({tests:[{id:'t1',title:'Новый',qs:[],updated:9}]},{tests:[{id:'t1',title:'Старый',qs:[],updated:5,author:'u1'}]});
+    ok(mt.tests.length===1&&mt.tests[0].title==='Новый'&&mt.tests[0].author==='u1','слияние: автор теста сохраняется у победителя без поля (А11)');
     ok(mc.students.length===1&&mc.students[0].name==='Новое'&&mc.students[0].status==='archived','слияние: правка старого клиента (без status) не воскрешает архивного ученика');
     const mc2=V0.Store.merge({students:[{id:'s1',name:'Новое',grade:5,updated:9}]},{students:[Object.assign({},s1n,{status:'archived',updated:5})]});
     ok(mc2.students[0].name==='Новое'&&mc2.students[0].status==='archived','слияние: перенос полей не зависит от порядка аргументов');

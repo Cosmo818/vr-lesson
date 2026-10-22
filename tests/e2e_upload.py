@@ -92,6 +92,14 @@ try:
         for _ in range(3):
             pd.click('[data-bd=fok] >> nth=0'); pd.wait_for_timeout(700)
         ok(pd.locator('[data-bd=fok]').count() == 0, 'все три одобрены')
+        n0 = pd.locator('[data-bd=fdel]').count()
+        pd.click('[data-bd=fdel] >> nth=0'); pd.wait_for_timeout(800)
+        ok(pd.locator('[data-bd=fdel]').count() == n0 - 1, '«В архив»: файл ушёл из списка')
+        pd.click('[data-bd=farch]'); pd.wait_for_timeout(800)
+        ok(pd.locator('[data-bd=frest]').count() == 1, 'в архиве файлов один, есть «Вернуть»')
+        pd.click('[data-bd=frest]'); pd.wait_for_timeout(800)
+        pd.click('[data-bd=farch]'); pd.wait_for_timeout(800)
+        ok(pd.locator('[data-bd=fdel]').count() == n0, '«Вернуть»: файл снова в списке')
         # шлем получает
         ids = [f['raw'] for f in pd.evaluate('()=>VR.Store.files')]
         r = pg.evaluate("""async([u,k,ids])=>{const S=VR.Store;S.account.clear();S.setServer(u,k);const o={};

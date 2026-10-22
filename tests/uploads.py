@@ -116,7 +116,21 @@ try:
     st, raw, hd = call('GET', '/api/asset/' + mid, h={'X-Key': 'devkey-school-a-0123456789'}); ok(st == 200, 'после одобрения шлем получает модель')
     st, r = adm('dA', 'upload.reject', {'id': mid}); st2, raw, hd = call('GET', '/api/asset/' + mid, h={'X-Key': 'devkey-school-a-0123456789'}); ok(st == 200 and st2 == 404, 'отклонённое шлемам не отдаётся')
     st, r = adm('tA2', 'upload.delete', {'id': sid}); ok(st in (403, 404), 'учитель не удаляет чужой файл')
-    st, r = adm('tA', 'upload.delete', {'id': mid}); ok(st == 200 and not os.path.exists(os.path.join(tmp, 'uploads', mid + '.glb')), 'автор удаляет свой файл, на диске его нет')
+    st, r = adm('tA', 'upload.delete', {'id': mid}); ok(st == 200 and os.path.exists(os.path.join(tmp, 'uploads', mid + '.glb')), 'автор «удаляет» файл: он в архиве, на диске остаётся (Б74)')
+    st, raw, hd = call('GET', '/api/asset/' + mid, h=H('tA')); ok(st == 404, 'архивный файл не отдаётся автору')
+    st, raw, hd = call('GET', '/api/asset/' + mid, h=H('dA')); ok(st == 404, 'архивный файл не отдаётся директору')
+    st, raw, hd = call('GET', '/api/asset/' + mid, h=H('sup')); ok(st == 404, 'архивный файл не отдаётся суперадмину')
+    st, raw, hd = call('GET', '/api/asset/' + mid, h={'X-Key': 'devkey-school-a-0123456789'}); ok(st == 404, 'архивный файл не отдаётся шлему')
+    st, r = adm('dA', 'upload.list', {'school': 's-a'}); ok(st == 200 and not any(i['id'] == mid for i in r['items']), 'в обычном списке архивного нет')
+    st, r = adm('dA', 'upload.list', {'school': 's-a', 'archived': 1}); ok(st == 200 and [i['id'] for i in r['items']] == [mid], 'директор видит архив школы')
+    st, r = adm('tA2', 'upload.list', {'school': 's-a', 'archived': 1}); ok(st == 200 and r['items'] == [], 'чужой учитель архива не видит')
+    st, r = adm('tA2', 'upload.restore', {'id': mid}); ok(st in (403, 404), 'учитель не возвращает чужой файл')
+    st, r = adm('tB', 'upload.restore', {'id': mid}); ok(st in (403, 404), 'учитель другой школы не возвращает файл')
+    st, r = adm('tA', 'upload.delete', {'id': mid}); ok(st == 404, 'повторное «удаление» архивного — 404')
+    st, r = adm('tA', 'upload.restore', {'id': mid}); ok(st == 200, 'автор возвращает свой файл')
+    st, raw, hd = call('GET', '/api/asset/' + mid, h=H('tA')); ok(st == 200, 'после возврата автор снова читает файл')
+    st, r = adm('tA', 'upload.restore', {'id': mid}); ok(st == 404, 'возврат не архивного — 404')
+    st, r = adm('dA', 'upload.delete', {'id': mid}); st2, r2 = adm('dA', 'upload.restore', {'id': mid}); ok(st == 200 and st2 == 200, 'директор архивирует и возвращает файл школы')
     st, r = adm('sup', 'upload.list', {}); ok(st == 200 and any(i['id'] == bid for i in r['items']), 'суперадмин видит файлы всех школ')
     # лимит в час
     for i in range(31):
@@ -127,7 +141,7 @@ try:
     # аудит
     with sqlite3.connect(os.path.join(tmp, 'vrlesson.db')) as k:
         acts = {r[0] for r in k.execute('SELECT action FROM audit_log')}
-    ok({'upload.create', 'upload.approve', 'upload.delete'} <= acts, 'действия с файлами записаны в журнал')
+    ok({'upload.create', 'upload.approve', 'upload.archive', 'upload.restore', 'admin.denied'} <= acts, 'действия с файлами записаны в журнал')
     ok(not any(open(os.path.join(tmp, 'uploads', f), 'rb').read(8) == b'' for f in os.listdir(os.path.join(tmp, 'uploads'))), 'на диске нет пустых файлов')
 finally:
     srv.terminate()

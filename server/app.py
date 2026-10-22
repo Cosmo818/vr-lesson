@@ -176,6 +176,19 @@ def fill_v4(doc, old=None, kind='students', device_new=False):
     return d
 
 
+def fill_test(doc, old=None, uid=None):
+    """Автор теста (Б74.8): поле author — id пользователя, сервер источник правды. Присланное игнорируется; остаётся автор прежней записи,
+    у нового теста его ставит сервер, если тест создал пользователь (ключ учителя и шлем — без автора). Правило то же в js/store.js (merge, А11)."""
+    d = dict(doc)
+    d.pop('author', None)
+    a = old.get('author') if isinstance(old, dict) else None
+    if not (isinstance(a, str) and 0 < len(a) <= 40):
+        a = uid if old is None else None
+    if a:
+        d['author'] = a
+    return d
+
+
 def backup_db(tag):
     """Копия базы средствами SQLite рядом с базой; существующие копии не трогаем."""
     path = '%s.bak-%s-%s' % (DB_PATH, tag, time.strftime('%Y%m%d-%H%M%S', time.gmtime()))
@@ -580,8 +593,9 @@ def merge_in(c, inc, role, ip='', principal=None):
         for t in inc.get('tests') or []:
             if not isinstance(t, dict) or not t.get('id') or t['id'] in deleted or t['id'] in hard:
                 continue
-            row = c.execute('SELECT updated FROM tests WHERE id = ?', (t['id'],)).fetchone()
+            row = c.execute('SELECT updated, doc FROM tests WHERE id = ?', (t['id'],)).fetchone()
             if not row or num(t.get('updated')) > row[0]:
+                t = fill_test(t, load_doc(row[1]) if row else None, principal['id'] if user else None)
                 c.execute('INSERT OR REPLACE INTO tests(id, title, subj, updated, doc) VALUES(?, ?, ?, ?, ?)',
                           (t['id'], str(t.get('title', ''))[:200], str(t.get('subj', '')), num(t.get('updated')), json.dumps(t, ensure_ascii=False)))
     for r in inc.get('results') or []:
@@ -1124,9 +1138,14 @@ def upload_schools(p):
     return None
 
 
-def upload_visible(c, p, row):
-    """row: (school, owner, status). Одобренное видит вся школа (и её шлемы); неодобренное — автор и директор школы."""
-    school, owner, status = row
+def upload_visible(c, p, row, archived=False):
+    """row: (school, owner, status, [ext, archived_at]). Одобренное видит вся школа (и её шлемы); неодобренное — автор и директор школы.
+    Архивный файл (Б74, archived_at) не виден никому; с archived=True его видят автор, директор школы и суперадмин."""
+    school, owner, status = row[:3]
+    if len(row) > 4 and row[4] is not None:
+        if not archived or p['kind'] != 'user':
+            return False
+        return my_rank(p) >= SUPER or (my_rank(p) >= 3 and school in dir_schools(p)) or owner == p['id']
     if p['kind'] == 'device':
         return status == 'approved' and (not p.get('school') or p['school'] == school)
     if p['kind'] != 'user':
@@ -1157,7 +1176,7 @@ def upload_create(c, p, kind, name, school, data, ip):
     who = ('user', p['id'], ip) if p['kind'] == 'user' else ('legacy', p.get('id', ''), ip)
     if p['kind'] == 'user' and c.execute('SELECT COUNT(*) FROM uploads WHERE owner = ? AND created > ?', (p['id'], now - 3600000)).fetchone()[0] >= UPLOAD_PER_HOUR:
         raise AdminError(429, 'Слишком много загрузок за час. Попробуйте позже.')
-    n, tot = c.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM uploads WHERE school = ? AND status != 'rejected'", (school,)).fetchone()
+    n, tot = c.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM uploads WHERE school = ? AND status != 'rejected' AND archived_at IS NULL", (school,)).fetchone()
     if n >= UPLOAD_FILES or tot + len(data) > UPLOAD_BYTES:
         raise AdminError(413, 'Лимит файлов школы исчерпан: удалите ненужные.')
     uid = secrets.token_hex(6)
@@ -1268,7 +1287,7 @@ def admin_action(c, p, act, b, ip):
     rank = my_rank(p)
     sc = scope(c, p)
     S = lambda k, n=80: str(b.get(k) or '')[:n]  # noqa: E731
-    need_dir = act not in ('student.pin', 'student.move', 'upload.list', 'upload.delete', 'room.publish', 'room.list', 'room.unpublish')
+    need_dir = act not in ('student.archive', 'student.restore', 'class.archive', 'class.restore', 'trash.list', 'trash.restore', 'student.pin', 'student.move', 'upload.list', 'upload.delete', 'upload.restore', 'room.publish', 'room.list', 'room.unpublish')
     if rank < (3 if need_dir else 2) and not (act == 'closed.list' and rank >= 1):
         audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
         raise AdminError(403, 'Недостаточно прав.')
@@ -1480,26 +1499,30 @@ def admin_action(c, p, act, b, ip):
             c.execute('UPDATE open_rooms SET status = ?, decided_by = ?, decided = ? WHERE id = ?', ('approved' if act == 'room.approve' else 'rejected', p['id'], now, S('id', 20)))
         audit(c, who, act, 'room', S('id', 20), row[0], {})
         return {'ok': True}
-    if act in ('upload.list', 'upload.approve', 'upload.reject', 'upload.delete'):
+    if act in ('upload.list', 'upload.approve', 'upload.reject', 'upload.delete', 'upload.restore'):
         if act == 'upload.list':
             sch = S('school', 40)
-            rows = c.execute('SELECT u.id, u.school, u.owner, u.kind, u.name, u.size, u.status, u.created, COALESCE(NULLIF(us.name, \'\'), us.login) FROM uploads u LEFT JOIN users us ON us.id = u.owner '
-                             'WHERE (? = \'\' OR u.school = ?) ORDER BY u.created DESC LIMIT 500', (sch, sch)).fetchall()
-            return {'items': [{'id': i, 'school': sc_, 'kind': k, 'name': n, 'size': z, 'status': st, 'created': cr, 'owner': ow or 'администратор', 'mine': o == p['id']}
-                              for i, sc_, o, k, n, z, st, cr, ow in rows if upload_visible(c, p, (sc_, o, st))]}
-        row = c.execute('SELECT school, owner, status, ext FROM uploads WHERE id = ?', (S('id', 20),)).fetchone()
-        if not row or not upload_visible(c, p, row[:3]):
+            arch = bool(b.get('archived')) and p['kind'] == 'user'
+            rows = c.execute('SELECT u.id, u.school, u.owner, u.kind, u.name, u.size, u.status, u.created, COALESCE(NULLIF(us.name, \'\'), us.login), u.archived_at FROM uploads u LEFT JOIN users us ON us.id = u.owner '
+                             'WHERE (? = \'\' OR u.school = ?) AND u.archived_at IS %s NULL ORDER BY u.created DESC LIMIT 500' % ('NOT' if arch else ''), (sch, sch)).fetchall()
+            return {'items': [{'id': i, 'school': sc_, 'kind': k, 'name': n, 'size': z, 'status': st, 'created': cr, 'owner': ow or 'администратор', 'mine': o == p['id'], 'archived': ar is not None}
+                              for i, sc_, o, k, n, z, st, cr, ow, ar in rows if upload_visible(c, p, (sc_, o, st, None, ar), arch)]}
+        row = c.execute('SELECT school, owner, status, ext, archived_at FROM uploads WHERE id = ?', (S('id', 20),)).fetchone()
+        if act == 'upload.restore':
+            if not row or row[4] is None or not upload_visible(c, p, row, True):
+                raise AdminError(404, 'Файла нет в архиве.')
+        elif not row or not upload_visible(c, p, row):
             raise AdminError(404, 'Файла нет.')
-        own = row[1] == p['id'] and act == 'upload.delete'
+        own = row[1] == p['id'] and act in ('upload.delete', 'upload.restore')
         if not own and rank < SUPER and row[0] not in dir_schools(p):
             audit(c, who, 'admin.denied', 'upload', S('id', 20), row[0], {'why': 'scope', 'action': act})
             raise AdminError(403, 'Это файл чужой школы.')
         if act == 'upload.delete':
-            c.execute('DELETE FROM uploads WHERE id = ?', (S('id', 20),))
-            try:
-                os.remove(os.path.join(UPLOAD_DIR, '%s.%s' % (S('id', 20), row[3])))
-            except OSError:
-                pass
+            # Б74: файл остаётся на диске, запись уходит в архив; стереть окончательно может только суперадмин (шаг 25)
+            c.execute('UPDATE uploads SET archived_at = ?, archived_by = ? WHERE id = ?', (now, p['id'], S('id', 20)))
+            act = 'upload.archive'
+        elif act == 'upload.restore':
+            c.execute('UPDATE uploads SET archived_at = NULL, archived_by = NULL WHERE id = ?', (S('id', 20),))
         else:
             c.execute('UPDATE uploads SET status = ?, decided_by = ?, decided = ? WHERE id = ?', ('approved' if act == 'upload.approve' else 'rejected', p['id'], now, S('id', 20)))
         audit(c, who, act, 'upload', S('id', 20), row[0], {})
@@ -1610,7 +1633,129 @@ def admin_action(c, p, act, b, ip):
         c.execute('UPDATE students SET doc = ?, updated = ?, school = ? WHERE id = ?', (json.dumps(d, ensure_ascii=False), now, ncl[0], S('student_id', 60)))
         audit(c, who, 'student.move', 'student', S('student_id', 60), ncl[0], {'from': old_cl, 'to': S('class_id', 60)})
         return {'ok': True}
+    if act in ('student.archive', 'student.restore'):
+        sid = S('student_id', 60)
+        row = c.execute('SELECT doc FROM students WHERE id = ?', (sid,)).fetchone()
+        d = load_doc(row[0]) if row else None
+        if not d:
+            raise AdminError(404, 'Ученика нет.')
+        if not (student_in_scope(c, sc, d) or (rank < SUPER and d.get('school') in dir_schools(p))):
+            audit(c, who, 'admin.denied', 'student', sid, d.get('school') if ok_school(d.get('school')) else None, {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Ученик вам не подчиняется.')
+        want = 'archived' if act == 'student.archive' else 'active'
+        res = {'ok': True}
+        if d.get('status', 'active') != want:
+            d['status'], d['updated'] = want, max(now, num(d.get('updated')) + 1)
+            c.execute('UPDATE students SET status = ?, updated = ?, doc = ? WHERE id = ?', (want, d['updated'], json.dumps(d, ensure_ascii=False), sid))
+            audit(c, who, act, 'student', sid, d.get('school') if ok_school(d.get('school')) else None, {'via': 'admin'})
+        if want == 'active' and d.get('classId'):
+            cr = c.execute('SELECT status FROM classes WHERE id = ?', (d['classId'],)).fetchone()
+            if cr and cr[0] == 'archived':
+                res['warning'] = 'class_archived'
+        return res
+    if act in ('class.archive', 'class.restore'):
+        cid = S('class_id', 60)
+        src = class_row(c, cid)
+        if not src:
+            raise AdminError(404, 'Класса нет.')
+        if not (class_in_scope(sc, src[0], src[1]) or (rank < SUPER and src[0] in dir_schools(p))):
+            audit(c, who, 'admin.denied', 'class', cid, src[0], {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это класс чужой школы или не ваш.')
+        d = load_doc(c.execute('SELECT doc FROM classes WHERE id = ?', (cid,)).fetchone()[0]) or {}
+        want = 'archived' if act == 'class.archive' else 'active'
+        if d.get('status', 'active') != want:
+            if want == 'active' and c.execute("SELECT 1 FROM classes WHERE school = ? AND name = ? AND status = 'active' AND id != ?", (src[0], '%s%s' % (d.get('grade', ''), d.get('letter', '')), cid)).fetchone():
+                raise AdminError(400, 'Такой класс уже есть.')
+            d['status'], d['updated'] = want, max(now, num(d.get('updated')) + 1)
+            c.execute('UPDATE classes SET status = ?, updated = ?, doc = ? WHERE id = ?', (want, d['updated'], json.dumps(d, ensure_ascii=False), cid))
+            audit(c, who, act, 'class', cid, src[0], {'name': '%s%s' % (d.get('grade', ''), d.get('letter', '')), 'via': 'admin'})
+        return {'ok': True}
+    if act in ('trash.list', 'trash.restore'):
+        # директор и выше — вся корзина общего содержимого (тесты, отзывы, комнаты) и свои школы; учитель — только свои тесты (по полю author)
+        if p['kind'] != 'user':
+            raise AdminError(403, 'Недостаточно прав.')
+        mine_only = rank < 3
+        if act == 'trash.list':
+            kind = S('kind', 12)
+            if kind and kind not in TRASH_KINDS:
+                raise AdminError(400, 'Нет такого вида.')
+            try:
+                page = max(1, int(b.get('page', 1)))
+                size = min(PAGE_MAX, max(1, int(b.get('size', 50))))
+            except (TypeError, ValueError):
+                raise AdminError(400, 'page и size — числа.')
+            where, args = [], []
+            if kind:
+                where.append('kind = ?')
+                args.append(kind)
+            if S('school', 40):
+                where.append('school = ?')
+                args.append(S('school', 40))
+            if mine_only:
+                where.append("kind = 'test' AND json_extract(doc, '$.author') = ?")
+                args.append(p['id'])
+            elif rank < SUPER:
+                ds = sorted(dir_schools(p))
+                where.append("(kind IN ('test', 'feedback', 'room') OR school IN (%s))" % ','.join('?' * len(ds)))
+                args += ds
+            rows = c.execute('SELECT kind, id, school, doc, ts, actor_kind, actor_id FROM trash' + (' WHERE ' + ' AND '.join(where) if where else '') + ' ORDER BY ts DESC, id LIMIT ? OFFSET ?',
+                             args + [size + 1, (page - 1) * size]).fetchall()
+            return {'items': [trash_item(*r_) for r_ in rows[:size]], 'page': page, 'size': size, 'more': len(rows) > size}
+        kind, rid = S('kind', 12), S('id', 60)
+        if kind not in TRASH_RESTORABLE:
+            raise AdminError(400, 'Этот вид не возвращается.')
+        row = c.execute('SELECT school, doc FROM trash WHERE kind = ? AND id = ?', (kind, rid)).fetchone()
+        d = load_doc(row[1]) if row else None
+        if not d:
+            raise AdminError(404, 'В корзине такого нет.')
+        if mine_only and not (kind == 'test' and d.get('author') == p['id']):
+            audit(c, who, 'admin.denied', 'trash', rid, None, {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Вернуть можно только свои тесты.')
+        nid = None
+        if kind == 'test':
+            nid = 't-' + secrets.token_hex(6)
+            d['id'], d['updated'] = nid, now
+            c.execute('INSERT INTO tests(id, title, subj, updated, doc) VALUES(?, ?, ?, ?, ?)', (nid, str(d.get('title', ''))[:200], str(d.get('subj', '')), now, json.dumps(d, ensure_ascii=False)))
+        elif kind == 'feedback':
+            nid = 'f-' + secrets.token_hex(6)
+            d['id'] = nid
+            c.execute('INSERT INTO feedback(id, ts, kind, room, rating, text, doc) VALUES(?, ?, ?, ?, ?, ?, ?)',
+                      (nid, num(d.get('ts')), str(d.get('kind', ''))[:20], str(d.get('room') or '')[:20], num(d.get('rating'), None), str(d.get('text', ''))[:1000], json.dumps(d, ensure_ascii=False)))
+        else:
+            st = get_settings(c)
+            rooms = dict(st.get('rooms')) if isinstance(st.get('rooms'), dict) else {}
+            if len(rooms) >= ROOMS_MAX:
+                raise AdminError(400, 'Комнат уже %d: сначала уберите ненужные.' % ROOMS_MAX)
+            nid = 'c-' + secrets.token_hex(6)
+            d['id'], d['updated'] = nid, now
+            rooms[nid] = d
+            ct = dict(st.get('content')) if isinstance(st.get('content'), dict) else {}
+            ct['rooms'] = dict(ct.get('rooms') or {}, **{nid: ''})
+            st['rooms'], st['content'] = rooms, ct
+            st['updated'] = max(now, num(st.get('updated')) + 1)
+            c.execute('INSERT OR REPLACE INTO settings(id, updated, doc) VALUES(1, ?, ?)', (st['updated'], json.dumps(st, ensure_ascii=False)))
+        audit(c, who, 'trash.restore', kind, nid, row[0], {'from': rid})
+        return {'ok': True, 'id': nid}
     raise AdminError(404, 'Нет такого действия.')
+
+
+TRASH_KINDS = ('test', 'feedback', 'result', 'room', 'open_room')
+TRASH_RESTORABLE = ('test', 'feedback', 'room')
+ROOMS_MAX = 30  # RS.LIM.rooms в js/roomspec.js
+
+
+def trash_item(kind, rid, school, raw, ts, actor_kind, actor_id):
+    """Строка корзины для списка: короткое описание, без самого документа (ни pinHash, ни pinView, ни sid)."""
+    d = load_doc(raw) or {}
+    if kind == 'test':
+        title, extra = d.get('title'), {'author': d.get('author') or ''}
+    elif kind == 'feedback':
+        title, extra = d.get('text'), {'rating': d.get('rating')}
+    elif kind == 'result':
+        title, extra = d.get('subj'), {'score': d.get('score'), 'total': d.get('total')}
+    else:
+        title, extra = d.get('title'), {}
+    return dict({'kind': kind, 'id': rid, 'school': school, 'title': str(title or '')[:120], 'ts': ts, 'by': actor_kind}, **extra)
 
 
 # ---------- поиск и фильтры (шаг 8 PLAN.md): только доступное принципалу, страницы, без хэшей ----------
@@ -1671,6 +1816,11 @@ def options_api(c, p, q):
     raise AdminError(400, 'level: region, district, school, class или teacher.')
 
 
+def role_status_sql(st):
+    """Список статусов роли для фильтра status (константы, не ввод): по умолчанию только действующие."""
+    return "'active', 'archived'" if st == 'all' else "'archived'" if st == 'archived' else "'active'"
+
+
 def accounts_api(c, p, q):
     sc = scope(c, p)
     kind = q.get('kind', 'students')
@@ -1680,6 +1830,9 @@ def accounts_api(c, p, q):
     except ValueError:
         raise AdminError(400, 'page и size — числа.')
     text = (q.get('q') or '')[:40].strip()
+    st_q = q.get('status')  # Б74: active | archived | all; не задан — как раньше (классы и ученики без фильтра, учителя и администраторы — только действующие)
+    if st_q is not None and st_q not in ('active', 'archived', 'all'):
+        raise AdminError(400, 'status: active, archived или all.')
     schools = scope_schools(c, sc)
     want_school = q.get('school') or None
     if want_school and want_school not in schools:
@@ -1693,7 +1846,7 @@ def accounts_api(c, p, q):
     if want_school:
         schools = {want_school}
     if kind == 'classes':
-        cls = [k for k in visible_classes(c, sc) if k['school'] in schools and (not q.get('teacher') or k['teacherId'] == q['teacher'])]
+        cls = [k for k in visible_classes(c, sc) if k['school'] in schools and (not q.get('teacher') or k['teacherId'] == q['teacher']) and st_q in (None, 'all', k['status'])]
         if text:
             cls = [k for k in cls if text.lower() in k['name'].lower()]
         cls.sort(key=lambda k: (k['school'], k['name']))
@@ -1710,7 +1863,7 @@ def accounts_api(c, p, q):
             raise AdminError(403, 'Список администраторов доступен администраторам региона и района и суперадмину.')
         want = q.get('role') or ''
         by_user = {}
-        for uid, role, sch in c.execute("SELECT ur.user_id, ur.role, ur.school FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.status = 'active' AND ur.role IN ('superadmin', 'region_admin', 'district_admin', 'director')"):
+        for uid, role, sch in c.execute("SELECT ur.user_id, ur.role, ur.school FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.status IN (%s) AND ur.role IN ('superadmin', 'region_admin', 'district_admin', 'director')" % role_status_sql(st_q)):
             if want and role != want:
                 continue
             if role == 'director' and sch not in schools:
@@ -1737,7 +1890,7 @@ def accounts_api(c, p, q):
         if not ok_sch:
             return {'items': [], 'total': 0, 'page': page, 'size': size}
         ph = ','.join('?' * len(ok_sch))
-        where = "ur.role = 'teacher' AND ur.status = 'active' AND ur.school IN (%s)" % ph
+        where = "ur.role = 'teacher' AND ur.status IN (%s) AND ur.school IN (%s)" % (role_status_sql(st_q), ph)
         args = list(ok_sch)
         if text:
             where += " AND (u.name LIKE ? ESCAPE '\\' OR u.login LIKE ? ESCAPE '\\')"
@@ -1764,6 +1917,9 @@ def accounts_api(c, p, q):
     if not where:
         return {'items': [], 'total': 0, 'page': page, 'size': size}
     cond = '(' + ' OR '.join(where) + ')'
+    if st_q in ('active', 'archived'):
+        cond += ' AND status = ?'
+        args.append(st_q)
     if text:
         cond += " AND name LIKE ? ESCAPE '\\'"
         args.append('%' + like_esc(text) + '%')
@@ -2216,8 +2372,8 @@ class H(BaseHTTPRequestHandler):
         if not p:
             return
         with lock, db() as c:
-            row = c.execute('SELECT school, owner, status, ext FROM uploads WHERE id = ?', (uid,)).fetchone()
-            ok = bool(row) and upload_visible(c, p, row[:3])
+            row = c.execute('SELECT school, owner, status, ext, archived_at FROM uploads WHERE id = ?', (uid,)).fetchone()
+            ok = bool(row) and upload_visible(c, p, row)
         if not ok:
             return self.reply(404, {'error': 'not found'})
         try:
