@@ -64,6 +64,7 @@ const Store=VR.Store={
     if(patch.grade!=null)s.grade=clampGrade(patch.grade);
     if(patch.classId!==undefined){const k=patch.classId?Store.klass(patch.classId):null;s.classId=k?k.id:null;if(k)s.grade=k.grade;}
     if(patch.pinHash!==undefined)s.pinHash=patch.pinHash;
+    if(patch.pinView!==undefined){if(VR.schema.okPin(patch.pinView))s.pinView=patch.pinView;else delete s.pinView;}
     s.updated=now();save();Store.syncSoon();return s;
   },
   removeStudent(id){
@@ -111,7 +112,7 @@ const Store=VR.Store={
     const b=await c.deriveBits({name:'PBKDF2',salt:enc.encode('st:'+id),iterations:20000,hash:'SHA-256'},k,256);
     return btoa(String.fromCharCode(...new Uint8Array(b)));
   },
-  async setStudentPin(id,pin){pin=pin||Store.genPin();Store.updateStudent(id,{pinHash:await Store.pinHash(id,pin)});return pin;},
+  async setStudentPin(id,pin){pin=pin||Store.genPin();Store.updateStudent(id,{pinHash:await Store.pinHash(id,pin),pinView:pin});return pin;},
   async checkStudentPin(s,pin){if(!s.pinHash)return true;return(await Store.pinHash(s.id,String(pin||'').trim()))===s.pinHash;},
 
   /* рейтинг классов. Балл ученика — его баллы (тесты + открытия).

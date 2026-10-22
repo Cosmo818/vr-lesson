@@ -11,6 +11,8 @@ const okSchool=v=>typeof v==='string'&&v.length>=1&&v.length<=40;
 const okYear=v=>typeof v==='number'&&Number.isInteger(v)&&v>=2000&&v<=2100;
 const okStatus=v=>v==='active'||v==='archived';
 const okTeacher=v=>typeof v==='string'&&v.length>=1&&v.length<=40;
+/* pinView: код входа ученика (4–8 цифр) для показа учителю; хранится в записи ученика, шлему сервер его не отдаёт */
+const okPin=v=>typeof v==='string'&&/^[0-9]{4,8}$/.test(v);
 const OKF={school:okSchool,year:okYear,status:okStatus};
 /* начало учебного года по времени создания (UTC): август и позже — этот год, раньше — прошлый; нет времени — null */
 function acadYear(ts){
@@ -50,6 +52,8 @@ function carry(winner,loser,kind){
   let o=null;
   for(const f of NEW_FIELDS)if(!OKF[f](winner[f])&&OKF[f](loser[f])){o=o||Object.assign({},winner);o[f]=loser[f];}
   if(kind==='classes'&&!okTeacher(winner.teacherId)&&okTeacher(loser.teacherId)){o=o||Object.assign({},winner);o.teacherId=loser.teacherId;}
+  /* видимый код переносится, только если код входа (хэш) тот же: иначе показали бы неверный код */
+  if(kind==='students'&&!okPin(winner.pinView)&&okPin(loser.pinView)&&winner.pinHash&&winner.pinHash===loser.pinHash){o=o||Object.assign({},winner);o.pinView=loser.pinView;}
   return o||winner;
 }
 /* teacherId — поле, правда о котором лежит на сервере (меняется только серверным действием «передать класс»): после синхронизации берём его у сервера */
@@ -74,7 +78,7 @@ function validate(kind,data,opt){
   if(!R||!Array.isArray(data))return{ok:false,value:[],dropped:0};
   const f=data.filter(R.keep),dropped=data.length-f.length;
   let value=R.map?f.map(R.map):f;
-  if(kind==='students'||kind==='classes'){const doFill=!(opt&&opt.fill===false);value=value.map((m,i)=>{copyNew(f[i],m);if(kind==='classes'&&okTeacher(f[i].teacherId))m.teacherId=f[i].teacherId;return doFill?fill(kind,m):m;});}
+  if(kind==='students'||kind==='classes'){const doFill=!(opt&&opt.fill===false);value=value.map((m,i)=>{copyNew(f[i],m);if(kind==='classes'&&okTeacher(f[i].teacherId))m.teacherId=f[i].teacherId;if(kind==='students'&&okPin(f[i].pinView))m.pinView=f[i].pinView;return doFill?fill(kind,m):m;});}
   return{ok:dropped===0,value,dropped};
 }
 function db(x,opt){
@@ -91,5 +95,5 @@ function db(x,opt){
   return o;
 }
 function migrate(kind,data){return kind==='db'?db(data):validate(kind,data).value;}
-VR.schema={VERSION,DEFAULT_SCHOOL,NEW_FIELDS,CLASS_FIELDS,KINDS,clampGrade,blank,validate,migrate,db,acadYear,carry,adoptTeacher,fill,okSchool,okYear,okStatus,okTeacher};
+VR.schema={VERSION,DEFAULT_SCHOOL,NEW_FIELDS,CLASS_FIELDS,KINDS,clampGrade,blank,validate,migrate,db,acadYear,carry,adoptTeacher,fill,okSchool,okYear,okStatus,okTeacher,okPin};
 })();

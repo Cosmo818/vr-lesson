@@ -492,6 +492,31 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
       ok(bg[0][1]==='{"truncated": true}'&&bg[1][1]==='{"k": 1}'&&bg[1][2]===80&&bg[1][3]==='1.2.3.4','аудит: слишком большой detail заменяется пометкой, длинный target_id обрезается');
       ok(+pq('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select count(*) from audit_log where actor_kind not in (?,?)",("legacy-teacher","device")).fetchone()[0])')===0,'аудит: все исполнители — legacy-teacher или device (учётных записей пока нет)');
     }
+    /* ---- видимый код ученика (Б42): только учителю, шлем его не получает ---- */
+    {const post=(key,body)=>fetch(url+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json','X-Key':key},body:JSON.stringify(body)}).then(r=>r.json());
+      const pv=TS.addStudent('Видимый Код',6),code=await TS.setStudentPin(pv.id);await TS.sync();await HS.sync();
+      ok(/^[0-9]{4}$/.test(code)&&TS.student(pv.id).pinView===code,'pinView: учитель хранит видимый код вместе с хэшем');
+      ok(HS.student(pv.id)&&HS.student(pv.id).pinView===undefined&&HS.student(pv.id).pinHash===TS.student(pv.id).pinHash&&await HS.checkStudentPin(HS.student(pv.id),code),'pinView: шлем получает хэш (вход работает), но не видимый код');
+      const hx=await post('dev-secret',{students:[{id:'dvpv1',name:'Шлем Код',grade:5,created:1760000000000,updated:1760000000000,pinHash:'hh',pinView:'1234'}]});
+      ok(hx.state.students.some(x=>x.id==='dvpv1')&&!JSON.stringify(hx.state).includes('"pinView"'),'pinView: в ответе шлему нет ни одного видимого кода, присланный шлемом код отброшен');
+      let ex=await (await fetch(url+'/api/export',{headers:{'X-Key':'teach-secret'}})).json();
+      ok(ex.students.find(x=>x.id==='dvpv1').pinView===undefined&&ex.students.find(x=>x.id===pv.id).pinView===code,'pinView: учитель получает видимый код своих учеников, у ученика от шлема его нет');
+      const cur=JSON.parse(JSON.stringify(ex.students.find(x=>x.id===pv.id)));
+      const pickS=x=>JSON.stringify([x.name,x.pinHash,x.pinView]);
+      const same={id:cur.id,name:'Старый клиент',grade:6,classId:null,pinHash:cur.pinHash,created:cur.created,updated:cur.updated+9000};
+      const r1=await post('teach-secret',{students:[same]});const k1=r1.state.students.find(x=>x.id===cur.id);
+      ok(k1.name==='Старый клиент'&&k1.pinView===code,'pinView: старый клиент без поля (тот же код) видимый код не стирает');
+      ok(pickS(k1)===pickS(V0.Store.merge({students:[cur]},{students:[same]}).students[0]),'pinView: сервер и JS дают одинаковый результат для старого клиента');
+      const diff=Object.assign({},same,{name:'Другой код',pinHash:'otherhash',updated:cur.updated+18000});
+      const r2=await post('teach-secret',{students:[diff]});const k2=r2.state.students.find(x=>x.id===cur.id);
+      ok(k2.pinView===undefined&&k2.pinHash==='otherhash','pinView: при смене кода старым клиентом прежний видимый код не остаётся (не покажем неверный)');
+      ok(pickS(k2)===pickS(V0.Store.merge({students:[Object.assign({},k1)]},{students:[diff]}).students[0]),'pinView: сервер и JS одинаково убирают код при смене хэша');
+      const r3=await post('teach-secret',{students:[Object.assign({},diff,{pinHash:'newh',pinView:'4321',updated:cur.updated+27000})]});
+      ok(r3.state.students.find(x=>x.id===cur.id).pinView==='4321','pinView: учитель задаёт новый видимый код');
+      const r4=await post('teach-secret',{students:[Object.assign({},diff,{pinHash:'newh2',pinView:'abcd',updated:cur.updated+36000})]});
+      ok(r4.state.students.find(x=>x.id===cur.id).pinView===undefined,'pinView: недопустимое значение (не 4–8 цифр) отбрасывается');
+      TS.removeStudent(pv.id);await TS.sync();
+    }
     ok(fs.readdirSync(dir).filter(f=>/^vrlesson\.db\.bak-/.test(f)).length===0,'свежая база: копий миграции нет');
   }finally{srv.kill();}
 

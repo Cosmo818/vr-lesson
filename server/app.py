@@ -144,6 +144,15 @@ def fill_v4(doc, old=None, kind='students', device_new=False):
     """Правило слияния v4 = v3 + teacherId у классов. Сервер — источник правды этого поля: присланное значение (учитель, шлем, старый клиент) игнорируется,
     остаётся значение из прежней записи сервера; меняется оно только серверным действием «передать класс» (шаг 7 плана учёток)."""
     d = fill_v3(doc, old, device_new)
+    if kind == 'students':
+        # pinView — код входа для показа учителю (Б42). Шлем его не пишет и не получает; учитель присылает вместе с хэшем.
+        # Если присланной записи (старый клиент) код не пришёл, оставляем прежний — но только пока хэш кода тот же.
+        pv = d.pop('pinView', None)
+        if not device_new:
+            if ok_pin(pv):
+                d['pinView'] = pv
+            elif isinstance(old, dict) and ok_pin(old.get('pinView')) and d.get('pinHash') and old.get('pinHash') == d.get('pinHash'):
+                d['pinView'] = old['pinView']
     if kind == 'classes':
         d.pop('teacherId', None)
         t = class_teacher(old)
@@ -202,6 +211,10 @@ def migrate_v3(c):
         if c.in_transaction:
             c.execute('ROLLBACK')
         raise
+
+
+def ok_pin(v):
+    return isinstance(v, str) and re.fullmatch(r'[0-9]{4,8}', v) is not None
 
 
 def class_teacher(doc):
@@ -332,7 +345,7 @@ def merge_in(c, inc, role, ip=''):
             continue  # ключ шлема может только добавлять новых учеников, но не менять существующих (имя, класс, код входа, архив)
         if not row or upd > row[0]:
             old_d = None if not row else load_doc(row[1])
-            d = fill_v3(s, old_d, device_new=not teacher)
+            d = fill_v4(s, old_d, 'students', device_new=not teacher)
             if not teacher and d.get('classId'):
                 kr = c.execute('SELECT status FROM classes WHERE id = ?', (d['classId'],)).fetchone()
                 if kr and kr[0] == 'archived':
@@ -406,14 +419,20 @@ def get_settings(c):
     return json.loads(row[0]) if row else {}
 
 
-def state(c):
+def state(c, hide_pins=False):
+    """Состояние для ответа. hide_pins: ключ шлема не получает видимые коды учеников (pinView)."""
+    def stud(raw):
+        d = json.loads(raw)
+        if hide_pins:
+            d.pop('pinView', None)
+        return d
     disc = {}
     for sid, k, ts in c.execute('SELECT sid, k, ts FROM disc'):
         disc.setdefault(sid, {})[k] = ts
     return {
         'v': SCHEMA,
         'classes': [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')],
-        'students': [json.loads(r[0]) for r in c.execute('SELECT doc FROM students')],
+        'students': [stud(r[0]) for r in c.execute('SELECT doc FROM students')],
         'tests': [json.loads(r[0]) for r in c.execute('SELECT doc FROM tests')],
         'results': [json.loads(r[0]) for r in c.execute('SELECT doc FROM results ORDER BY ts')],
         'disc': disc,
@@ -496,7 +515,7 @@ class H(BaseHTTPRequestHandler):
             return self.reply(400, {'error': 'bad json'})
         with lock, db() as c:
             merge_in(c, inc, r, self.client_address[0])
-            st = state(c)
+            st = state(c, r != 'teacher')
         self.reply(200, {'role': r, 'state': st, 'time': int(time.time() * 1000)})
 
 
