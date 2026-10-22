@@ -111,10 +111,18 @@ function hooks(){
   E.hooks.onXREnd=()=>endSession();
   E.hooks.onLock=l=>showLockHint(!l&&$('deskPanel').hidden);
   /* настройки мыши и справка: окно доступно всегда (кнопка «? Управление» или клавиша H); пока оно открыто, мышь освобождена */
-  const mc=S.pref('mouse',{});E.setMouseCfg(mc);
+  const mc=S.pref('mouse',{});E.setMouseCfg(mc);E.setPerf(S.pref('perf',{}));
   const syncPanel=()=>{const c=E.mouseCfg;$('mSens').value=Math.round(c.sens*100);$('mSmooth').value=Math.round(c.smooth*100);$('mInv').checked=c.invY;$('mSensV').textContent=Math.round(c.sens*100)+'%';$('mSmoothV').textContent=Math.round(c.smooth*100)+'%';};
+  const syncGfx=()=>{const g=E.perf;$('gFps').checked=g.fps;$('gScale').value=Math.round(g.scale*100);$('gFov').value=g.fov;$('gScaleV').textContent=Math.round(g.scale*100)+'%';$('gFovV').textContent=g.fov+'°';};
+  const saveGfx=()=>S.setPref('perf',{scale:E.perf.scale,fov:E.perf.fov,fps:E.perf.fps});
+  $('gFps').onchange=()=>{E.setPerf({fps:$('gFps').checked});saveGfx();};
+  $('gScale').oninput=()=>{E.setPerf({scale:$('gScale').value/100});syncGfx();saveGfx();};
+  $('gFov').oninput=()=>{E.setPerf({fov:+$('gFov').value});syncGfx();saveGfx();};
+  const tab=n=>{for(const b of document.querySelectorAll('#deskPanel .tab'))b.classList.toggle('on',b.dataset.p===n);$('pKeys').hidden=n!=='keys';$('pMouse').hidden=n!=='mouse';$('pGfx').hidden=n!=='gfx';};
+  for(const b of document.querySelectorAll('#deskPanel .tab'))b.onclick=()=>tab(b.dataset.p);
+  $('resetStand').onclick=()=>{E.resetStand();helpToggle(false);};
   const saveCfg=()=>S.setPref('mouse',{sens:E.mouseCfg.sens,smooth:E.mouseCfg.smooth,invY:E.mouseCfg.invY});
-  const helpToggle=on=>{const p=$('deskPanel');const open=on===undefined?p.hidden:on;p.hidden=!open;if(open){syncPanel();if(E.unlockMouse)E.unlockMouse();showLockHint(false);}else if(E.deskInput){if(E.lockMouse)E.lockMouse();}};
+  const helpToggle=on=>{const p=$('deskPanel');const open=on===undefined?p.hidden:on;p.hidden=!open;if(open){syncPanel();syncGfx();if(E.unlockMouse)E.unlockMouse();showLockHint(false);}else if(E.deskInput){if(E.lockMouse)E.lockMouse();}};
   $('helpBtn').onclick=()=>helpToggle();$('helpClose').onclick=()=>helpToggle(false);
   $('mSens').oninput=()=>{E.setMouseCfg({sens:$('mSens').value/100});syncPanel();saveCfg();};
   $('mSmooth').oninput=()=>{E.setMouseCfg({smooth:$('mSmooth').value/100});syncPanel();saveCfg();};
@@ -131,6 +139,7 @@ function hooks(){
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';
       p.button(36+(i%2)*(bw+18),252+((i/2)|0)*100,bw,86,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(k);},{bg:E.roomId===k?'#f8fafc':sub.color,fg:'#0b1020',size:36});
     });
+    if(E.roomId&&E.roomId!=='hall')p.button(W-36-340,880,340,70,'Сбросить стенд',()=>{E.toggleMenu(false);E.resetStand();},{bg:'#475569',size:32});
     p.button(36,780,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
     p.button(54+bw,780,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
     if(E.roomId&&E.roomId!=='hall'){

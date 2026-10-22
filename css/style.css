@@ -40,6 +40,12 @@ footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin-top:18
 #helpBtn{position:fixed;left:16px;top:12px;z-index:5;padding:8px 14px;font-size:15px;background:rgba(0,0,0,.5)}
 #deskPanel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;background:rgba(11,16,32,.96);border:1px solid #3b82f6;border-radius:14px;padding:18px 22px;max-width:min(560px,94vw);max-height:90vh;overflow:auto;color:#e8efff}
 #deskPanel[hidden]{display:none}
+#deskPanel .tabs{display:flex;gap:6px;margin-bottom:10px}
+#deskPanel .tab{flex:1;background:#1e293b;color:#cbd5e1;border:1px solid #334155;border-radius:8px;padding:8px;font-size:15px;cursor:pointer}
+#deskPanel .tab.on{background:#1d4ed8;color:#fff;border-color:#3b82f6}
+#deskPanel .pane[hidden]{display:none}
+#fpsBox{position:fixed;right:10px;top:10px;z-index:6;background:rgba(0,0,0,.6);color:#86efac;font:13px/1.2 monospace;padding:4px 8px;border-radius:6px;pointer-events:none}
+#fpsBox[hidden]{display:none}
 #deskPanel h3{margin:6px 0 8px}
 #deskPanel table.keys td{padding:3px 10px 3px 0;font-size:15px;vertical-align:top}
 #deskPanel table.keys td:first-child{white-space:nowrap;color:#fde68a}

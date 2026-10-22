@@ -67,10 +67,12 @@
 <div id="desk" hidden>
   <div id="deskHud"></div>
   <div id="cross"></div>
+  <div id="fpsBox" hidden></div>
   <div id="lockHint" hidden>Щёлкни по экрану — мышь будет управлять взглядом без упора в край (Esc — освободить, F — полный экран)</div>
   <button id="helpBtn" class="btn ghost" title="Управление и настройки мыши (H)">? Управление</button>
   <div id="deskPanel" hidden>
-    <h3>Управление</h3>
+    <div class="tabs"><button class="tab on" data-p="keys">Клавиши</button><button class="tab" data-p="mouse">Мышь</button><button class="tab" data-p="gfx">Графика</button></div>
+    <div class="pane" id="pKeys">
     <table class="keys">
       <tr><td>Мышь</td><td>взгляд (первый щелчок захватывает мышь, Esc — освободить)</td></tr>
       <tr><td>W A S D, стрелки</td><td>ходьба; Shift — быстрее; Q — поворот налево</td></tr>
@@ -79,16 +81,26 @@
       <tr><td>Ctrl или C (держать)</td><td>присесть</td></tr>
       <tr><td>ПКМ или E (держать)</td><td>взять предмет и держать; отпустить — положить</td></tr>
       <tr><td>Колесо мыши</td><td>предмет дальше или ближе</td></tr>
+      <tr><td>R</td><td>сбросить стенд: предметы снова как в начале</td></tr>
       <tr><td>M или Tab</td><td>меню</td></tr>
       <tr><td>F</td><td>полный экран</td></tr>
       <tr><td>H</td><td>это окно</td></tr>
       <tr><td>[ и ]</td><td>чувствительность мыши меньше и больше</td></tr>
     </table>
-    <h3>Мышь</h3>
+    <button id="resetStand" class="btn ghost">Сбросить стенд (R)</button>
+    </div>
+    <div class="pane" id="pMouse" hidden>
     <label>Чувствительность <b id="mSensV"></b><input id="mSens" type="range" min="25" max="300" step="5"></label>
     <label>Плавность <b id="mSmoothV"></b><input id="mSmooth" type="range" min="0" max="100" step="5"></label>
     <label class="chk"><input id="mInv" type="checkbox"> Перевернуть вертикаль</label>
-    <p class="muted small">Плавность сглаживает резкие рывки: чем она выше, тем мягче взгляд догоняет мышь. Настройки хранятся только на этом устройстве.</p>
+    <p class="muted small">Плавность сглаживает резкие рывки: чем она выше, тем мягче взгляд догоняет мышь. Настройки хранятся на этом устройстве.</p>
+    </div>
+    <div class="pane" id="pGfx" hidden>
+    <label class="chk"><input id="gFps" type="checkbox"> Показывать fps в углу экрана</label>
+    <label>Качество картинки (разрешение) <b id="gScaleV"></b><input id="gScale" type="range" min="50" max="150" step="10"></label>
+    <label>Угол обзора <b id="gFovV"></b><input id="gFov" type="range" min="50" max="100" step="2"></label>
+    <p class="muted small">Рябит или тормозит — уменьши качество до 70–80%. Картинка «режет глаза» на краях предметов — поставь 120–150% (мягче края, но нужна видеокарта посильнее). Узкий угол обзора (60–70°) меньше «растягивает» картинку при поворотах. Включи fps и смотри «худший кадр»: если он больше 40 мс, виноваты тормоза, а не мышь.</p>
+    </div>
     <button id="helpClose" class="btn">Закрыть</button>
   </div>
   <button id="deskExit" class="btn ghost">Завершить (Esc)</button>

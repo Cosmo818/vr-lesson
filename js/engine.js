@@ -726,6 +726,12 @@ void main(){
   const releaseAll=()=>{for(const k in keys)keys[k]=false;drag=null;deskGrab=false;mouseL=mouseR=false;acc.x=acc.y=0;};
   /* накопленное движение мыши: применяется раз за кадр с плавностью, а не событием на каждый пиксель */
   const acc={x:0,y:0},MC={sens:1,smooth:.35,invY:false};
+  /* графика (настройки производительности): масштаб разрешения, угол обзора, счётчик fps */
+  const PF={scale:1,fov:66,fps:false};E.perf=PF;
+  E.setPerf=o=>{if(!o)return;if(typeof o.scale==='number'&&isFinite(o.scale))PF.scale=Math.max(.5,Math.min(1.5,o.scale));if(typeof o.fov==='number'&&isFinite(o.fov))PF.fov=Math.max(50,Math.min(100,o.fov));if(typeof o.fps==='boolean')PF.fps=o.fps;if(E.hooks.onPerf)E.hooks.onPerf();};
+  const fpsEl=document.getElementById('fpsBox');let fpsN=0,fpsT=0,fpsMax=0,dtS=.016;
+  /* сброс стенда: комната собирается заново (предметы на столе как в начале), игрок остаётся на месте */
+  E.resetStand=()=>{if(!E.roomId)return;const keep={x:D.x,z:D.z,yaw:D.yaw,pitch:D.pitch};E.loadRoom(E.roomId);if(E.deskInput&&!E.session)Object.assign(D,keep);E.toast('Стенд сброшен');};
   E.mouseCfg=MC;
   E.setMouseCfg=o=>{if(!o)return;if(typeof o.sens==='number'&&isFinite(o.sens))MC.sens=Math.max(.25,Math.min(3,o.sens));if(typeof o.smooth==='number'&&isFinite(o.smooth))MC.smooth=Math.max(0,Math.min(1,o.smooth));if(typeof o.invY==='boolean')MC.invY=o.invY;};
   /* состояние кнопок берём из маски buttons: при зажатых двух кнопках браузер второго нажатия не присылает, а по маске видно всё */
@@ -801,6 +807,7 @@ void main(){
     if(e.code==='Space'||e.code==='ControlLeft'||e.code==='ControlRight')e.preventDefault();
     if(e.code==='Enter'&&!e.repeat){deskClick=true;e.preventDefault();}
     if(e.code==='KeyF'&&!e.repeat){E.toggleFullscreen();e.preventDefault();}
+    if(e.code==='KeyR'&&!e.repeat&&!e.ctrlKey&&!e.metaKey){E.resetStand();e.preventDefault();}
     if(e.code==='BracketLeft'||e.code==='BracketRight'){E.setMouseCfg({sens:MC.sens*(e.code==='BracketRight'?1.2:1/1.2)});E.toast('Чувствительность мыши: '+Math.round(MC.sens*100)+'%');if(E.hooks.onMouseCfg)try{E.hooks.onMouseCfg(MC);}catch(_){}}
   });
   window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyE')deskGrab=false;if(e.key==='Meta'||e.key==='Alt')releaseAll();});
@@ -811,8 +818,10 @@ void main(){
       if(id!==deskId||E.session)return;
       requestAnimationFrame(f);
       const dt=lt?Math.min(.05,(t-lt)/1000):.016;lt=t;
+      dtS+=(dt-dtS)*.25;fpsN++;fpsT+=dt;fpsMax=Math.max(fpsMax,dt);
+      if(fpsT>=.5){if(fpsEl){fpsEl.hidden=!PF.fps;if(PF.fps)fpsEl.textContent=Math.round(fpsN/fpsT)+' fps · худший кадр '+Math.round(fpsMax*1000)+' мс';}fpsN=0;fpsT=0;fpsMax=0;}
       if(E.deskInput){
-        applyLook(dt);
+        applyLook(dtS);
         /* присед (Ctrl или C) и прыжок (пробел): высота глаз плавно меняется, прыжок — по параболе, в воздухе управлять нельзя только высотой */
         const crouch=!!(keys.ControlLeft||keys.ControlRight||keys.KeyC);
         D.h+=((crouch?1.0:1.6)-D.h)*(1-Math.exp(-dt/.07));
@@ -829,12 +838,12 @@ void main(){
       readDesk(dt);
       step(dt);
       if(crossEl&&crossEl.classList){const hot=!!(H[1].hit||H[1].held);if(hot!==crossHot){crossHot=hot;crossEl.classList.toggle('hot',hot);}}
-      const dpr=Math.min(window.devicePixelRatio||1,2),w=(canvas.clientWidth*dpr)|0,h=(canvas.clientHeight*dpr)|0;
+      const dpr=Math.max(.5,Math.min((window.devicePixelRatio||1)*PF.scale,2.5)),w=(canvas.clientWidth*dpr)|0,h=(canvas.clientHeight*dpr)|0;
       if(w>0&&h>0&&(canvas.width!==w||canvas.height!==h)){canvas.width=w;canvas.height=h;}
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,canvas.width,canvas.height);gl.enable(gl.DEPTH_TEST);
       gl.clearColor(E.clear[0],E.clear[1],E.clear[2],1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
       const cam=[D.x,eyeY(),D.z],view=M.mul(M.rotX(-D.pitch),M.mul(M.rotY(-D.yaw),M.trans(-cam[0],-cam[1],-cam[2])));
-      buildDraw(cam);render(M.persp(1.15,canvas.width/Math.max(1,canvas.height),.05,200),view,cam);
+      buildDraw(cam);render(M.persp(PF.fov*Math.PI/180,canvas.width/Math.max(1,canvas.height),.05,200),view,cam);
     };
     requestAnimationFrame(f);
   };
