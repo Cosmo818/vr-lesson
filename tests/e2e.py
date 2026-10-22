@@ -83,7 +83,12 @@ try:
         cid = pg.evaluate("VR.Store.addClass(8,'Т').id")
         pg.evaluate('document.getElementById("cSel").dispatchEvent(new Event("change"))'); pg.select_option('#cSel', value=cid); pg.wait_for_timeout(200)
         pg.click('#pwToggle'); pg.wait_for_timeout(200)
-        pg.click('#addOpen'); pg.fill('#bulk', 'Иванова Мария\nПетров Иван\nСидоров Пётр'); pg.click('#bulkAdd'); pg.wait_for_timeout(900)
+        # Quest: клавиатура открывается → visibilitychange/синхронизация → перерисовка не должна пересоздавать поле, в котором печатают
+        pg.click('#addOpen'); pg.focus('#bulk'); pg.keyboard.type('Иванова'); pg.evaluate("window.dispatchEvent(new StorageEvent('storage'))"); pg.wait_for_timeout(150)
+        ok(pg.evaluate("document.activeElement&&document.activeElement.id==='bulk'&&document.getElementById('bulk').value==='Иванова'"), 'Quest: автоперерисовка не сбивает фокус и текст в поле списка учеников')
+        pg.evaluate('document.activeElement.blur()'); pg.evaluate("window.dispatchEvent(new StorageEvent('storage'))"); pg.wait_for_timeout(150)
+        ok(pg.is_visible('#bulk') and pg.input_value('#bulk') == 'Иванова', 'Quest: перерисовка без фокуса не стирает недописанный список')
+        pg.fill('#bulk', 'Иванова Мария\nПетров Иван\nСидоров Пётр'); pg.click('#bulkAdd'); pg.wait_for_timeout(900)
         rows = pg.evaluate("[...document.querySelectorAll('#cCard tr[data-id]')].map(r=>[r.children[0].innerText.trim(),r.querySelector('.nm').value,r.querySelector('.gn').value,r.children[3].innerText.trim(),r.querySelector('.pcode')&&r.querySelector('.pcode').innerText])")
         ok([r[0] for r in rows] == ['1', '2', '3'] and [r[2] for r in rows] == ['f', 'm', 'm'] and all(r[3] == 'Не занимался' and r[4] and len(r[4]) == 4 for r in rows), 'добавление списком: номера 1–3, пол по имени, активность, пароли видны (' + str(rows) + ')')
         pg.click('#shareOpen'); link = pg.input_value('#shareUrl')

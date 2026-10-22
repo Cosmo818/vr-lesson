@@ -18,6 +18,9 @@ a{color:#93c5fd}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
 .tab{padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:#16213f;color:var(--text);cursor:pointer;font-size:16px}
 .tab.on{background:var(--acc);border-color:var(--acc)}
+/* Разделы слева на широком экране (не переносятся в 2 ряда); на узком — одна строка с прокруткой */
+@media (min-width:900px){.wrap:has(#app:not([hidden])){max-width:1400px}#app:not([hidden]){display:grid;grid-template-columns:200px minmax(0,1fr);column-gap:18px;align-items:start}#app>header{grid-column:1/-1}#app>.tabs{grid-column:1;grid-row:2/span 30;flex-direction:column;flex-wrap:nowrap;position:sticky;top:12px;margin-top:0}#app>.tabs .tab{text-align:left}#app>section{grid-column:2;min-width:0}}
+@media (max-width:899px){#app>.tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}#app>.tabs .tab{flex:0 0 auto;white-space:nowrap}}
 .btn{padding:10px 16px;border:0;border-radius:10px;background:var(--acc);color:#fff;font-size:15px;cursor:pointer}
 .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
 .btn.red{background:#b91c1c}
@@ -319,7 +322,7 @@ function renderStudents(){
   if(!curClass)curClass=klist.length?klist[0].id:(loose.length?'-':null);
   $('cSel').innerHTML=klist.map(c=>`<option value="${c.id}">${clsName(c)}</option>`).join('')+(loose.length?'<option value="-">Без класса</option>':'');
   if(curClass)$('cSel').value=curClass;
-  const box=$('cCard');
+  const box=$('cCard'),bulkWas=$('bulk')?$('bulk').value:'';
   if(!curClass){box.innerHTML='<div class="card muted">Создайте первый класс: выберите параллель, букву и нажмите «Создать класс».</div>';renderClassRank();return;}
   const k=curClass==='-'?null:S.klass(curClass),L=S.studentsOf(k?k.id:null).sort((a,b)=>S.numOf(a)-S.numOf(b));
   const st=S.classStats().rows.find(r=>(r.c.id||null)===(k?k.id:null));
@@ -330,6 +333,7 @@ function renderStudents(){
    ${shareOpen?`<div class="card" style="background:#0e1730"><b>Ссылка для класса ${esc(clsName(k))}</b> <span class="muted small">— отправьте её ученикам или родителям: класс уже выбран, останется найти себя в списке и ввести пароль.</span><div class="row"><input id="shareUrl" readonly value="${esc(new URL('index.html?class='+k.id,location.href).href)}" style="width:100%"></div><div class="row"><button class="btn" id="shareCopy">Скопировать ссылку</button><button class="btn ghost" id="shareClose">Закрыть</button></div></div>`:''}`:''}
    ${Object.keys(newCodes).length?`<div class="card" id="codes" style="background:#0e1730"><b>Новые коды входа — раздайте ученикам.</b> Позже их можно посмотреть кнопкой 👁 в таблице; список для раздачи — кнопка «Печать кодов».<div id="codesList">${Object.keys(newCodes).map(id=>{const s=S.student(id);return s?`<div class="row" style="margin:4px 0"><span style="min-width:220px">${esc(s.name)}</span><b style="font-size:20px;letter-spacing:3px">${newCodes[id]}</b></div>`:'';}).join('')}</div></div>`:''}
    <div class="scroll"><table><tr><th title="Номер в классе — логин ученика при входе">№ (логин)</th><th>Фамилия и имя</th><th>Пол</th><th>Активность</th><th>Класс</th><th>Пароль</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><b>${S.numOf(s)}</b></td><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="gn">${genOpts(s.gender)}</select></td><td class="small">${ago(S.lastActive(s.id))}</td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${codeCell(s)} <button class="btn ghost pin">Новый пароль</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">В архив</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
+  if(bulkWas&&$('bulk'))$('bulk').value=bulkWas; // перерисовка не стирает недописанный список
   renderClassRank();
 }
 function renderClassRank(){
@@ -399,7 +403,10 @@ $('srvSave').onclick=async()=>{const u=$('srvUrl').value.trim()||defSrv(),k=$('s
 $('pairGo').onclick=async()=>{const u=$('srvUrl').value.trim()||defSrv(),c=$('pairCode').value.trim();if(!c){$('srvMsg').textContent='Введите код привязки.';return;}$('srvMsg').textContent='Проверяю код…';const r=await S.pair(u,c,'');$('pairCode').value='';if(!r.ok){$('srvMsg').textContent=r.msg;return;}$('srvMsg').textContent='Шлем привязан.';await S.sync();renderAll();};
 $('srvShow').onchange=e=>{$('srvKey').type=e.target.checked?'text':'password';};
 $('srvOff').onclick=()=>{S.setServer(null);S.status={state:'off'};renderAll();};
-S.onStatus(st=>{if(st.state==='ok')renderAll();else showSrv(st);});
+/* Автоперерисовка (синхронизация, другая вкладка) не трогает поле, в котором сейчас печатают: в Quest системная клавиатура вызывает visibilitychange → синхронизация → renderAll пересоздавал поле, и клавиатура закрывалась. Пропускаем перерисовку, пока печатают: следующая синхронизация (раз в 30 с) или действие учителя всё обновит. Перерисовку по focusout не делаем — она съедала бы клик по кнопке рядом. */
+const typing=()=>{const a=document.activeElement;return !!(a&&a!==document.body&&(a.tagName==='TEXTAREA'||a.tagName==='SELECT'||(a.tagName==='INPUT'&&!/^(checkbox|radio|button|submit|file)$/.test(a.type)))&&$('app').contains(a));};
+function autoRender(){if(typing())return;renderAll();}
+S.onStatus(st=>{if(st.state==='ok')autoRender();else showSrv(st);});
 $('saveSet').onclick=async()=>{
   const m=Math.max(1,Math.min(45,parseInt($('minutes').value,10)||8)),p=$('newPin').value.trim(),patch={minutes:m};
   if(p){if(p.length<6){$('setMsg').textContent='Пароль — не короче 6 символов.';return;}const salt=Math.random().toString(36).slice(2)+Date.now().toString(36);patch.pinSalt=salt;patch.pinHash=await pinHash(p,salt);patch.pin=null;}
@@ -527,7 +534,7 @@ $('editor').onclick=e=>{
   }
 };
 
-window.addEventListener('storage',()=>{S.reload();renderAll();});
+window.addEventListener('storage',()=>{S.reload();autoRender();});
 /* вход по сохранённой сессии — только в самом конце, когда все функции и переменные уже объявлены */
 if(unlocked())unlock();
 setInterval(()=>{if(!$('app').hidden&&S.server()&&!document.hidden)S.sync();},30000);
