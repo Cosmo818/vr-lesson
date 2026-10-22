@@ -23,6 +23,7 @@ try:
         pg.click('#guestBtn'); pg.click('#go'); pg.wait_for_timeout(500)
         ok(ev("VR.app.E.rooms.learn&&VR.app.E.rooms.learnT?1:0") == 1, 'комнаты «Первые шаги» и «Обучение учителя» зарегистрированы')
         ok(ev("VR.app.E.panels.some(p=>p.w===1.7&&p.accent==='#22c55e')"), 'в холле есть панель «Обучение»')
+        ok(ev('VR.app.E.mouseCfg.smooth') == .1, 'плавность мыши по умолчанию 10%% (%s)' % ev('VR.app.E.mouseCfg.smooth'))
         # ---- мышь: захват указателя
         ok(not ev('VR.app.E.mouseLocked()') and pg.is_visible('#lockHint'), 'сначала мышь не захвачена, видна подсказка «щёлкни по экрану»')
         pg.mouse.click(550, 350); pg.wait_for_timeout(500)

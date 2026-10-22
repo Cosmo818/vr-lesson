@@ -111,7 +111,7 @@ function hooks(){
   E.hooks.onXREnd=()=>endSession();
   E.hooks.onLock=l=>showLockHint(!l&&$('deskPanel').hidden);
   /* настройки мыши и справка: окно доступно всегда (кнопка «? Управление» или клавиша H); пока оно открыто, мышь освобождена */
-  const mc=S.pref('mouse',{});E.setMouseCfg(mc);E.setPerf(S.pref('perf',{}));
+  const mc=Object.assign({},S.pref('mouse',{}));if(mc.smooth===.35)delete mc.smooth;/* .35 — прежнее значение по умолчанию, переходим на новое */E.setMouseCfg(mc);E.setPerf(S.pref('perf',{}));
   const syncPanel=()=>{const c=E.mouseCfg;$('mSens').value=Math.round(c.sens*100);$('mSmooth').value=Math.round(c.smooth*100);$('mInv').checked=c.invY;$('mSensV').textContent=Math.round(c.sens*100)+'%';$('mSmoothV').textContent=Math.round(c.smooth*100)+'%';};
   const syncGfx=()=>{const g=E.perf;$('gFps').checked=g.fps;$('gScale').value=Math.round(g.scale*100);$('gFov').value=g.fov;$('gWalk').value=Math.round(g.walk*100);$('gWalkV').textContent=Math.round(g.walk*100)+'%';$('gEase').checked=g.ease;$('gScaleV').textContent=Math.round(g.scale*100)+'%';$('gFovV').textContent=g.fov+'°';};
   const saveGfx=()=>S.setPref('perf',{scale:E.perf.scale,fov:E.perf.fov,fps:E.perf.fps,walk:E.perf.walk,ease:E.perf.ease});

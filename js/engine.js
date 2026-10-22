@@ -760,7 +760,7 @@ void main(){
   /* сброс всех зажатых клавиш и кнопок: при потере фокуса, уходе со вкладки, отмене указателя */
   const releaseAll=()=>{for(const k in keys)keys[k]=false;drag=null;deskGrab=false;mouseL=mouseR=false;acc.x=acc.y=0;};
   /* накопленное движение мыши: применяется раз за кадр с плавностью, а не событием на каждый пиксель */
-  const acc={x:0,y:0},MC={sens:1,smooth:.35,invY:false};
+  const acc={x:0,y:0},MC={sens:1,smooth:.1,invY:false};/* плавность 10%: при 180 к/с 35% давали лишнюю задержку (замечание владельца 22.10.2026) */
   /* графика (настройки производительности): масштаб разрешения, угол обзора, счётчик fps */
   const PF={scale:1,fov:60,fps:false,walk:.8,ease:true};E.perf=PF;const WV={x:0,z:0};  /* WV — текущая скорость ходьбы */
   E.setPerf=o=>{if(!o)return;if(typeof o.scale==='number'&&isFinite(o.scale))PF.scale=Math.max(.5,Math.min(1.5,o.scale));if(typeof o.fov==='number'&&isFinite(o.fov))PF.fov=Math.max(40,Math.min(100,o.fov));if(typeof o.fps==='boolean')PF.fps=o.fps;if(typeof o.walk==='number'&&isFinite(o.walk))PF.walk=Math.max(.4,Math.min(1.5,o.walk));if(typeof o.ease==='boolean')PF.ease=o.ease;if(E.hooks.onPerf)E.hooks.onPerf();};
