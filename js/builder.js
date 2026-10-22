@@ -8,7 +8,22 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const BANDS=['a','b','c','d'],BS={a:'1–4',b:'5–6',c:'7–8',d:'9–11'};
 const ICON={text:'Т',item:'●',table:'▭',question:'?',quiz:'✓',portal:'⇨'};
 const SC=40,CS=480; /* пикселей на метр, размер плана: комната 12×12 м */
-let cur=null,sel=null,dirty=false,msg='',io=false;
+let cur=null,sel=null,dirty=false,msg='',io=false,inRoom=false;
+/* отмена и возврат: снимки комнаты до каждой правки (шаг назад / шаг вперёд, Ctrl+Z / Ctrl+Y) */
+let hist=[],fut=[],lastKey='',lastAt=0;
+const HMAX=100;
+function mark(key){
+  if(!cur)return;
+  const now=Date.now();
+  if(key&&key===lastKey&&now-lastAt<1500){lastAt=now;return;}/* набор текста в одном поле — одна правка */
+  lastKey=key||'';lastAt=now;
+  const j=JSON.stringify(cur);if(hist.length&&hist[hist.length-1].j===j)return;
+  hist.push({j,sel});if(hist.length>HMAX)hist.shift();fut=[];histBtns();
+}
+function histBtns(){const u=$('bdUndo'),r=$('bdRedo');if(u)u.disabled=!hist.length;if(r)r.disabled=!fut.length;}
+function undo(){if(!cur||!hist.length)return;fut.push({j:JSON.stringify(cur),sel});const h=hist.pop();cur=JSON.parse(h.j);sel=blk(h.sel)?h.sel:null;lastKey='';setDirty(true);show();}
+function redo(){if(!cur||!fut.length)return;hist.push({j:JSON.stringify(cur),sel});const h=fut.pop();cur=JSON.parse(h.j);sel=blk(h.sel)?h.sel:null;lastKey='';setDirty(true);show();}
+function resetHist(){hist=[];fut=[];lastKey='';}
 
 const root=()=>$('bdRoot');
 const px=v=>CS/2+v*SC;
@@ -62,9 +77,11 @@ function costHtml(){
   const c=RS.cost(cur),col=c.level==='over'?'#ef4444':c.level==='lite'?'#22c55e':'#eab308';
   return`<span style="color:${col};font-weight:700">●</span> Панелей ${c.panels} из ${RS.LIM.panels}, предметов ${c.items} из ${RS.LIM.items}. ${esc(c.text)}`;
 }
+const frameHtml=()=>`<div class="card"><div class="small muted" style="margin-bottom:6px">Вы внутри комнаты. Дверь «← Холл» ведёт в холл; вернуться к правке — кнопка «← Вернуться в редактор». В шлеме комната открывается по кнопке VR внутри окна.</div><iframe title="Комната" src="index.html?room=${encodeURIComponent(cur.id)}&t=${Date.now()}" allow="xr-spatial-tracking; fullscreen" style="width:100%;height:480px;border:1px solid var(--line);border-radius:10px;background:#000"></iframe></div>`;
 function editHtml(){
   const b=S.bandsOf('room',cur.id);
-  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><span id="bdDirty" class="small"></span><button class="btn ghost" data-bd="preview">Проверить в VR</button><button class="btn ghost" data-bd="export">Текст комнаты</button><a href="help-rooms.html" class="small">Инструкция</a></div>
+  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><button class="btn ghost" data-bd="undo" id="bdUndo" title="Шаг назад (Ctrl+Z)" ${hist.length?'':'disabled'}>↶ Назад</button><button class="btn ghost" data-bd="redo" id="bdRedo" title="Шаг вперёд (Ctrl+Y)" ${fut.length?'':'disabled'}>↷ Вперёд</button><span id="bdDirty" class="small" style="display:inline-block;min-width:200px"></span><button class="btn ghost" data-bd="preview">${inRoom?'← Вернуться в редактор':'Войти в комнату'}</button><button class="btn ghost" data-bd="newtab">В новой вкладке</button><button class="btn ghost" data-bd="export">Текст комнаты</button><a href="help-rooms.html" class="small">Инструкция</a></div>
+  <div id="bdFrame" ${inRoom?'':'hidden'}>${inRoom?frameHtml():''}</div>
   <div id="bdMsg" class="note small" ${msg?'':'hidden'}>${esc(msg)}</div><div id="bdIO">${io?ioHtml(JSON.stringify(cur,null,1)):''}</div>
   <div class="card"><div class="row"><label class="bdl" style="flex:1;min-width:220px">Название комнаты<input data-r="title" value="${esc(cur.title)}" maxlength="${RS.LIM.title}"></label>
     <label class="bdl">Оформление<select data-r="env">${Object.keys(RS.PRESETS).map(k=>`<option value="${k}"${k===cur.env?' selected':''}>${esc(RS.PRESETS[k].title)}</option>`).join('')}</select></label></div>
@@ -121,7 +138,7 @@ function bindPlan(){
   cv.onpointerdown=e=>{
     const [mx,mz]=pt(e),h=hit(mx,mz);
     if(!h){sel=null;refreshPanels();return;}
-    if(h.id){sel=h.id;drag={id:h.id};refreshPanels();}else drag={spawn:true};
+    mark();if(h.id){sel=h.id;drag={id:h.id};refreshPanels();}else drag={spawn:true};
     cv.setPointerCapture(e.pointerId);
   };
   cv.onpointermove=e=>{
@@ -153,8 +170,8 @@ function save(){
   if(sel&&!blk(sel))sel=null;
   show();return true;
 }
-function open(id){cur=JSON.parse(JSON.stringify(S.customRoom(id)));sel=null;dirty=false;msg='';io=false;show();}
-function leave(){if(dirty&&!confirm('Есть несохранённые правки. Уйти без сохранения?'))return;cur=null;sel=null;dirty=false;msg='';io=false;show();}
+function open(id){resetHist();inRoom=false;cur=JSON.parse(JSON.stringify(S.customRoom(id)));sel=null;dirty=false;msg='';io=false;show();}
+function leave(){if(dirty&&!confirm('Есть несохранённые правки. Уйти без сохранения?'))return;resetHist();inRoom=false;cur=null;sel=null;dirty=false;msg='';io=false;show();}
 function create(spec){const res=S.saveRoom(spec);if(!res.spec){alert(res.errors.join(' '));return;}open(res.spec.id);}
 
 function onClick(e){
@@ -174,10 +191,13 @@ function onClick(e){
   else if(a==='export'){io=!io;show();}
   else if(a==='back')leave();
   else if(a==='save')save();
-  else if(a==='preview'){if(dirty&&!save())return;window.open('index.html?room='+encodeURIComponent(cur.id),'_blank');}
-  else if(a==='add'){const b=RS.blockDefault(t.dataset.t);b.x=0;b.z=-3+(cur.blocks.length%5)*.6;cur.blocks.push(b);sel=b.id;setDirty(true);refreshPanels();}
-  else if(a==='bddel'){cur.blocks=cur.blocks.filter(b=>b.id!==sel);sel=null;setDirty(true);refreshPanels();}
-  else if(a==='bdup'){const b=blk(sel);if(b){const c=JSON.parse(JSON.stringify(b));c.id=RS.newBlockId();c.x=Math.min(5.4,Math.round((c.x+.5)*10)/10);cur.blocks.push(c);sel=c.id;setDirty(true);refreshPanels();}}
+  else if(a==='undo')undo();
+  else if(a==='redo')redo();
+  else if(a==='newtab'){if(dirty&&!save())return;window.open('index.html?room='+encodeURIComponent(cur.id),'_blank');}
+  else if(a==='preview'){if(inRoom){inRoom=false;show();return;}if(dirty&&!save())return;inRoom=true;show();}
+  else if(a==='add'){mark();const b=RS.blockDefault(t.dataset.t);b.x=0;b.z=-3+(cur.blocks.length%5)*.6;cur.blocks.push(b);sel=b.id;setDirty(true);refreshPanels();}
+  else if(a==='bddel'){mark();cur.blocks=cur.blocks.filter(b=>b.id!==sel);sel=null;setDirty(true);refreshPanels();}
+  else if(a==='bdup'){const b=blk(sel);if(b){mark();const c=JSON.parse(JSON.stringify(b));c.id=RS.newBlockId();c.x=Math.min(5.4,Math.round((c.x+.5)*10)/10);cur.blocks.push(c);sel=c.id;setDirty(true);refreshPanels();}}
   else{
     const tr=t.closest('tr[data-id]');if(!tr)return;const id=tr.dataset.id;
     if(a==='open')open(id);
@@ -188,14 +208,14 @@ function onClick(e){
 function onInput(e){
   const t=e.target;
   if(!cur)return;
-  if(t.dataset.r){cur[t.dataset.r]=t.value;setDirty(true);return;}
+  if(t.dataset.r){mark('r'+t.dataset.r);cur[t.dataset.r]=t.value;setDirty(true);return;}
   if(t.dataset.band){
     const now=BANDS.filter(x=>S.bandsOf('room',cur.id).indexOf(x)>=0&&x!==t.dataset.band);if(t.checked)now.push(t.dataset.band);
     S.setBands('room',cur.id,now.join(''));return;
   }
   if(t.dataset.k){
     const b=blk(sel);if(!b)return;
-    const k=t.dataset.k;
+    const k=t.dataset.k;mark(sel+k);
     if(t.type==='checkbox')b[k]=t.checked;
     else if(t.type==='number'){const v=parseFloat(t.value);if(isFinite(v))b[k]=v;}
     else b[k]=t.value;
@@ -203,6 +223,12 @@ function onInput(e){
     if(k==='title'||k==='label'||k==='q'||k==='subj'||k==='to'){const l=$('bdList');if(l)l.innerHTML=listBlocks();}
   }
 }
+document.addEventListener('keydown',e=>{
+  if(!cur||!(e.ctrlKey||e.metaKey)||!$('bdPlan'))return;
+  const tg=e.target&&e.target.tagName;if(tg==='INPUT'||tg==='TEXTAREA'||tg==='SELECT')return;
+  const k=(e.key||'').toLowerCase();
+  if(k==='z'&&!e.shiftKey){e.preventDefault();undo();}else if(k==='y'||(k==='z'&&e.shiftKey)){e.preventDefault();redo();}
+});
 function mount(){
   const r=root();if(!r||r.dataset.bound)return;
   r.dataset.bound='1';r.addEventListener('click',onClick);r.addEventListener('input',onInput);r.addEventListener('change',onInput);

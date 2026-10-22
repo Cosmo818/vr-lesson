@@ -384,6 +384,12 @@ void main(){
   const headWorld=()=>{const vp=curFrame&&refSpace&&curFrame.getViewerPose(refSpace);return vp?vp.transform.position:{x:P.tx,z:P.tz};};
   function teleportTo(x,z){const h=headBase(),r=R2(P.yaw,h.x,h.z);P.tx=x-r[0];P.tz=z-r[1];applyPlayer();moved=true;}
   function turnBy(d){const hw=headWorld(),h=headBase();P.yaw+=d;const r=R2(P.yaw,h.x,h.z);P.tx=hw.x-r[0];P.tz=hw.z-r[1];applyPlayer();moved=true;}
+  /* стик назад — шаг назад на полметра (против взгляда), не выходя за стены и мебель */
+  function stepBack(){
+    const hw=headWorld(),f=E.headPose().f,x=hw.x-f[0]*.5,z=hw.z-f[1]*.5;
+    const inside=E.open?Math.hypot(x,z)<5.3:(Math.abs(x)<E.bound&&Math.abs(z)<E.bound);
+    if(inside&&!E.boxes.some(b=>Math.abs(x-b.x)<b.hx+.3&&Math.abs(z-b.z)<b.hz+.3)){teleportTo(x,z);E.beep(420,.05,'sine',.03);}
+  }
   function respawn(){
     D.x=E.spawn.x;D.z=E.spawn.z;D.yaw=0;D.pitch=-.08;
     if(E.session&&baseRef){P.yaw=0;teleportTo(E.spawn.x,E.spawn.z);}
@@ -482,6 +488,7 @@ void main(){
         if(ay<-.6){h.aim=true;aimTeleport(h);}
         else if(h.aim&&ay>-.25){if(h.tp&&h.tp.valid){teleportTo(h.tp.x,h.tp.z);E.beep(660,.08);E.buzz(h,.3,30);}h.aim=false;h.tp=null;}
       }else{h.aim=false;h.tp=null;}
+      if(ay>.7&&!h.held&&!h.stepLock){h.stepLock=true;stepBack();}else if(ay<.3)h.stepLock=false;
       if(Math.abs(ax)>.7&&!h.turnLock){h.turnLock=true;turnBy(ax>0?-Math.PI/6:Math.PI/6);}
       else if(Math.abs(ax)<.3)h.turnLock=false;
     }
