@@ -240,7 +240,9 @@ $('invForm').onsubmit=async e=>{
   if(r.status===200){$('pinErr').textContent='';$('invForm').hidden=true;unlock();}else $('pinErr').textContent=(r.data&&r.data.error)||'Не получилось. Проверьте код.';
 };
 S.onStatus(st=>{if(st.expired){lock();$('pinErr').textContent=st.msg;}});
-(async()=>{const sv=S.server(),u=sv?sv.url:defSrv();try{const on=await S.account.probe(u);if(on===true){acctMode=true;showForms();if(unlocked()&&!S.account.token())lock();else if(S.account.token()&&$('app').hidden){const m=await S.me();if(m.status===200)unlock();else S.account.clear();}}}catch(e){}})();
+/* форма входа сразу та же, что в прошлый раз (ответ сервера приходит позже — без «прыжка» формы); сервер всё равно проверяет */
+try{if(localStorage.getItem('vrl.acctMode')==='1'){acctMode=true;showForms();}}catch(e){}
+(async()=>{const sv=S.server(),u=sv?sv.url:defSrv();try{const on=await S.account.probe(u);try{if(on!==null)localStorage.setItem('vrl.acctMode',on?'1':'0');}catch(e){}if(on===false&&acctMode){acctMode=false;showForms();}if(on===true){acctMode=true;showForms();if(unlocked()&&!S.account.token())lock();else if(S.account.token()&&$('app').hidden){const m=await S.me();if(m.status===200)unlock();else S.account.clear();}}}catch(e){}})();
 
 /* ---- вкладки ---- */
 $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','rooms','builder','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
@@ -442,7 +444,9 @@ $('fbF').onchange=renderFeedback;
 $('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Убрать отзыв в корзину? Вернуть может директор или администратор.')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
 $('fbCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';download('vr-urok-otzyvy-'+stamp()+'.csv','\ufeff'+[['Дата','Тип','Комната','Оценка','Текст','Класс'].map(q).join(';'),...S.feedback().map(x=>[new Date(x.ts).toLocaleString('ru-RU'),KIND[x.kind]||x.kind,roomName(x.room),x.rating||'',x.text||'',x.grade||''].map(q).join(';'))].join('\r\n'),'text/csv');};
 // каждая вкладка рисуется отдельно: ошибка в одной не должна ломать остальные и статус сервера
-function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderRooms,renderBuilder,renderTests,renderQuestions,renderFeedback,renderArchive]){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
+/* рисуем только открытую вкладку (и «Данные» — там статус сервера): остальные дорисуются при переходе на них — вход и синхронизация в шлеме не подвисают */
+const TAB_R={rating:()=>renderRating,students:()=>renderStudents,rooms:()=>renderRooms,builder:()=>renderBuilder,tests:()=>renderTests,questions:()=>renderQuestions,feedback:()=>renderFeedback,data:()=>renderData,archive:()=>renderArchive};
+function renderAll(){if($('app').hidden)return;const on=document.querySelector('#tabs .tab.on'),cur=TAB_R[on?on.dataset.t:'rating']||TAB_R.rating;const list=[renderData];if(cur()!==renderData)list.push(cur());for(const f of list){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
 /* ---- комнаты: наполнение по диапазонам классов (Б44) ---- */
 const BANDS=['a','b','c','d'],BAND_SHORT={a:'1–4',b:'5–6',c:'7–8',d:'9–11'};
 const bandBoxes=(kind,id,dis)=>{const cur=S.bandsOf(kind,id);return BANDS.map(b=>`<label class="small" style="white-space:nowrap;margin-right:10px"><input type="checkbox" data-kind="${kind}" data-id="${id}" data-b="${b}"${cur.indexOf(b)>=0?' checked':''}${dis?' disabled':''}> ${BAND_SHORT[b]}</label>`).join('');};
