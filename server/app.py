@@ -1824,6 +1824,88 @@ def options_api(c, p, q):
     raise AdminError(400, 'level: region, district, school, class или teacher.')
 
 
+HISTORY_KINDS = ('all', 'user', 'student', 'class', 'school', 'device', 'upload', 'room')
+HISTORY_DETAIL = ('role', 'name', 'from', 'to', 'status', 'students', 'results', 'count', 'keys', 'by', 'via', 'why', 'action', 'classId', 'had', 'title', 'auto', 'device_limit', 'truncated', 'disc', 'feedback_anonymized')
+
+
+def history_api(c, p, q):
+    """GET /api/history (Б74.2, Б74.8): журнал школы. Суперадмин и директор (его школы) — всё; учитель — только student/class из своих классов; остальные 403.
+    ip отдаётся только суперадмину; detail — по белому списку."""
+    if not p or p.get('kind') != 'user':
+        raise AdminError(403, 'История доступна только пользователям с учётной записью.')
+    sc = scope(c, p)
+    school = (q.get('school') or '')[:60]
+    if not school:
+        raise AdminError(400, 'Нужен параметр school.')
+    kind = q.get('kind') or 'all'
+    if kind not in HISTORY_KINDS:
+        raise AdminError(400, 'kind: ' + ', '.join(HISTORY_KINDS) + '.')
+    try:
+        page = max(1, int(q.get('page', 1)))
+        size = min(PAGE_MAX, max(1, int(q.get('size', 50))))
+        t_from = int(q['from']) if q.get('from') else None
+        t_to = int(q['to']) if q.get('to') else None
+    except ValueError:
+        raise AdminError(400, 'page, size, from и to — числа.')
+    is_super = sc['all']
+    teacher_only = False
+    if school == '-':
+        if not is_super:
+            raise AdminError(403, 'Нет доступа.')
+        where, par = "(school IS NULL OR school = '')", []
+    else:
+        if school not in scope_schools(c, sc):
+            raise AdminError(403, 'Нет доступа к этой школе.')
+        if is_super or school in sc['dir']:
+            where = '(school = ? OR (target_kind = \'user\' AND target_id IN (SELECT user_id FROM user_roles WHERE school = ?)))'
+            par = [school, school]
+        else:  # учитель: только ученики и классы его классов
+            teacher_only = True
+            mine = '(SELECT id FROM classes WHERE teacherId = ? AND school = ?)'
+            where = "school = ? AND ((target_kind = 'class' AND target_id IN %s) OR (target_kind = 'student' AND target_id IN (SELECT id FROM students WHERE json_extract(doc, '$.classId') IN %s)))" % (mine, mine)
+            par = [school, p['id'], school, p['id'], school]
+    if kind != 'all':
+        if teacher_only and kind not in ('student', 'class'):
+            return {'items': [], 'page': page, 'size': size, 'more': False}
+        where += ' AND target_kind = ?'
+        par.append(kind)
+    if t_from is not None:
+        where += ' AND ts >= ?'
+        par.append(t_from)
+    if t_to is not None:
+        where += ' AND ts <= ?'
+        par.append(t_to)
+    rows = c.execute('SELECT ts, action, target_kind, target_id, actor_kind, actor_id, detail, ip FROM audit_log WHERE ' + where +
+                     ' ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?', par + [size + 1, (page - 1) * size]).fetchall()
+    more = len(rows) > size
+    rows = rows[:size]
+
+    def names(table, ids, f):
+        ids = sorted({i for i in ids if i})
+        if not ids:
+            return {}
+        return {r[0]: f(r) for r in c.execute('SELECT %s FROM %s WHERE id IN (%s)' % ('id, doc' if table in ('students', 'classes') else 'id, name, login' if table == 'users' else 'id, name', table, ','.join('?' * len(ids))), ids)}
+    tg = lambda k: [r[3] for r in rows if r[2] == k]  # noqa: E731
+    nm = {'student': names('students', tg('student'), lambda r: (load_doc(r[1]) or {}).get('name', '')),
+          'class': names('classes', tg('class'), lambda r: '%s%s' % ((load_doc(r[1]) or {}).get('grade', ''), (load_doc(r[1]) or {}).get('letter', ''))),
+          'user': names('users', tg('user') + [r[5] for r in rows if r[4] == 'user'], lambda r: r[1] or r[2]),
+          'school': names('schools', tg('school'), lambda r: r[1])}
+    items = []
+    for ts, action, tk, tid, ak, aid, det, ip in rows:
+        d = load_doc(det) if det else {}
+        d = d if isinstance(d, dict) else {}
+        if ak == 'user':
+            actor = nm['user'].get(aid, '')
+        else:
+            actor = {'legacy-teacher': 'ключ учителя', 'device': 'шлем'}.get(ak, 'сервер')
+        it = {'ts': ts, 'action': action, 'kind': tk or '', 'target': tid or '', 'name': nm.get(tk, {}).get(tid, ''), 'actor': actor,
+              'detail': {k: d[k] for k in HISTORY_DETAIL if k in d}}
+        if is_super:
+            it['ip'] = ip or ''
+        items.append(it)
+    return {'items': items, 'page': page, 'size': size, 'more': more}
+
+
 def role_status_sql(st):
     """Список статусов роли для фильтра status (константы, не ввод): по умолчанию только действующие."""
     return "'active', 'archived'" if st == 'all' else "'archived'" if st == 'archived' else "'active'"
@@ -2151,12 +2233,12 @@ class H(BaseHTTPRequestHandler):
             return self.asset_get()
         if self.path.startswith('/api/auth/'):
             return self.auth_api('GET')
-        if self.path.startswith('/api/options') or self.path.startswith('/api/accounts'):
+        if self.path.startswith('/api/options') or self.path.startswith('/api/accounts') or self.path.startswith('/api/history'):
             return self.query_api()
         self.reply(404, {'error': 'not found'})
 
     def query_api(self):
-        """GET /api/options и /api/accounts — только пользователь с токеном, только его срез."""
+        """GET /api/options, /api/accounts и /api/history — только пользователь с токеном, только его срез."""
         if not load_config()['accounts']:
             return self.reply(404, {'error': 'not found'})
         from urllib.parse import urlparse, parse_qs
@@ -2169,7 +2251,8 @@ class H(BaseHTTPRequestHandler):
                 roles = principal_roles(c, us['id'])
                 p = {'kind': 'user', 'id': us['id'], 'login': us['login'], 'roles': roles}
                 try:
-                    out = (200, options_api(c, p, q) if u.path == '/api/options' else accounts_api(c, p, q)) if roles else (403, {'error': 'no roles'})
+                    fn = options_api if u.path == '/api/options' else history_api if u.path == '/api/history' else accounts_api
+                    out = (200, fn(c, p, q)) if roles else (403, {'error': 'no roles'})
                 except AdminError as e:
                     out = (e.code, {'error': e.msg})
             else:
