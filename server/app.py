@@ -88,6 +88,7 @@ def init_db():
                 sys.exit(1)
         migrate_v3(c)  # при каждом старте: идемпотентно, дозаполняет строки, записанные прежней версией
         migrate_v4(c)
+        c.execute("CREATE INDEX IF NOT EXISTS students_class ON students(json_extract(doc, '$.classId'))")  # поиск и фильтр по классу (шаг 8); старому коду индекс не мешает
 
 
 def num(x, d=0):
@@ -825,6 +826,324 @@ def session_user(c, token):
     return {'id': u[0], 'login': u[1], 'name': u[2], 'expires': min(now + idle, created + SESSION_CAP)}
 
 
+# ---------- администрирование учёток (шаг 7 PLAN.md, ROLES 4.x): все действия через can-правила и журнал в одной транзакции ----------
+class AdminError(Exception):
+    def __init__(self, code, msg):
+        Exception.__init__(self, msg)
+        self.code, self.msg = code, msg
+
+
+RANK = {'superadmin': 4, 'director': 3, 'teacher': 2, 'expert': 1}
+CODE_ALPHA = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
+SCHOOL_RE = re.compile(r'^s-[a-z0-9-]{2,30}$')
+RESET_TTL = 24 * 3600 * 1000
+
+
+def my_rank(p):
+    return max([RANK.get(r['role'], 0) for r in p.get('roles') or []] or [0])
+
+
+def dir_schools(p):
+    return {r['school'] for r in p.get('roles') or [] if r['role'] == 'director'}
+
+
+def new_code(n=10):
+    return ''.join(secrets.choice(CODE_ALPHA) for _ in range(n))
+
+
+def user_row(c, uid):
+    r = c.execute('SELECT id, login, name, status FROM users WHERE id = ?', (str(uid or ''),)).fetchone()
+    return {'id': r[0], 'login': r[1], 'name': r[2], 'status': r[3]} if r else None
+
+
+def all_roles(c, uid):
+    return [{'role': r, 'school': s, 'status': st} for r, s, st in c.execute('SELECT role, school, status FROM user_roles WHERE user_id = ?', (uid,))]
+
+
+def manageable(c, p, target):
+    """Может ли p управлять учёткой target (архив, сброс пароля). Суперадмин — любой, кроме себя; директор — только учитель(и) целиком из его школ."""
+    if target['id'] == p['id']:
+        return False
+    if my_rank(p) >= 4:
+        return True
+    ds = dir_schools(p)
+    roles = [r for r in all_roles(c, target['id']) if r['status'] == 'active']
+    return bool(ds) and bool(roles) and all(r['role'] == 'teacher' and r['school'] in ds for r in roles)
+
+
+def active_directors(c, school, exclude=None):
+    return [r[0] for r in c.execute("SELECT ur.user_id FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.role = 'director' AND ur.school = ? AND ur.status = 'active' AND u.status = 'active'", (school,)) if r[0] != exclude]
+
+
+def guard_last_director(c, uid):
+    """Нельзя оставить школу без директора (ROLES 4.1): сначала назначьте замену."""
+    for r in all_roles(c, uid):
+        if r['role'] == 'director' and r['status'] == 'active' and not active_directors(c, r['school'], exclude=uid):
+            raise AdminError(400, 'Школа останется без директора: сначала назначьте замену.')
+
+
+def admin_action(c, p, act, b, ip):
+    """Выполняет административное действие; возвращает dict-ответ или бросает AdminError. Вызывать под lock в одной транзакции."""
+    who = ('user', p['id'], ip)
+    now = int(time.time() * 1000)
+    rank = my_rank(p)
+    sc = scope(c, p)
+    S = lambda k, n=80: str(b.get(k) or '')[:n]  # noqa: E731
+    need_dir = act not in ('student.pin', 'student.move')
+    if rank < (3 if need_dir else 2):
+        audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
+        raise AdminError(403, 'Недостаточно прав.')
+    if act == 'school.create':
+        if rank < 4:
+            raise AdminError(403, 'Школы создаёт суперадмин.')
+        name = S('name').strip()
+        sid = S('id') or 's-' + secrets.token_hex(4)
+        if not name or not SCHOOL_RE.match(sid):
+            raise AdminError(400, 'Нужны название и код школы вида s-xxxx.')
+        if c.execute('SELECT 1 FROM schools WHERE id = ?', (sid,)).fetchone():
+            raise AdminError(400, 'Такая школа уже есть.')
+        c.execute('INSERT INTO schools(id, name, region, status, network, created, updated) VALUES(?, ?, ?, ?, ?, ?, ?)', (sid, name, S('region', 60), 'active', '', now, now))
+        audit(c, who, 'school.create', 'school', sid, sid, {'name': name})
+        return {'ok': True, 'id': sid}
+    if act == 'school.update':
+        if rank < 4:
+            raise AdminError(403, 'Школы меняет суперадмин.')
+        row = c.execute('SELECT name, region, status FROM schools WHERE id = ?', (S('id'),)).fetchone()
+        if not row:
+            raise AdminError(404, 'Школы нет.')
+        name = S('name').strip() or row[0]
+        region = S('region', 60) if 'region' in b else row[1]
+        status = b.get('status') if b.get('status') in ('pending', 'active', 'archived') else row[2]
+        if S('id') == DEFAULT_SCHOOL and status == 'archived':
+            raise AdminError(400, 'Школу по умолчанию архивировать нельзя.')
+        c.execute('UPDATE schools SET name = ?, region = ?, status = ?, updated = ? WHERE id = ?', (name, region, status, now, S('id')))
+        audit(c, who, 'school.update', 'school', S('id'), S('id'), {'status': status})
+        return {'ok': True}
+    if act in ('role.assign', 'role.remove'):
+        role, school, uid = S('role', 20), S('school', 40), S('user_id', 40)
+        t = user_row(c, uid)
+        if not t or t['status'] != 'active':
+            raise AdminError(404, 'Пользователя нет.')
+        if uid == p['id']:
+            audit(c, who, 'admin.denied', 'user', uid, None, {'why': 'self', 'action': act})
+            raise AdminError(403, 'Свои роли менять нельзя.')
+        if role not in ('director', 'teacher', 'expert'):
+            raise AdminError(403 if role == 'superadmin' else 400, 'Эту роль выдать нельзя.')
+        school = '' if role == 'expert' else school
+        if RANK[role] >= rank or (rank < 4 and (role != 'teacher' or school not in dir_schools(p))):
+            audit(c, who, 'admin.denied', 'user', uid, school or None, {'why': 'role', 'role': role, 'action': act})
+            raise AdminError(403, 'Эту роль вы выдать не можете.')
+        if role != 'expert' and not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone():
+            raise AdminError(400, 'Такой школы нет.')
+        if act == 'role.assign':
+            c.execute("INSERT INTO user_roles(user_id, role, school, status, created, created_by) VALUES(?, ?, ?, 'active', ?, ?) ON CONFLICT(user_id, role, school) DO UPDATE SET status = 'active'", (uid, role, school, now, p['id']))
+            audit(c, who, 'role.assign', 'user', uid, school or None, {'role': role})
+        else:
+            if role == 'director' and not active_directors(c, school, exclude=uid):
+                raise AdminError(400, 'Школа останется без директора: сначала назначьте замену.')
+            c.execute("UPDATE user_roles SET status = 'archived' WHERE user_id = ? AND role = ? AND school = ?", (uid, role, school))
+            revoke_sessions(c, uid)
+            audit(c, who, 'role.remove', 'user', uid, school or None, {'role': role})
+        return {'ok': True}
+    if act in ('user.archive', 'user.restore', 'password.reset'):
+        t = user_row(c, S('user_id', 40))
+        if not t:
+            raise AdminError(404, 'Пользователя нет.')
+        if not manageable(c, p, t):
+            audit(c, who, 'admin.denied', 'user', t['id'], None, {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Эта учётная запись вам не подчиняется.')
+        if act == 'user.archive':
+            guard_last_director(c, t['id'])
+            if any(r['role'] == 'superadmin' for r in all_roles(c, t['id'])) and c.execute("SELECT count(*) FROM user_roles ur JOIN users u ON u.id = ur.user_id WHERE ur.role = 'superadmin' AND ur.status = 'active' AND u.status = 'active'").fetchone()[0] < 2:
+                raise AdminError(400, 'Это последний суперадмин.')
+            c.execute("UPDATE users SET status = 'archived', updated = ? WHERE id = ?", (now, t['id']))
+            revoke_sessions(c, t['id'])
+            audit(c, who, 'user.archive', 'user', t['id'], None, {})
+            return {'ok': True}
+        if act == 'user.restore':
+            c.execute("UPDATE users SET status = 'active', updated = ? WHERE id = ?", (now, t['id']))
+            audit(c, who, 'user.restore', 'user', t['id'], None, {})
+            return {'ok': True}
+        code = new_code()
+        c.execute("DELETE FROM invites WHERE kind = 'reset' AND user_id = ? AND used_at IS NULL", (t['id'],))
+        c.execute('INSERT INTO invites(code_hash, kind, role, school, user_id, created_by, created, expires, used_at, used_by) VALUES(?, ?, NULL, NULL, ?, ?, ?, ?, NULL, NULL)',
+                  (thash(code), 'reset', t['id'], p['id'], now, now + RESET_TTL))
+        revoke_sessions(c, t['id'])
+        audit(c, who, 'password.reset_issue', 'user', t['id'], None, {})  # код в журнал не пишем (А14)
+        return {'ok': True, 'code': code, 'expires': now + RESET_TTL}
+    if act == 'class.assign':
+        row = class_row(c, S('class_id', 60))
+        if not row:
+            raise AdminError(404, 'Класса нет.')
+        if rank < 4 and row[0] not in dir_schools(p):
+            audit(c, who, 'admin.denied', 'class', S('class_id', 60), row[0], {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это класс чужой школы.')
+        tid = S('teacher_id', 40) or None
+        if tid:
+            t = user_row(c, tid)
+            if not t or t['status'] != 'active' or not c.execute("SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'teacher' AND school = ? AND status = 'active'", (tid, row[0])).fetchone():
+                raise AdminError(400, 'Этот человек не учитель школы класса.')
+        raw = c.execute('SELECT doc FROM classes WHERE id = ?', (S('class_id', 60),)).fetchone()[0]
+        d = load_doc(raw) or {}
+        if tid:
+            d['teacherId'] = tid
+        else:
+            d.pop('teacherId', None)
+        d['updated'] = now
+        c.execute('UPDATE classes SET teacherId = ?, doc = ?, updated = ? WHERE id = ?', (tid, json.dumps(d, ensure_ascii=False), now, S('class_id', 60)))
+        audit(c, who, 'class.assign', 'class', S('class_id', 60), row[0], {'from': row[1], 'to': tid})
+        return {'ok': True}
+    if act in ('student.move', 'student.pin'):
+        row = c.execute('SELECT doc FROM students WHERE id = ?', (S('student_id', 60),)).fetchone()
+        d = load_doc(row[0]) if row else None
+        if not d or not student_in_scope(c, sc, d):
+            if d:
+                audit(c, who, 'admin.denied', 'student', S('student_id', 60), None, {'why': 'scope', 'action': act})
+            raise AdminError(404 if not d else 403, 'Ученика нет или он вам не подчиняется.')
+        if act == 'student.pin':
+            had = bool(d.get('pinHash'))
+            d['pinHash'] = None
+            d.pop('pinView', None)
+            d['updated'] = now
+            c.execute('UPDATE students SET doc = ?, updated = ? WHERE id = ?', (json.dumps(d, ensure_ascii=False), now, S('student_id', 60)))
+            audit(c, who, 'student.pin_reset', 'student', S('student_id', 60), d.get('school'), {'had': had})
+            return {'ok': True}
+        ncl = class_row(c, S('class_id', 60))
+        if not ncl or not class_in_scope(sc, ncl[0], ncl[1]):
+            audit(c, who, 'admin.denied', 'class', S('class_id', 60), None, {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Нельзя перенести в этот класс.')
+        old_cl = d.get('classId')
+        d['classId'] = S('class_id', 60)
+        d['school'] = ncl[0]
+        d['updated'] = now
+        c.execute('UPDATE students SET doc = ?, updated = ?, school = ? WHERE id = ?', (json.dumps(d, ensure_ascii=False), now, ncl[0], S('student_id', 60)))
+        audit(c, who, 'student.move', 'student', S('student_id', 60), ncl[0], {'from': old_cl, 'to': S('class_id', 60)})
+        return {'ok': True}
+    raise AdminError(404, 'Нет такого действия.')
+
+
+# ---------- поиск и фильтры (шаг 8 PLAN.md): только доступное принципалу, страницы, без хэшей ----------
+PAGE_MAX = 100
+
+
+def like_esc(q):
+    return q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
+def scope_schools(c, sc):
+    """Школы, видимые принципалу: суперадмин — все, директор и учитель — свои."""
+    if sc['all']:
+        return {r[0] for r in c.execute('SELECT id FROM schools')}
+    return set(sc['dir']) | set(sc['tch'])
+
+
+def visible_classes(c, sc, school=None):
+    out = []
+    for cid, sch, tid, raw in c.execute('SELECT id, school, teacherId, doc FROM classes'):
+        if school and sch != school:
+            continue
+        if class_in_scope(sc, sch, tid):
+            d = load_doc(raw) or {}
+            out.append({'id': cid, 'name': '%s%s' % (d.get('grade', ''), d.get('letter', '')), 'school': sch, 'teacherId': tid, 'status': d.get('status', 'active')})
+    return out
+
+
+def options_api(c, p, q):
+    sc = scope(c, p)
+    level = q.get('level', 'school')
+    parent = (q.get('parent') or '')[:60]
+    schools = scope_schools(c, sc)
+    if level == 'region':
+        regs = sorted({r[0] for r in c.execute('SELECT region FROM schools WHERE id IN (%s)' % ','.join('?' * len(schools)), tuple(schools))} if schools else [])
+        return {'items': [{'id': r, 'name': r or 'Без региона'} for r in regs]}
+    if level == 'school':
+        rows = c.execute('SELECT id, name, region, status FROM schools ORDER BY name').fetchall()
+        return {'items': [{'id': i, 'name': n, 'region': rg, 'status': st} for i, n, rg, st in rows if i in schools and (not q.get('parent') or rg == parent)]}
+    if level == 'class':
+        if parent not in schools:
+            return {'items': []}
+        return {'items': sorted(({'id': k['id'], 'name': k['name'], 'teacherId': k['teacherId']} for k in visible_classes(c, sc, parent)), key=lambda x: x['name'])}
+    if level == 'teacher':
+        if parent not in schools:
+            return {'items': []}
+        if not (sc['all'] or parent in sc['dir']):  # учитель видит в списке только себя
+            u = user_row(c, p['id'])
+            return {'items': [{'id': u['id'], 'name': u['name'] or u['login'], 'login': u['login']}]}
+        rows = c.execute("SELECT u.id, u.name, u.login FROM users u JOIN user_roles ur ON ur.user_id = u.id WHERE ur.role = 'teacher' AND ur.school = ? AND ur.status = 'active' AND u.status = 'active' ORDER BY u.name", (parent,)).fetchall()
+        return {'items': [{'id': i, 'name': n or lg, 'login': lg} for i, n, lg in rows]}
+    raise AdminError(400, 'level: region, school, class или teacher.')
+
+
+def accounts_api(c, p, q):
+    sc = scope(c, p)
+    kind = q.get('kind', 'students')
+    try:
+        page = max(1, int(q.get('page', 1)))
+        size = min(PAGE_MAX, max(1, int(q.get('size', 50))))
+    except ValueError:
+        raise AdminError(400, 'page и size — числа.')
+    text = (q.get('q') or '')[:40].strip()
+    schools = scope_schools(c, sc)
+    want_school = q.get('school') or None
+    if want_school and want_school not in schools:
+        return {'items': [], 'total': 0, 'page': page, 'size': size}
+    if q.get('region'):
+        rs = {r[0] for r in c.execute('SELECT id FROM schools WHERE region = ?', (q['region'][:60],))}
+        schools = schools & rs
+    if want_school:
+        schools = {want_school}
+    if kind == 'classes':
+        cls = [k for k in visible_classes(c, sc) if k['school'] in schools and (not q.get('teacher') or k['teacherId'] == q['teacher'])]
+        if text:
+            cls = [k for k in cls if text.lower() in k['name'].lower()]
+        cls.sort(key=lambda k: (k['school'], k['name']))
+        cnt = {}
+        for (cid,) in c.execute("SELECT json_extract(doc, '$.classId') FROM students"):
+            cnt[cid] = cnt.get(cid, 0) + 1
+        tot = len(cls)
+        return {'items': [dict(k, students=cnt.get(k['id'], 0)) for k in cls[(page - 1) * size:page * size]], 'total': tot, 'page': page, 'size': size}
+    if kind == 'teachers':
+        if not (sc['all'] or sc['dir']):
+            raise AdminError(403, 'Список учителей доступен директору.')
+        ok_sch = schools if sc['all'] else schools & sc['dir']
+        if not ok_sch:
+            return {'items': [], 'total': 0, 'page': page, 'size': size}
+        ph = ','.join('?' * len(ok_sch))
+        where = "ur.role = 'teacher' AND ur.status = 'active' AND ur.school IN (%s)" % ph
+        args = list(ok_sch)
+        if text:
+            where += " AND (u.name LIKE ? ESCAPE '\\' OR u.login LIKE ? ESCAPE '\\')"
+            args += ['%' + like_esc(text) + '%'] * 2
+        tot = c.execute('SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id WHERE ' + where, args).fetchone()[0]
+        rows = c.execute('SELECT DISTINCT u.id, u.login, u.name, u.status FROM users u JOIN user_roles ur ON ur.user_id = u.id WHERE ' + where + ' ORDER BY u.name, u.login LIMIT ? OFFSET ?', args + [size, (page - 1) * size]).fetchall()
+        return {'items': [{'id': i, 'login': lg, 'name': nm, 'status': st, 'roles': user_roles(c, i)} for i, lg, nm, st in rows], 'total': tot, 'page': page, 'size': size}
+    if kind != 'students':
+        raise AdminError(400, 'kind: students, teachers или classes.')
+    cls = {k['id']: k for k in visible_classes(c, sc) if k['school'] in schools}
+    if q.get('class'):
+        cls = {k: v for k, v in cls.items() if k == q['class']}
+    if q.get('teacher'):
+        cls = {k: v for k, v in cls.items() if v['teacherId'] == q['teacher']}
+    narrowed = bool(q.get('class') or q.get('teacher'))
+    where, args = [], []
+    if cls:
+        where.append("json_extract(doc, '$.classId') IN (%s)" % ','.join('?' * len(cls)))
+        args += list(cls)
+    loose = [s_ for s_ in (schools if sc['all'] else schools & sc['dir'])] if not narrowed else []
+    if loose:
+        where.append("(json_extract(doc, '$.classId') IS NULL AND school IN (%s))" % ','.join('?' * len(loose)))
+        args += loose
+    if not where:
+        return {'items': [], 'total': 0, 'page': page, 'size': size}
+    cond = '(' + ' OR '.join(where) + ')'
+    if text:
+        cond += " AND name LIKE ? ESCAPE '\\'"
+        args.append('%' + like_esc(text) + '%')
+    tot = c.execute('SELECT count(*) FROM students WHERE ' + cond, args).fetchone()[0]
+    rows = c.execute("SELECT id, name, grade, school, status, json_extract(doc, '$.classId'), json_extract(doc, '$.pinHash') IS NOT NULL FROM students WHERE " + cond + ' ORDER BY name, id LIMIT ? OFFSET ?', args + [size, (page - 1) * size]).fetchall()
+    return {'items': [{'id': i, 'name': n, 'grade': g, 'school': sch, 'status': st, 'classId': cl, 'className': (cls.get(cl) or {}).get('name'), 'hasPin': bool(hp)} for i, n, g, sch, st, cl, hp in rows], 'total': tot, 'page': page, 'size': size}
+
+
 def cli(argv):
     """Команды суперадмина на сервере: пароль только через getpass (не в аргументах, не в истории оболочки, А14)."""
     cmd = argv[0] if argv else ''
@@ -958,7 +1277,30 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, st)
         if self.path.startswith('/api/auth/'):
             return self.auth_api('GET')
+        if self.path.startswith('/api/options') or self.path.startswith('/api/accounts'):
+            return self.query_api()
         self.reply(404, {'error': 'not found'})
+
+    def query_api(self):
+        """GET /api/options и /api/accounts — только пользователь с токеном, только его срез."""
+        if not load_config()['accounts']:
+            return self.reply(404, {'error': 'not found'})
+        from urllib.parse import urlparse, parse_qs
+        u = urlparse(self.path)
+        q = {k: v[0] for k, v in parse_qs(u.query[:600]).items()}
+        tok = self.bearer()
+        with lock, db() as c:
+            us = session_user(c, tok) if tok else None
+            if us:
+                roles = user_roles(c, us['id'])
+                p = {'kind': 'user', 'id': us['id'], 'login': us['login'], 'roles': roles}
+                try:
+                    out = (200, options_api(c, p, q) if u.path == '/api/options' else accounts_api(c, p, q)) if roles else (403, {'error': 'no roles'})
+                except AdminError as e:
+                    out = (e.code, {'error': e.msg})
+            else:
+                out = (401, {'error': 'no session'})
+        self.reply(*out)
 
     def bearer(self):
         a = self.headers.get('Authorization') or ''
@@ -998,6 +1340,59 @@ class H(BaseHTTPRequestHandler):
         if route == '/api/auth/password' and method == 'POST':
             return self.do_password(body, ip)
         self.reply(404, {'error': 'not found'})
+
+    def admin_api(self):
+        """POST /api/admin/<действие>: только пользователь с токеном; legacy-ключи администрировать не могут (PLAN 1.5). Флаг accounts выключен — 404."""
+        cfg = load_config()
+        if not cfg['accounts']:
+            return self.reply(404, {'error': 'not found'})
+        ip = client_ip(self)
+        n = num(self.headers.get('Content-Length'))
+        if n <= 0 or n > 4096:
+            return self.reply(413, {'error': 'body size'})
+        try:
+            body = json.loads(self.rfile.read(n).decode('utf-8'))
+            if not isinstance(body, dict):
+                raise ValueError
+        except ValueError:
+            return self.reply(400, {'error': 'bad json'})
+        tok = self.bearer()
+        if not tok:
+            return self.reply(403, {'error': 'Администрировать можно только по учётной записи.'})
+        act = self.path.split('?')[0][len('/api/admin/'):]
+        now = int(time.time() * 1000)
+        stored = None
+        need_pw = False
+        wait = 0
+        with lock, db() as c:
+            u = session_user(c, tok)
+            if u:
+                roles = user_roles(c, u['id'])
+                stored = c.execute('SELECT pw FROM users WHERE id = ?', (u['id'],)).fetchone()[0]
+                need_pw = act in ('role.assign', 'role.remove') and body.get('role') == 'director'
+                wait = throttle(c, 'adm:' + u['login'], ip, now) if need_pw else 0
+        if not u:
+            return self.reply(401, {'error': 'no session'})
+        p = {'kind': 'user', 'id': u['id'], 'login': u['login'], 'roles': roles, 'ip': ip}
+        if need_pw:  # смена директора — «четыре глаза»: повторный ввод пароля (PLAN 5.1)
+            if wait:
+                return self.reply(429, {'error': 'too many attempts', 'retry': wait})
+            if not isinstance(body.get('password'), str) or not check_pw(body['password'], stored):
+                with lock, db() as c:
+                    register_fail(c, 'adm:' + u['login'], ip, now)
+                return self.reply(403, {'error': 'Подтвердите действие своим паролем.'})
+        body.pop('password', None)
+        try:
+            with lock, db() as c:
+                if need_pw:
+                    c.execute('DELETE FROM login_fail WHERE k = ?', ('u:adm:' + u['login'],))
+                try:
+                    out = (200, admin_action(c, p, act, body, ip))
+                except AdminError as e:
+                    out = (e.code, {'error': e.msg})
+        except sqlite3.Error:
+            out = (500, {'error': 'database error'})
+        self.reply(*out)
 
     def do_login(self, body, ip):
         login = body.get('login')
@@ -1058,6 +1453,8 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path.startswith('/api/auth/'):
             return self.auth_api('POST')
+        if self.path.startswith('/api/admin/'):
+            return self.admin_api()
         if not self.path.startswith('/api/sync'):
             return self.reply(404, {'error': 'not found'})
         p = self.principal()
