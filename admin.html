@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1020">
+<title>VR-урок: администрирование</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0b1020;--card:#111a33;--line:#2b3a63;--text:#e8efff;--muted:#9fb0d6;--acc:#3b82f6;--good:#22c55e;--mid:#eab308;--bad:#ef4444}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:16px}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{margin:8px 0;font-size:26px}h2{margin:22px 0 10px;font-size:20px}
+a{color:#93c5fd}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.tab{padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:#16213f;color:var(--text);cursor:pointer;font-size:16px}
+.tab.on{background:var(--acc);border-color:var(--acc)}
+.btn{padding:9px 14px;border:0;border-radius:10px;background:var(--acc);color:#fff;font-size:15px;cursor:pointer}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+.btn.red{background:#b91c1c}
+.btn[disabled]{opacity:.45;cursor:default}
+input,select{padding:10px;border-radius:10px;border:1px solid var(--line);background:#0e1730;color:var(--text);font-size:15px;max-width:100%}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:640px}
+th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{color:var(--muted);font-weight:600;font-size:13px}
+.muted{color:var(--muted)}.small{font-size:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.note{border-left:4px solid var(--mid);padding:10px 14px;background:#1a1f33;border-radius:8px}
+.err{border-left-color:var(--bad)}
+#lock{max-width:440px;margin:10vh auto}
+.bdl{display:block;margin:6px 0;font-size:13px;color:var(--muted)}.bdl input,.bdl select{display:block;width:100%;margin-top:3px}
+.code{font:700 34px ui-monospace,Menlo,Consolas,monospace;letter-spacing:6px;text-align:center;background:#0e1730;border:1px dashed var(--line);border-radius:12px;padding:14px;margin:10px 0;user-select:all}
+.shade{position:fixed;inset:0;background:rgba(5,8,18,.7);display:flex;align-items:center;justify-content:center;z-index:9;padding:16px}
+.dlg{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:460px;width:100%}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="lock" class="card">
+    <h1>Администрирование</h1>
+    <p class="muted" id="lockMsg">Войдите по логину и паролю директора или администратора.</p>
+    <form id="loginForm"><label class="bdl">Логин<input id="lgn" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username"></label><label class="bdl">Пароль<input id="lgp" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password"></label><div class="row"><button class="btn">Войти</button><a href="#" id="toAct">У меня код приглашения</a></div></form>
+    <form id="actForm" hidden><label class="bdl">Код приглашения или сброса<input id="acode" autocapitalize="characters" autocomplete="off" spellcheck="false"></label><label class="bdl">Ваше имя (для приглашения)<input id="aname" autocomplete="name"></label><label class="bdl">Логин (для приглашения, латиницей)<input id="alog" autocapitalize="none" autocomplete="username" spellcheck="false"></label><label class="bdl">Новый пароль (не короче 10 знаков)<input id="apw" type="password" inputmode="text" autocomplete="new-password"></label><div class="row"><button class="btn">Активировать</button><a href="#" id="toLogin">Назад ко входу</a></div></form>
+    <p id="lockErr" class="muted"></p>
+    <p><a href="teacher.html">← В кабинет учителя</a></p>
+  </div>
+
+  <div id="app" hidden>
+    <header><h1>VR-урок: администрирование</h1><span style="display:flex;gap:16px;align-items:center"><span id="who" class="muted small"></span><a href="teacher.html">Кабинет учителя</a><a href="#" id="out">Выйти</a></span></header>
+    <div id="msg" class="note" hidden></div>
+
+    <section id="s-people">
+      <h2>Люди и классы</h2>
+      <div class="card">
+        <div class="row">
+          <label class="small muted">Регион<br><select id="fRegion"></select></label>
+          <label class="small muted">Школа<br><select id="fSchool"></select></label>
+          <label class="small muted">Класс<br><select id="fClass"></select></label>
+          <label class="small muted">Учитель<br><select id="fTeacher"></select></label>
+          <label class="small muted">Поиск по имени<br><input id="fQ" maxlength="40" placeholder="часть имени"></label>
+        </div>
+        <div class="tabs" id="kinds"><button class="tab on" data-k="students">Ученики</button><button class="tab" data-k="teachers">Учителя</button><button class="tab" data-k="classes">Классы</button></div>
+        <div id="peopleErr" class="note err" hidden></div>
+        <div class="scroll"><table id="tbl"></table></div>
+        <div class="row"><button class="btn ghost" id="prev">‹ Назад</button><span id="pager" class="muted small"></span><button class="btn ghost" id="next">Вперёд ›</button></div>
+      </div>
+    </section>
+
+    <section id="s-invites">
+      <h2>Приглашения</h2>
+      <div class="card">
+        <p class="muted small">Новый сотрудник получает код и сам задаёт логин и пароль на странице входа. Код показывается один раз, действует 7 дней, срабатывает один раз.</p>
+        <div class="row"><label class="small muted">Кого<br><select id="invRole"><option value="teacher">Учитель</option></select></label><label class="small muted">Школа<br><select id="invSchool"></select></label><button class="btn" id="invGo">Создать приглашение</button></div>
+        <div id="invErr" class="note err" hidden></div>
+        <div class="scroll"><table id="invTbl"></table></div>
+      </div>
+    </section>
+
+    <section id="s-devices">
+      <h2>Шлемы школы</h2>
+      <div class="card">
+        <p class="muted small">Шлем привязывается коротким кодом (8 знаков, 10 минут): в кабинете учителя на шлеме — «Данные» → «Код привязки». Число шлемов ограничено тарифом школы.</p>
+        <div class="row"><label class="small muted">Школа<br><select id="devSchool"></select></label><label class="small muted">Название шлема<br><input id="devName" maxlength="40" placeholder="например, шлем 3"></label><button class="btn" id="devCode">Выпустить код привязки</button></div>
+        <div id="devInfo" class="muted small"></div>
+        <div id="devErr" class="note err" hidden></div>
+        <div class="scroll"><table id="devTbl"></table></div>
+        <div class="row" id="limRow" hidden><label class="small muted">Лимит шлемов школы<br><input id="devLim" type="number" min="0" max="1000"></label><button class="btn ghost" id="devLimGo">Сохранить лимит</button></div>
+      </div>
+    </section>
+
+    <section id="s-schools" hidden>
+      <h2>Школы</h2>
+      <div class="card">
+        <div class="row"><label class="small muted">Название<br><input id="shName" maxlength="80"></label><label class="small muted">Регион<br><input id="shReg" maxlength="60"></label><button class="btn" id="shGo">Добавить школу</button></div>
+        <div id="shErr" class="note err" hidden></div>
+        <div class="scroll"><table id="shTbl"></table></div>
+      </div>
+    </section>
+  </div>
+</div>
+<script src="js/data.js"></script>
+<script src="js/questions.js"></script>
+<script src="js/errors.js"></script>
+<script src="js/roomspec.js"></script>
+<script src="js/schema.js"></script>
+<script src="js/flags.js"></script>
+<script src="js/store.js"></script>
+<script src="js/regions.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>

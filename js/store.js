@@ -265,7 +265,8 @@ const Store=VR.Store={
   account:{
     token(){try{return sessionStorage.getItem('vrl.token')||'';}catch(e){return '';}},
     who(){try{return sessionStorage.getItem('vrl.user')||'';}catch(e){return '';}},
-    clear(){try{sessionStorage.removeItem('vrl.token');sessionStorage.removeItem('vrl.user');}catch(e){}},
+    clear(){try{sessionStorage.removeItem('vrl.token');sessionStorage.removeItem('vrl.user');sessionStorage.removeItem('vrl.roles');}catch(e){}},
+    roles(){try{return JSON.parse(sessionStorage.getItem('vrl.roles')||'[]');}catch(e){return[];}},
     /* включены ли учётки на сервере: выключено — 404, включено — 401 без токена; нет связи — null (кабинет остаётся с прежним входом) */
     async probe(url){
       if(!url)return null;
@@ -281,7 +282,7 @@ const Store=VR.Store={
       let d={};try{d=await r.json();}catch(e){}
       if(r.status===429)return {ok:false,msg:'Слишком много попыток. Подожди '+Math.max(1,Math.ceil((d.retry||30)))+' с.'};
       if(!r.ok||!d.token)return {ok:false,msg:'Неверный логин или пароль.'};
-      try{sessionStorage.setItem('vrl.token',d.token);sessionStorage.setItem('vrl.user',String(login).trim().toLowerCase());}catch(e){}
+      try{sessionStorage.setItem('vrl.token',d.token);sessionStorage.setItem('vrl.user',String(login).trim().toLowerCase());sessionStorage.setItem('vrl.roles',JSON.stringify(d.roles||[]));}catch(e){}
       if(!Store.server())Store.setServer(url,'');
       return {ok:true};
     },
@@ -289,6 +290,38 @@ const Store=VR.Store={
       const t=Store.account.token(),sv=Store.server();Store.account.clear();
       if(t&&sv)try{await fetch(sv.url+'/api/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+t}});}catch(e){}
     }
+  },
+  /* ---------- вызовы серверного API учёток (шаги 8–12): весь сетевой код — здесь (закон А2) ---------- */
+  base(){const sv=Store.server();if(sv)return sv.url;return /(^|\.)github\.io$/.test(location.hostname)?'':location.origin;},
+  me(){return Store.call('GET','/api/auth/me');},
+  async call(method,path,body,noAuth){
+    const base=Store.base();if(!base)return{status:0,data:{error:'Сервер не указан. Откройте страницу с вашего сервера.'}};
+    const tok=noAuth?'':Store.account.token(),h={};if(body!==undefined)h['Content-Type']='application/json';if(tok)h.Authorization='Bearer '+tok;
+    try{
+      const ctl=typeof AbortController!=='undefined'?new AbortController():null;const tm=setTimeout(()=>ctl&&ctl.abort(),15000);
+      const r=await fetch(base+path,{method,headers:h,body:body===undefined?undefined:JSON.stringify(body),signal:ctl?ctl.signal:undefined});clearTimeout(tm);
+      let d={};try{d=await r.json();}catch(e){}
+      if(tok&&r.status===401){Store.account.clear();d.expired=true;}
+      return{status:r.status,data:d};
+    }catch(e){return{status:0,data:{error:'нет связи с сервером'}};}
+  },
+  admin(act,body){return Store.call('POST','/api/admin/'+encodeURIComponent(act),body||{});},
+  qs(o){return Object.keys(o||{}).filter(k=>o[k]!==undefined&&o[k]!==''&&o[k]!==null).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(o[k])).join('&');},
+  options(q){return Store.call('GET','/api/options?'+Store.qs(q));},
+  accounts(q){return Store.call('GET','/api/accounts?'+Store.qs(q));},
+  async activate(b){
+    const r=await Store.call('POST','/api/auth/activate',b,true);
+    if(r.status===200&&r.data.token)try{sessionStorage.setItem('vrl.token',r.data.token);sessionStorage.setItem('vrl.user',(r.data.user&&r.data.user.login)||'');sessionStorage.setItem('vrl.roles',JSON.stringify(r.data.roles||[]));}catch(e){}
+    return r;
+  },
+  /* привязка шлема по короткому коду: ключ шлема сохраняется как раньше, вводить длинный ключ не нужно */
+  async pair(url,code,name){
+    url=String(url||Store.base()||'').trim().replace(/\/+$/,'');if(!url)return{ok:false,msg:'Укажите адрес сервера.'};
+    let r;try{r=await fetch(url+'/api/device/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:String(code||''),name:name||''})});}catch(e){return{ok:false,msg:'нет связи с сервером'};}
+    let d={};try{d=await r.json();}catch(e){}
+    if(r.status===429)return{ok:false,msg:'Слишком много попыток. Подождите минуту.'};
+    if(!r.ok||!d.key)return{ok:false,msg:d.error||'Код не подходит.'};
+    Store.setServer(url,d.key);return{ok:true,school:d.school};
   },
   /* файл ресурса (модель, звук): только из папки assets/ этого же сайта, с ограничением размера (Б51) */
   async getAsset(url,max){

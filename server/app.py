@@ -253,6 +253,11 @@ def migrate_v4(c):
         c.execute('''CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created INTEGER, last_seen INTEGER, expires INTEGER, ip TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS invites(code_hash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('join', 'reset')), role TEXT, school TEXT, user_id TEXT,
             created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER, used_by TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, school TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, name TEXT, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'revoked')),
+            created INTEGER, created_by TEXT, last_seen INTEGER)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS pair_codes(code_hash TEXT PRIMARY KEY, school TEXT NOT NULL, name TEXT, created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER)''')
+        if 'device_limit' not in {r[1] for r in c.execute('PRAGMA table_info(schools)')}:
+            c.execute('ALTER TABLE schools ADD COLUMN device_limit INTEGER NOT NULL DEFAULT 20')
         c.execute('''CREATE TABLE IF NOT EXISTS login_fail(k TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0, until INTEGER NOT NULL DEFAULT 0, last INTEGER)''')
         c.execute('''CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
             actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'legacy-teacher', 'device', 'cli')), actor_id TEXT, action TEXT NOT NULL, target_kind TEXT, target_id TEXT,
@@ -270,6 +275,7 @@ def migrate_v4(c):
                     'CREATE INDEX IF NOT EXISTS user_roles_school ON user_roles(school, role, status)',
                     'CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)',
                     'CREATE INDEX IF NOT EXISTS invites_school ON invites(school)',
+                    'CREATE INDEX IF NOT EXISTS devices_school ON devices(school, status)',
                     'CREATE INDEX IF NOT EXISTS audit_school_ts ON audit_log(school, ts)',
                     'CREATE INDEX IF NOT EXISTS audit_target ON audit_log(target_kind, target_id)',
                     'CREATE INDEX IF NOT EXISTS classes_teacher ON classes(teacherId)',
@@ -328,6 +334,8 @@ def find_record(c, rid):
 def scope(c, p):
     """Что видит и меняет принципал. legacy-teacher и device (и вызовы без принципала) — как раньше, всё (all). Пользователь: суперадмин — всё; директор — школы,
     где у него роль director; учитель — свои классы (teacherId = он) в школах, где он учитель. Роли берутся из базы на каждом запросе (p['roles']), не из токена."""
+    if p and p.get('kind') == 'device' and p.get('school'):  # шлем школы: видит и дополняет только свою школу
+        return {'all': False, 'dir': {p['school']}, 'tch': set(), 'uid': None, 'user': False, 'dev': p['school']}
     if not p or p.get('kind') != 'user':
         return {'all': True, 'dir': set(), 'tch': set(), 'uid': None, 'user': False}
     roles = p.get('roles') or []
@@ -394,9 +402,10 @@ def merge_in(c, inc, role, ip='', principal=None):
     teacher = role == 'teacher'
     sc = scope(c, principal)
     user = sc['user']
+    dev = sc.get('dev')
     if user and not can_write(sc):
         return {'rejected': {'all': 1}}
-    who = ('user', principal['id'], ip) if user else ('legacy-teacher' if teacher else 'device', role, ip)  # ключ в журнал не попадает, только его роль
+    who = ('user', principal['id'], ip) if user else ('device', principal['id'], ip) if dev else ('legacy-teacher' if teacher else 'device', role, ip)  # ключ в журнал не попадает, только его роль
     rej = {}
     cache = {}
 
@@ -450,6 +459,12 @@ def merge_in(c, inc, role, ip='', principal=None):
             d = fill_v4(s, old_d, 'students', device_new=not teacher)
             if user:
                 d['school'] = ncl[0]  # школа ученика — школа его класса, присланное значение не берём
+            if dev:  # шлем школы создаёт учеников только в своей школе и только в её классах
+                d['school'] = dev
+                if d.get('classId'):
+                    kr0 = class_row(c, d['classId'])
+                    if not kr0 or kr0[0] != dev:
+                        d['classId'] = None
             if not teacher and d.get('classId'):
                 kr = c.execute('SELECT status FROM classes WHERE id = ?', (d['classId'],)).fetchone()
                 if kr and kr[0] == 'archived':
@@ -502,7 +517,7 @@ def merge_in(c, inc, role, ip='', principal=None):
     for r in inc.get('results') or []:
         if not isinstance(r, dict) or not r.get('id') or not r.get('sid') or r['sid'] in deleted or num(r.get('ts')) < reset:
             continue
-        if user and not sid_in_scope(c, sc, r['sid'], cache):
+        if (user or dev) and not sid_in_scope(c, sc, r['sid'], cache):
             deny('results')
             continue
         c.execute('INSERT OR IGNORE INTO results(id, sid, subj, score, total, ts, doc) VALUES(?, ?, ?, ?, ?, ?, ?)',
@@ -515,7 +530,7 @@ def merge_in(c, inc, role, ip='', principal=None):
     for sid, m in (inc.get('disc') or {}).items():
         if sid in deleted or not isinstance(m, dict):
             continue
-        if user and not sid_in_scope(c, sc, sid, cache):
+        if (user or dev) and not sid_in_scope(c, sc, sid, cache):
             deny('disc')
             continue
         for k, ts in m.items():
@@ -595,6 +610,21 @@ def state(c, hide_pins=False, principal=None):
         'deleted': {k: ts for k, ts in c.execute('SELECT id, ts FROM deleted')},
         'settings': settings,
     }
+
+
+def device_by_key(key):
+    """Ключ шлема школы (выдан по коду привязки): ищем по sha256, действует только пока не отозван. Метка last_seen — не чаще раза в минуту."""
+    key = key or ''
+    if not 16 <= len(key) <= 80:
+        return None
+    with lock, db() as c:
+        r = c.execute("SELECT d.id, d.school, d.last_seen FROM devices d JOIN schools s ON s.id = d.school WHERE d.key_hash = ? AND d.status = 'active' AND s.status != 'archived'", (thash(key),)).fetchone()
+        if not r:
+            return None
+        now = int(time.time() * 1000)
+        if now - (r[2] or 0) > 60000:
+            c.execute('UPDATE devices SET last_seen = ? WHERE id = ?', (now, r[0]))
+    return {'id': r[0], 'school': r[1]}
 
 
 def role_of(key):
@@ -837,6 +867,8 @@ RANK = {'superadmin': 4, 'director': 3, 'teacher': 2, 'expert': 1}
 CODE_ALPHA = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
 SCHOOL_RE = re.compile(r'^s-[a-z0-9-]{2,30}$')
 RESET_TTL = 24 * 3600 * 1000
+INVITE_TTL = 7 * 24 * 3600 * 1000
+PAIR_TTL = 10 * 60 * 1000
 
 
 def my_rank(p):
@@ -845,6 +877,15 @@ def my_rank(p):
 
 def dir_schools(p):
     return {r['school'] for r in p.get('roles') or [] if r['role'] == 'director'}
+
+
+def device_room(c, school, now):
+    """Есть ли у школы свободное место под шлем: действующие шлемы + неистёкшие коды привязки не больше лимита. Иначе — AdminError с понятным текстом."""
+    lim = c.execute('SELECT device_limit FROM schools WHERE id = ?', (school,)).fetchone()[0]
+    act = c.execute("SELECT count(*) FROM devices WHERE school = ? AND status = 'active'", (school,)).fetchone()[0]
+    pend = c.execute('SELECT count(*) FROM pair_codes WHERE school = ? AND used_at IS NULL AND expires > ?', (school, now)).fetchone()[0]
+    if act + pend >= lim:
+        raise AdminError(400, 'Лимит шлемов школы (%d) исчерпан. Отзовите ненужный шлем или обратитесь к администратору.' % lim)
 
 
 def new_code(n=10):
@@ -916,8 +957,16 @@ def admin_action(c, p, act, b, ip):
         status = b.get('status') if b.get('status') in ('pending', 'active', 'archived') else row[2]
         if S('id') == DEFAULT_SCHOOL and status == 'archived':
             raise AdminError(400, 'Школу по умолчанию архивировать нельзя.')
-        c.execute('UPDATE schools SET name = ?, region = ?, status = ?, updated = ? WHERE id = ?', (name, region, status, now, S('id')))
-        audit(c, who, 'school.update', 'school', S('id'), S('id'), {'status': status})
+        lim = c.execute('SELECT device_limit FROM schools WHERE id = ?', (S('id'),)).fetchone()[0]
+        if 'device_limit' in b:
+            try:
+                lim = int(b['device_limit'])
+            except (TypeError, ValueError):
+                raise AdminError(400, 'Лимит шлемов — число.')
+            if not 0 <= lim <= 1000:
+                raise AdminError(400, 'Лимит шлемов — от 0 до 1000.')
+        c.execute('UPDATE schools SET name = ?, region = ?, status = ?, updated = ?, device_limit = ? WHERE id = ?', (name, region, status, now, lim, S('id')))
+        audit(c, who, 'school.update', 'school', S('id'), S('id'), {'status': status, 'device_limit': lim})
         return {'ok': True}
     if act in ('role.assign', 'role.remove'):
         role, school, uid = S('role', 20), S('school', 40), S('user_id', 40)
@@ -971,6 +1020,60 @@ def admin_action(c, p, act, b, ip):
         revoke_sessions(c, t['id'])
         audit(c, who, 'password.reset_issue', 'user', t['id'], None, {})  # код в журнал не пишем (А14)
         return {'ok': True, 'code': code, 'expires': now + RESET_TTL}
+    if act in ('invite.create', 'invite.list', 'invite.revoke'):
+        if act == 'invite.list':
+            rows = c.execute("SELECT code_hash, role, school, created, expires FROM invites WHERE kind = 'join' AND used_at IS NULL AND expires > ? ORDER BY created DESC", (now,)).fetchall()
+            return {'items': [{'id': h[:12], 'role': r, 'school': sch, 'created': cr, 'expires': ex} for h, r, sch, cr, ex in rows if rank >= 4 or sch in dir_schools(p)]}
+        if act == 'invite.revoke':
+            row = next((h for (h, sch) in c.execute("SELECT code_hash, school FROM invites WHERE kind = 'join' AND used_at IS NULL") if h[:12] == S('id', 12) and (rank >= 4 or sch in dir_schools(p))), None)
+            if not row:
+                raise AdminError(404, 'Приглашения нет.')
+            c.execute('DELETE FROM invites WHERE code_hash = ?', (row,))
+            audit(c, who, 'invite.revoke', 'invite', S('id', 12), None, {})
+            return {'ok': True}
+        role, school = S('role', 20), S('school', 40)
+        if role not in ('director', 'teacher'):
+            raise AdminError(400, 'Приглашать можно директора или учителя.')
+        if RANK[role] >= rank or (rank < 4 and school not in dir_schools(p)):
+            audit(c, who, 'admin.denied', 'invite', None, school or None, {'why': 'role', 'role': role, 'action': act})
+            raise AdminError(403, 'Эту роль вы выдать не можете.')
+        if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone():
+            raise AdminError(400, 'Такой школы нет.')
+        code = new_code()
+        c.execute('INSERT INTO invites(code_hash, kind, role, school, user_id, created_by, created, expires, used_at, used_by) VALUES(?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL)',
+                  (thash(code), 'join', role, school, p['id'], now, now + INVITE_TTL))
+        audit(c, who, 'invite.create', 'invite', thash(code)[:12], school, {'role': role})  # сам код в журнал не пишем (А14)
+        return {'ok': True, 'code': code, 'expires': now + INVITE_TTL}
+    if act in ('device.code', 'device.list', 'device.revoke'):
+        if act == 'device.list':
+            sch = S('school', 40)
+            if rank < 4 and sch not in dir_schools(p):
+                raise AdminError(403, 'Это шлемы чужой школы.')
+            rows = c.execute('SELECT id, name, status, created, last_seen FROM devices WHERE school = ? ORDER BY created', (sch,)).fetchall()
+            lim = c.execute('SELECT device_limit FROM schools WHERE id = ?', (sch,)).fetchone()
+            return {'items': [{'id': i, 'name': n, 'status': st, 'created': cr, 'lastSeen': ls} for i, n, st, cr, ls in rows], 'limit': lim[0] if lim else 0,
+                    'active': sum(1 for r in rows if r[2] == 'active')}
+        if act == 'device.revoke':
+            row = c.execute('SELECT school FROM devices WHERE id = ?', (S('id', 40),)).fetchone()
+            if not row:
+                raise AdminError(404, 'Шлема нет.')
+            if rank < 4 and row[0] not in dir_schools(p):
+                audit(c, who, 'admin.denied', 'device', S('id', 40), row[0], {'why': 'scope', 'action': act})
+                raise AdminError(403, 'Это шлем чужой школы.')
+            c.execute("UPDATE devices SET status = 'revoked' WHERE id = ?", (S('id', 40),))
+            audit(c, who, 'device.revoke', 'device', S('id', 40), row[0], {})
+            return {'ok': True}
+        sch = S('school', 40)
+        if rank < 4 and sch not in dir_schools(p):
+            audit(c, who, 'admin.denied', 'device', None, sch or None, {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это школа не ваша.')
+        if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (sch,)).fetchone():
+            raise AdminError(400, 'Такой школы нет.')
+        device_room(c, sch, now)
+        code = new_code(8)
+        c.execute('INSERT INTO pair_codes(code_hash, school, name, created_by, created, expires, used_at) VALUES(?, ?, ?, ?, ?, ?, NULL)', (thash(code), sch, S('name', 40), p['id'], now, now + PAIR_TTL))
+        audit(c, who, 'device.code', 'school', sch, sch, {})
+        return {'ok': True, 'code': code, 'expires': now + PAIR_TTL}
     if act == 'class.assign':
         row = class_row(c, S('class_id', 60))
         if not row:
@@ -1258,6 +1361,10 @@ class H(BaseHTTPRequestHandler):
         if r == 'teacher' and not cfg['legacyTeacher']:
             r = None
         if not r:
+            dv = device_by_key(self.headers.get('X-Key'))
+            if dv:
+                return {'kind': 'device', 'id': dv['id'], 'school': dv['school'], 'ip': ip}
+        if not r:
             time.sleep(1)
             self.reply(401, {'error': 'bad key'})
             return None
@@ -1339,7 +1446,85 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, {'ok': True})
         if route == '/api/auth/password' and method == 'POST':
             return self.do_password(body, ip)
+        if route == '/api/auth/activate' and method == 'POST':
+            return self.do_activate(body, ip)
         self.reply(404, {'error': 'not found'})
+
+    def code_gate(self, kind, body, ip, now):
+        """Общая защита публичных «кодовых» входов: лимит по IP и пауза после ошибок. Возвращает секунды ожидания."""
+        with lock, db() as c:
+            return throttle(c, kind + ':' + ip, ip, now)
+
+    def do_activate(self, body, ip):
+        """Активация приглашения (новый учитель/директор: код + логин + пароль) или кода сброса пароля (код + новый пароль). Код одноразовый, проверка и погашение — в одной транзакции."""
+        now = int(time.time() * 1000)
+        code = str(body.get('code') or '').upper().replace('-', '').replace(' ', '')[:20]
+        login = str(body.get('login') or '').strip().lower()
+        password, name = body.get('password'), str(body.get('name') or '')[:80]
+        wait = self.code_gate('act', body, ip, now)
+        if wait:
+            return self.reply(429, {'error': 'too many attempts', 'retry': wait})
+        if not isinstance(password, str) or len(password) > 256:
+            return self.reply(400, {'error': 'Нужен пароль.'})
+        out = None
+        with lock, db() as c:
+            row = c.execute('SELECT kind, role, school, user_id, expires, used_at FROM invites WHERE code_hash = ?', (thash(code),)).fetchone() if len(code) >= 8 else None
+            if not row or row[5] is not None or row[4] < now:
+                register_fail(c, 'act:' + ip, ip, now)
+                out = (400, {'error': 'Код не подходит: он неверный, уже использован или просрочен.'})
+            else:
+                kind, role, school, uid, _e, _u = row
+                who = ('user', uid, ip) if kind == 'reset' else ('cli', 'activate', ip)
+                try:
+                    if kind == 'join':
+                        if c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone() is None:
+                            raise ValueError('Школа больше не работает.')
+                        uid = user_create(c, login, name or login, password, ('user', None, ip))
+                        role_add(c, uid, role, school, ('user', uid, ip), None)
+                    else:
+                        u = user_row(c, uid)
+                        err = pw_error(password, u['login']) if u and u['status'] == 'active' else 'Учётная запись недоступна.'
+                        if err:
+                            raise ValueError(err)
+                        set_password(c, uid, password, who, 'user.password_reset_done')
+                    c.execute('UPDATE invites SET used_at = ?, used_by = ? WHERE code_hash = ?', (now, uid, thash(code)))
+                    audit(c, ('user', uid, ip), 'invite.activate', 'user', uid, school or None, {'kind': kind})
+                    token, exp = session_start(c, uid, ip, now)
+                    u = c.execute('SELECT id, login, name FROM users WHERE id = ?', (uid,)).fetchone()
+                    out = (200, {'token': token, 'user': {'id': u[0], 'login': u[1], 'name': u[2]}, 'roles': user_roles(c, uid), 'expires': exp})
+                except ValueError as e:
+                    out = (400, {'error': str(e)})
+        return self.reply(*out)
+
+    def do_pair(self, body, ip):
+        """Привязка шлема по короткому коду: выдаёт ключ шлема школы один раз. Лимит школы проверяется ещё раз."""
+        if not load_config()['accounts']:
+            return self.reply(404, {'error': 'not found'})
+        now = int(time.time() * 1000)
+        code = str(body.get('code') or '').upper().replace('-', '').replace(' ', '')[:20]
+        wait = self.code_gate('pair', body, ip, now)
+        if wait:
+            return self.reply(429, {'error': 'too many attempts', 'retry': wait})
+        out = None
+        with lock, db() as c:
+            row = c.execute('SELECT school, name, expires, used_at FROM pair_codes WHERE code_hash = ?', (thash(code),)).fetchone() if len(code) >= 6 else None
+            if not row or row[3] is not None or row[2] < now:
+                register_fail(c, 'pair:' + ip, ip, now)
+                out = (400, {'error': 'Код не подходит: он неверный, уже использован или просрочен (10 минут).'})
+            else:
+                lim = c.execute('SELECT device_limit FROM schools WHERE id = ?', (row[0],)).fetchone()[0]
+                act = c.execute("SELECT count(*) FROM devices WHERE school = ? AND status = 'active'", (row[0],)).fetchone()[0]
+                if act >= lim:
+                    out = (400, {'error': 'Лимит шлемов школы исчерпан.'})
+                else:
+                    key = secrets.token_urlsafe(24)
+                    did = 'd-' + secrets.token_hex(6)
+                    c.execute('INSERT INTO devices(id, school, key_hash, name, status, created, created_by, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+                              (did, row[0], thash(key), (str(body.get('name') or row[1] or ''))[:40], 'active', now, None, now))
+                    c.execute('UPDATE pair_codes SET used_at = ? WHERE code_hash = ?', (now, thash(code)))
+                    audit(c, ('device', did, ip), 'device.pair', 'device', did, row[0], {})  # ключ в журнал не пишем
+                    out = (200, {'key': key, 'school': row[0], 'id': did})
+        return self.reply(*out)
 
     def admin_api(self):
         """POST /api/admin/<действие>: только пользователь с токеном; legacy-ключи администрировать не могут (PLAN 1.5). Флаг accounts выключен — 404."""
@@ -1369,7 +1554,7 @@ class H(BaseHTTPRequestHandler):
             if u:
                 roles = user_roles(c, u['id'])
                 stored = c.execute('SELECT pw FROM users WHERE id = ?', (u['id'],)).fetchone()[0]
-                need_pw = act in ('role.assign', 'role.remove') and body.get('role') == 'director'
+                need_pw = act in ('role.assign', 'role.remove', 'invite.create') and body.get('role') == 'director'
                 wait = throttle(c, 'adm:' + u['login'], ip, now) if need_pw else 0
         if not u:
             return self.reply(401, {'error': 'no session'})
@@ -1455,6 +1640,17 @@ class H(BaseHTTPRequestHandler):
             return self.auth_api('POST')
         if self.path.startswith('/api/admin/'):
             return self.admin_api()
+        if self.path.startswith('/api/device/pair'):
+            n = num(self.headers.get('Content-Length'))
+            if n <= 0 or n > 1024:
+                return self.reply(413, {'error': 'body size'})
+            try:
+                body = json.loads(self.rfile.read(n).decode('utf-8'))
+                if not isinstance(body, dict):
+                    raise ValueError
+            except ValueError:
+                return self.reply(400, {'error': 'bad json'})
+            return self.do_pair(body, client_ip(self))
         if not self.path.startswith('/api/sync'):
             return self.reply(404, {'error': 'not found'})
         p = self.principal()

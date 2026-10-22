@@ -90,6 +90,7 @@ try:
     TOK = {}
 
     def login(k):
+        sql('delete from login_fail')
         st, b = req('POST', '/api/auth/login', {'login': LOGIN[k], 'password': PW[k]})
         TOK[k] = b.get('token', '')
         return st
@@ -98,7 +99,8 @@ try:
         login(k)
     ok(all(TOK.values()), 'фикстура: 8 пользователей вошли')
     H = lambda k: {'Authorization': 'Bearer ' + TOK[k]}  # noqa: E731
-    adm = lambda k, act, body=None: req('POST', '/api/admin/' + act, dict(body or {}, **({'password': PW[k]} if (body or {}).get('role') == 'director' else {})), H(k))  # noqa: E731
+    adm = lambda k, act, body=None: (sql('delete from login_fail'), req('POST', '/api/admin/' + act, dict(body or {}, **({'password': PW[k]} if (body or {}).get('role') == 'director' else {})), H(k)))[1]  # noqa: E731
+    act = lambda body: (sql('delete from login_fail'), req('POST', '/api/auth/activate', body))[1]  # noqa: E731
     audits = lambda a: sql("select count(*) from audit_log where action=?", a)[0][0]  # noqa: E731
 
     # --- права на роли
@@ -188,6 +190,72 @@ try:
     ok(st == 200 and b['total'] == 2000 and len(b['items']) == 50 and dt < .3, '2000 учеников: страница за %d мс' % (dt * 1000))
     plan = ' '.join(str(r) for r in sql("explain query plan select id from students where json_extract(doc,'$.classId') in ('cA1')"))
     ok('students_class' in plan, 'фильтр по классу идёт по индексу')
+    # --- шаг 11: приглашения и коды сброса
+    st, b = adm('tA1', 'invite.create', {'role': 'teacher', 'school': 's-a'}); ok(st == 403, 'учитель не создаёт приглашений')
+    st, b = adm('dirA', 'invite.create', {'role': 'teacher', 'school': 's-b'}); ok(st == 403, 'директор А не приглашает в школу Б')
+    st, b = adm('dirA', 'invite.create', {'role': 'director', 'school': 's-a'}); ok(st == 403, 'директор не приглашает директора')
+    st, b = adm('dirA', 'invite.create', {'role': 'teacher', 'school': 's-a'}); code = b.get('code', '')
+    ok(st == 200 and len(code) == 10 and all(ch in app.CODE_ALPHA for ch in code), 'директор приглашает учителя: код 10 знаков без похожих букв')
+    ok(sql("select count(*) from audit_log where detail like ? or target_id like ?", '%' + code + '%', '%' + code + '%')[0][0] == 0 and sql("select count(*) from invites where code_hash=?", code)[0][0] == 0, 'код не попал ни в журнал, ни в базу открытым текстом')
+    st, b = adm('dirA', 'invite.list', {}); ok(st == 200 and len(b['items']) == 1 and 'code' not in json.dumps(b), 'список приглашений без кодов')
+    st, b = act({'code': 'ZZZZZZZZZZ', 'login': 'new.teacher', 'password': 'Good-pass-2026-Qw'}); ok(st == 400, 'неверный код отклонён')
+    st, b = act({'code': code, 'login': 'new.teacher', 'password': 'short'}); ok(st == 400, 'слабый пароль отклонён, код не сгорел')
+    st, b = act({'code': code[:5] + '-' + code[5:].lower(), 'login': 'new.teacher', 'password': 'Good-pass-2026-Qw', 'name': 'Новый Учитель'})
+    ok(st == 200 and b['roles'] == [{'role': 'teacher', 'school': 's-a'}] and b.get('token'), 'активация: учётка создана с ролью учителя школы А, сессия выдана')
+    st, b2 = req('POST', '/api/auth/login', {'login': 'new.teacher', 'password': 'Good-pass-2026-Qw'}); ok(st == 200, 'новый учитель входит по логину и паролю')
+    st, b = req('POST', '/api/sync', {}, {'Authorization': 'Bearer ' + b2['token']}); ok(st == 200 and b['state']['classes'] == [], 'новый учитель видит только своё: классов пока нет')
+    st, b = act({'code': code, 'login': 'other.one', 'password': 'Good-pass-2026-Qw'}); ok(st == 400, 'повторная активация того же кода отклонена')
+    st, b = adm('dirA', 'invite.create', {'role': 'teacher', 'school': 's-a'}); c2 = b['code']
+    sql("update invites set expires=1 where used_at is null")
+    st, b = act({'code': c2, 'login': 'late.one', 'password': 'Good-pass-2026-Qw'}); ok(st == 400, 'просроченный код отклонён')
+    st, b = adm('dirA', 'invite.create', {'role': 'teacher', 'school': 's-a'}); c3 = b['code']
+    st, b = adm('dirA', 'invite.list', {}); iid = b['items'][0]['id']
+    st, b = adm('dirB', 'invite.revoke', {'id': iid}); ok(st == 404, 'директор Б не отзывает приглашение школы А')
+    st, b = adm('dirA', 'invite.revoke', {'id': iid}); ok(st == 200, 'директор отзывает своё приглашение')
+    st, b = act({'code': c3, 'login': 'revoked.one', 'password': 'Good-pass-2026-Qw'}); ok(st == 400, 'отозванный код не работает')
+    st, b = adm('sup', 'invite.create', {'role': 'director', 'school': 's-b'}); dc = b.get('code', ''); ok(st == 200 and dc, 'суперадмин приглашает директора (с подтверждением паролем)')
+    st, b = act({'code': dc, 'login': 'dir.b2', 'password': 'Good-pass-2026-Qw'}); ok(st == 200 and b['roles'][0]['role'] == 'director', 'приглашённый директор активирует учётку')
+    st, b = adm('dirA', 'password.reset', {'user_id': UID['tA1']}); rc = b['code']
+    st, b = act({'code': rc, 'password': 'Brand-new-pass-2027-Xz'}); ok(st == 200, 'код сброса: учитель задаёт новый пароль без логина')
+    PW['tA1'] = 'Brand-new-pass-2027-Xz'; ok(login('tA1') == 200, 'после сброса вход по новому паролю')
+    st, b = act({'code': rc, 'password': 'Another-pass-2028-Xz'}); ok(st == 400, 'код сброса одноразовый')
+    sql("delete from login_fail")
+    codes_wrong = [req('POST', '/api/auth/activate', {'code': 'BAD%07d' % i, 'login': 'x.y.z', 'password': 'Good-pass-2026-Qw'})[0] for i in range(8)]
+    ok(429 in codes_wrong, 'подбор кодов: после серии ошибок — пауза 429')
+    sql("delete from login_fail")
+    # --- шаг 12: шлемы школ
+    st, b = adm('tA1', 'device.code', {'school': 's-a'}); ok(st == 403, 'учитель не выпускает коды шлемов')
+    st, b = adm('dirA', 'device.code', {'school': 's-b'}); ok(st == 403, 'директор А не выпускает код для школы Б')
+    st, b = adm('sup', 'school.update', {'id': 's-a', 'device_limit': 1}); ok(st == 200, 'суперадмин задаёт лимит шлемов школы')
+    st, b = adm('dirA', 'school.update', {'id': 's-a', 'device_limit': 99}); ok(st == 403, 'директор лимит менять не может')
+    st, b = adm('dirA', 'device.code', {'school': 's-a', 'name': 'Шлем 1'}); pc = b.get('code', ''); ok(st == 200 and len(pc) == 8, 'директор выпускает код привязки (8 знаков)')
+    st, b = adm('dirA', 'device.code', {'school': 's-a'}); ok(st == 400 and 'Лимит' in b['error'], 'сверх лимита код не выдаётся, текст понятный')
+    st, b = req('POST', '/api/device/pair', {'code': 'NOPE2345'}); ok(st == 400, 'неверный код привязки отклонён')
+    st, b = req('POST', '/api/device/pair', {'code': pc}); dkey = b.get('key', ''); ok(st == 200 and len(dkey) > 20 and b['school'] == 's-a', 'шлем привязан: ключ выдан')
+    st, b = req('POST', '/api/device/pair', {'code': pc}); ok(st == 400, 'код привязки одноразовый')
+    ok(sql("select count(*) from audit_log where detail like ? or target_id like ?", '%' + dkey + '%', '%' + dkey + '%')[0][0] == 0 and sql("select count(*) from devices where key_hash=?", dkey)[0][0] == 0, 'ключ шлема не хранится открытым текстом и не в журнале')
+    DK = {'X-Key': dkey}
+    st, b = req('POST', '/api/sync', {}, DK); S2 = b['state']
+    ok(st == 200 and b['role'] == 'device' and {x['school'] for x in S2['students']} == {'s-a'} and S2['students'], 'шлем школы А видит только учеников своей школы (%d)' % len(S2['students']))
+    ok(all(r['sid'].startswith('st-') and any(x['id'] == r['sid'] for x in S2['students']) for r in S2['results']), 'шлему приходят результаты только его школы')
+    NOW2 = NOW + 5
+    inc = {'students': [{'id': 'dev-new1', 'name': 'С шлема', 'grade': 5, 'classId': 'cB1', 'created': NOW2, 'updated': NOW2, 'school': 's-b'}],
+           'results': [{'id': 'r-dev1', 'sid': 'dev-new1', 'subj': 'math', 'score': 3, 'total': 5, 'ts': NOW2}, {'id': 'r-dev2', 'sid': 'st-cB1-1', 'subj': 'math', 'score': 5, 'total': 5, 'ts': NOW2}], 'disc': {'st-cB1-1': {'math:z': NOW2}}}
+    st, b = req('POST', '/api/sync', inc, DK)
+    row = sql("select school, json_extract(doc,'$.classId') from students where id='dev-new1'")[0]
+    ok(row == ('s-a', None), 'шлем школы А создаёт ученика только в школе А, чужой класс отброшен (%s)' % (row,))
+    ok(sql("select count(*) from results where id='r-dev1'")[0][0] == 1 and sql("select count(*) from results where id='r-dev2'")[0][0] == 0 and sql("select count(*) from disc where sid='st-cB1-1' and k='math:z'")[0][0] == 0, 'результат нового ученика принят, результаты и открытия чужой школы — нет')
+    st, b = req('POST', '/api/sync', {}, {'X-Key': 'dev-secret'}); ok(st == 200 and {x['school'] for x in b['state']['students']} >= {'s-a', 's-b'}, 'старый общий ключ шлема работает как раньше (видит всё)')
+    st, b = adm('dirA', 'device.list', {'school': 's-a'}); ok(st == 200 and b['active'] == 1 and b['limit'] == 1 and 'key' not in json.dumps(b), 'директор видит шлемы школы и лимит, без ключей')
+    st, b = adm('dirB', 'device.list', {'school': 's-a'}); ok(st == 403, 'чужая школа шлемы не видит')
+    did = sql("select id from devices")[0][0]
+    st, b = adm('dirB', 'device.revoke', {'id': did}); ok(st == 403, 'директор Б не отзывает шлем школы А')
+    st, b = adm('dirA', 'device.revoke', {'id': did}); ok(st == 200, 'директор отзывает шлем')
+    st, b = req('POST', '/api/sync', {}, DK); ok(st == 401, 'отозванный ключ шлема — 401')
+    st, b = adm('dirA', 'device.code', {'school': 's-a'}); pc2 = b.get('code', ''); ok(st == 200, 'после отзыва место снова свободно')
+    sql("update pair_codes set expires=1 where used_at is null")
+    st, b = req('POST', '/api/device/pair', {'code': pc2}); ok(st == 400, 'просроченный код привязки отклонён')
+    sql("delete from login_fail")
     # --- флаг выключен
     app.save_config({'accounts': False, 'legacyTeacher': True, 'sessionMinutes': 15})
     st, b = req('POST', '/api/admin/school.create', {'name': 'Z'}, H('sup')); ok(st == 404, 'accounts=false: /api/admin — 404')
