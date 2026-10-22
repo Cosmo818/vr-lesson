@@ -261,6 +261,35 @@ const Store=VR.Store={
       key=key.replace(/^[\s"'`,{}:]+|[\s"'`,{}]+$/g,'');
       localStorage.setItem(SKEY,JSON.stringify({url,key}));}catch(e){}
   },
+  /* вход по учётной записи (шаг 9): токен только в sessionStorage — закрыл вкладку, и сессии на устройстве нет */
+  account:{
+    token(){try{return sessionStorage.getItem('vrl.token')||'';}catch(e){return '';}},
+    who(){try{return sessionStorage.getItem('vrl.user')||'';}catch(e){return '';}},
+    clear(){try{sessionStorage.removeItem('vrl.token');sessionStorage.removeItem('vrl.user');}catch(e){}},
+    /* включены ли учётки на сервере: выключено — 404, включено — 401 без токена; нет связи — null (кабинет остаётся с прежним входом) */
+    async probe(url){
+      if(!url)return null;
+      try{const ctl=typeof AbortController!=='undefined'?new AbortController():null;const tm=setTimeout(()=>ctl&&ctl.abort(),6000);
+        const r=await fetch(String(url).replace(/\/+$/,'')+'/api/auth/me',{signal:ctl?ctl.signal:undefined});clearTimeout(tm);
+        return r.status===401?true:r.status===404?false:null;}catch(e){return null;}
+    },
+    async login(url,login,password){
+      url=String(url||'').trim().replace(/\/+$/,'');
+      let r;
+      try{r=await fetch(url+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login:String(login||'').trim(),password:String(password||'')})});}
+      catch(e){return {ok:false,msg:'нет связи с сервером: сеть, VPN или сервер выключен'};}
+      let d={};try{d=await r.json();}catch(e){}
+      if(r.status===429)return {ok:false,msg:'Слишком много попыток. Подожди '+Math.max(1,Math.ceil((d.retry||30)))+' с.'};
+      if(!r.ok||!d.token)return {ok:false,msg:'Неверный логин или пароль.'};
+      try{sessionStorage.setItem('vrl.token',d.token);sessionStorage.setItem('vrl.user',String(login).trim().toLowerCase());}catch(e){}
+      if(!Store.server())Store.setServer(url,'');
+      return {ok:true};
+    },
+    async logout(){
+      const t=Store.account.token(),sv=Store.server();Store.account.clear();
+      if(t&&sv)try{await fetch(sv.url+'/api/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+t}});}catch(e){}
+    }
+  },
   status:{state:'off',at:0,role:null,msg:''},
   async sync(){
     const sv=Store.server();
@@ -270,15 +299,17 @@ const Store=VR.Store={
       try{
         const ctl=typeof AbortController!=='undefined'?new AbortController():null;
         const tm=setTimeout(()=>ctl&&ctl.abort(),12000);
-        const res=await fetch(sv.url+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json','X-Key':sv.key},body:JSON.stringify(load()),signal:ctl?ctl.signal:undefined});
+        const tok=Store.account.token();
+        const res=await fetch(sv.url+'/api/sync',{method:'POST',headers:tok?{'Content-Type':'application/json','Authorization':'Bearer '+tok}:{'Content-Type':'application/json','X-Key':sv.key},body:JSON.stringify(load()),signal:ctl?ctl.signal:undefined});
         clearTimeout(tm);
+        if(tok&&res.status===401){Store.account.clear();const er=new Error('Сессия закончилась. Войди снова.');er.expired=true;throw er;}
         if(res.status===401||res.status===403)throw new Error('Сервер не принял ключ. Скопируй только символы между кавычками, без самих кавычек');
         if(!res.ok)throw new Error('Сервер ответил '+res.status);
         const data=await res.json();
         db=merge(load(),data.state);adoptServerTeachers(db,data.state);save();
         Store.status={state:'ok',at:now(),role:data.role,msg:''};
       }catch(e){
-        Store.status={state:'err',at:now(),role:null,msg:e&&e.name==='AbortError'?'сервер не ответил за 12 секунд':(e instanceof TypeError||/fetch/i.test(e&&e.message||''))?'нет связи с сервером: сеть, VPN или сервер выключен':(e&&e.message)||'нет связи'};
+        Store.status={state:'err',at:now(),role:null,expired:!!(e&&e.expired),msg:e&&e.name==='AbortError'?'сервер не ответил за 12 секунд':(e instanceof TypeError||/fetch/i.test(e&&e.message||''))?'нет связи с сервером: сеть, VPN или сервер выключен':(e&&e.message)||'нет связи'};
       }
       for(const f of Store._statusL)try{f(Store.status);}catch(e){}
       return Store.status;

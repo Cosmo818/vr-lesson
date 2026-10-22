@@ -63,6 +63,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
   <div id="lock" class="card">
     <h1>Страница учителя</h1>
     <p class="muted">Введите пароль учителя.</p>
+    <form id="acctForm" class="row" hidden><input id="lgn" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="Логин"><input id="lgp" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password" placeholder="Пароль"><button class="btn">Войти</button></form>
     <form id="pinForm" class="row"><input id="pin" type="password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password" placeholder="Пароль"><button class="btn">Войти</button></form>
     <p id="pinErr" class="muted"></p>
     <p><a href="index.html">← К выбору ученика</a></p>
@@ -192,8 +193,10 @@ let sel=null;
 /* сессия учителя: живёт 15 минут без действий; закрывается при переходе к ученикам */
 const TKEY='vrl.teacher',TTL=15*60*1000;
 function unlocked(){try{const t=+sessionStorage.getItem(TKEY);return t>Date.now();}catch(e){return false;}}
+let acctMode=false;/* true: на сервере включены учётки — вход по логину и паролю */
+function showForms(){$('acctForm').hidden=!acctMode;$('pinForm').hidden=acctMode;document.querySelector('#lock .muted').textContent=acctMode?'Введите логин и пароль.':'Введите пароль учителя.';}
 function touch(){try{if(unlocked())sessionStorage.setItem(TKEY,String(Date.now()+TTL));}catch(e){}}
-function lock(){try{sessionStorage.removeItem(TKEY);}catch(e){}$('app').hidden=true;$('lock').hidden=false;$('pin').value='';}
+function lock(){try{sessionStorage.removeItem(TKEY);}catch(e){}if(S.account.token())S.account.logout();$('app').hidden=true;$('lock').hidden=false;$('pin').value='';$('lgp').value='';}
 function unlock(){try{sessionStorage.setItem(TKEY,String(Date.now()+TTL));}catch(e){}$('lock').hidden=true;$('app').hidden=false;renderAll();if(S.server())S.sync();}
 for(const ev of['click','keydown','input'])document.addEventListener(ev,touch,true);
 setInterval(()=>{if(!$('app').hidden&&!unlocked())lock();},20000);
@@ -206,6 +209,14 @@ $('pinForm').onsubmit=async e=>{
   const s=S.settings(),ok=(await pinHash($('pin').value.trim(),s.pinSalt||DEF_SALT))===(s.pinHash||DEF_HASH);
   if(ok){$('pinErr').textContent='';unlock();}else{$('pinErr').textContent='Неверный пароль.';$('pin').value='';}
 };
+
+$('acctForm').onsubmit=async e=>{
+  e.preventDefault();$('pinErr').textContent='Проверяю…';
+  const sv=S.server(),r=await S.account.login(sv?sv.url:defSrv(),$('lgn').value,$('lgp').value);$('lgp').value='';
+  if(r.ok){$('pinErr').textContent='';unlock();}else $('pinErr').textContent=r.msg;
+};
+S.onStatus(st=>{if(st.expired){lock();$('pinErr').textContent=st.msg;}});
+(async()=>{const sv=S.server(),u=sv?sv.url:defSrv();try{const on=await S.account.probe(u);if(on===true){acctMode=true;showForms();if(unlocked()&&!S.account.token())lock();}}catch(e){}})();
 
 /* ---- вкладки ---- */
 $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','rooms','builder','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
