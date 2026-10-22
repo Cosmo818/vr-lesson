@@ -337,7 +337,10 @@ void main(){
   const toast=E.addUi({w:1.15,h:.3,res:1024,show:false,noHit:true,accent:'#facc15',draw:(c,p)=>{
     p.text(p.data.text||'',p.W/2,p.H/2-30-(p.data.lines-1)*26,{size:48,bold:true,align:'center',color:p.data.color||'#fff'});
   }});
+  const toastEl=document.getElementById('toastBox');let toastT=0;
   E.toast=(text,color)=>{
+    /* за столом (не в шлеме) сообщение — плашка внизу экрана на 5 секунд: меню и предметы её не закрывают */
+    if(!E.session&&toastEl&&toastEl.classList){toastEl.textContent=text;toastEl.style.color=color||'#fff';toastEl.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>{toastEl.hidden=true;},5000);return;}
     const c=toast.ctx;c.font='bold 48px sans-serif';toast.data.lines=Math.min(3,wrap(c,text,toast.W-60).length);
     toast.data.text=text;toast.data.color=color;toast.data.until=E.t+3.5;toast.show=true;toast.dirty=true;placeFront(toast,1.25,-.32);
   };
@@ -366,8 +369,14 @@ void main(){
   E.addTable=(x,z,hx,hz,top,col,tex,uv)=>{
     E.addStatic(mesh.cube,TRS(x,top-.03,z,hx*2,.06,hz*2),tex?[1,1,1]:(col||[.45,.3,.2]),0,tex?4:0,tex||null,uv||1);
     for(const sx of[-1,1])for(const sz of[-1,1])E.addStatic(mesh.cube,TRS(x+sx*(hx-.06),(top-.06)/2,z+sz*(hz-.06),.06,top-.06,.06),[.25,.2,.16]);
+    E.tables.push({x,z,hx,hz,top});
     return E.addBox({x,z,hx,hz,top});
   };
+  /* кнопка «Сбросить стенд» стоит на каждом столе у переднего края, чтобы предметы, улетевшие со стола, возвращались одним нажатием */
+  function addResetButtons(){
+    for(const t of E.tables.slice(0,3)){if(t.hx<.3)continue;
+      E.addPanel({w:.34,h:.1,res:340,pos:[t.x+t.hx-.2,t.top+.055,t.z+t.hz-.04],yaw:0,accent:'#64748b',draw:(c,p)=>{p.button(4,4,p.W-8,p.H-8,'Сбросить стенд',()=>E.resetStand(),{bg:'#475569',size:30});}});}
+  }
   E.burst=(pos,n,cols,sp)=>{
     sp=sp||1;cols=cols||[[1,.3,.3],[.3,1,.4],[.3,.5,1],[1,.85,.2],[.9,.4,1]];
     for(let i=0;i<n;i++){
@@ -409,13 +418,14 @@ void main(){
     for(const p of E.panels)try{gl.deleteTexture(p.tex);}catch(e){}
     for(const m of E.roomMeshes)delMesh(m);
     E.stopSounds();
-    E.panels=[];E.bodies=[];E.boxes=[];E.targets=[];E.staticTargets=[];E.statics=[];E.envStatics=[];E.roomMeshes=[];E.conf=[];
+    E.tables=[];E.panels=[];E.bodies=[];E.boxes=[];E.targets=[];E.staticTargets=[];E.statics=[];E.envStatics=[];E.roomMeshes=[];E.conf=[];
     E.gravity=9.8;for(const h of E.H){h.held=null;h.hit=null;}
     E.room=R;E.roomId=id;E.S={};
     const env=R.env||{};E.open=!!env.open;E.clear=env.open?[.01,.012,.03]:[.04,.06,.12];E.grid=env.grid||[.25,.55,.9];
     buildEnv(env);
     E.spawn=R.spawn||{x:0,z:-.5};
     R.build(E,E.S);
+    addResetButtons();
     E.toggleMenu(false);
     respawn();
     if(E.hooks.onRoom)E.hooks.onRoom(id);
@@ -727,8 +737,8 @@ void main(){
   /* накопленное движение мыши: применяется раз за кадр с плавностью, а не событием на каждый пиксель */
   const acc={x:0,y:0},MC={sens:1,smooth:.35,invY:false};
   /* графика (настройки производительности): масштаб разрешения, угол обзора, счётчик fps */
-  const PF={scale:1,fov:66,fps:false};E.perf=PF;
-  E.setPerf=o=>{if(!o)return;if(typeof o.scale==='number'&&isFinite(o.scale))PF.scale=Math.max(.5,Math.min(1.5,o.scale));if(typeof o.fov==='number'&&isFinite(o.fov))PF.fov=Math.max(50,Math.min(100,o.fov));if(typeof o.fps==='boolean')PF.fps=o.fps;if(E.hooks.onPerf)E.hooks.onPerf();};
+  const PF={scale:1,fov:60,fps:false,walk:.8,ease:true};E.perf=PF;const WV={x:0,z:0};  /* WV — текущая скорость ходьбы */
+  E.setPerf=o=>{if(!o)return;if(typeof o.scale==='number'&&isFinite(o.scale))PF.scale=Math.max(.5,Math.min(1.5,o.scale));if(typeof o.fov==='number'&&isFinite(o.fov))PF.fov=Math.max(40,Math.min(100,o.fov));if(typeof o.fps==='boolean')PF.fps=o.fps;if(typeof o.walk==='number'&&isFinite(o.walk))PF.walk=Math.max(.4,Math.min(1.5,o.walk));if(typeof o.ease==='boolean')PF.ease=o.ease;if(E.hooks.onPerf)E.hooks.onPerf();};
   const fpsEl=document.getElementById('fpsBox');let fpsN=0,fpsT=0,fpsMax=0,dtS=.016;
   /* сброс стенда: комната собирается заново (предметы на столе как в начале), игрок остаётся на месте */
   E.resetStand=()=>{if(!E.roomId)return;const keep={x:D.x,z:D.z,yaw:D.yaw,pitch:D.pitch};E.loadRoom(E.roomId);if(E.deskInput&&!E.session)Object.assign(D,keep);E.toast('Стенд сброшен');};
@@ -827,11 +837,17 @@ void main(){
         D.h+=((crouch?1.0:1.6)-D.h)*(1-Math.exp(-dt/.07));
         if(keys.Space&&D.jy<=.001&&!crouch)D.jv=3.1;
         if(D.jy>0||D.jv>0){D.jv-=9.8*dt;D.jy=Math.max(0,D.jy+D.jv*dt);if(D.jy===0)D.jv=0;}
-        const sp=(crouch?1.1:keys.ShiftLeft||keys.ShiftRight?3.6:2.2)*dt,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
-        if(keys.KeyW||keys.ArrowUp){D.x+=fx*sp;D.z+=fz*sp;}
-        if(keys.KeyS||keys.ArrowDown){D.x-=fx*sp;D.z-=fz*sp;}
-        if(keys.KeyD||keys.ArrowRight){D.x+=rx*sp;D.z+=rz*sp;}
-        if(keys.KeyA||keys.ArrowLeft){D.x-=rx*sp;D.z-=rz*sp;}
+        /* ходьба: желаемая скорость по клавишам, фактическая плавно догоняет её (резкий старт и стоп вызывают укачивание); по диагонали не быстрее */
+        const base=(crouch?1.1:keys.ShiftLeft||keys.ShiftRight?3.6:2.2)*PF.walk,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
+        let tx=0,tz=0;
+        if(keys.KeyW||keys.ArrowUp){tx+=fx;tz+=fz;}
+        if(keys.KeyS||keys.ArrowDown){tx-=fx;tz-=fz;}
+        if(keys.KeyD||keys.ArrowRight){tx+=rx;tz+=rz;}
+        if(keys.KeyA||keys.ArrowLeft){tx-=rx;tz-=rz;}
+        const tl=Math.hypot(tx,tz);if(tl>1){tx/=tl;tz/=tl;}
+        tx*=base;tz*=base;const ek=PF.ease?1-Math.exp(-dt/.12):1;WV.x+=(tx-WV.x)*ek;WV.z+=(tz-WV.z)*ek;
+        if(Math.abs(WV.x)<.005&&!tx)WV.x=0;if(Math.abs(WV.z)<.005&&!tz)WV.z=0;
+        D.x+=WV.x*dt;D.z+=WV.z*dt;
         if(keys.KeyQ)D.yaw+=1.5*dt;
         const lim=E.open?5.2:5.5;D.x=Math.max(-lim,Math.min(lim,D.x));D.z=Math.max(-lim,Math.min(lim,D.z));
       }else{D.yaw=Math.sin(t/6000)*.35;}

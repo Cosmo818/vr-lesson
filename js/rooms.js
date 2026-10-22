@@ -418,7 +418,7 @@ ROOMS.space={
     E.addStatic(E.mesh.cube,TRS(PAD[0]+.55,1.2,PAD[1],.08,2.4,.08),[.7,.3,.25]);
     E.addBox({x:PAD[0],z:PAD[1],hx:.55,hz:.55,top:.08});
     const launch=()=>{if(S.rk.st!=='ready')return;S.rk={st:'count',y:0,v:0,t:0,n:3};E.beep(600,.15);S.lp.dirty=true;E.discover('space','rocket','Запуск ракеты');};
-    const lp=[2.9,1.5,-.5];
+    const lp=[5.1,1.35,-1.0];  /* правее ракеты, не на линии взгляда от входа */
     S.lp=E.addPanel({w:1.6,h:1.15,pos:lp,yaw:faceTo(lp,0,1.2),accent:'#f87171',draw:(c,p)=>{
       const st=S.rk.st,W=p.W;
       p.text('Запуск ракеты',36,24,{size:54,bold:true});

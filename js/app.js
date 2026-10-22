@@ -113,8 +113,9 @@ function hooks(){
   /* настройки мыши и справка: окно доступно всегда (кнопка «? Управление» или клавиша H); пока оно открыто, мышь освобождена */
   const mc=S.pref('mouse',{});E.setMouseCfg(mc);E.setPerf(S.pref('perf',{}));
   const syncPanel=()=>{const c=E.mouseCfg;$('mSens').value=Math.round(c.sens*100);$('mSmooth').value=Math.round(c.smooth*100);$('mInv').checked=c.invY;$('mSensV').textContent=Math.round(c.sens*100)+'%';$('mSmoothV').textContent=Math.round(c.smooth*100)+'%';};
-  const syncGfx=()=>{const g=E.perf;$('gFps').checked=g.fps;$('gScale').value=Math.round(g.scale*100);$('gFov').value=g.fov;$('gScaleV').textContent=Math.round(g.scale*100)+'%';$('gFovV').textContent=g.fov+'°';};
-  const saveGfx=()=>S.setPref('perf',{scale:E.perf.scale,fov:E.perf.fov,fps:E.perf.fps});
+  const syncGfx=()=>{const g=E.perf;$('gFps').checked=g.fps;$('gScale').value=Math.round(g.scale*100);$('gFov').value=g.fov;$('gWalk').value=Math.round(g.walk*100);$('gWalkV').textContent=Math.round(g.walk*100)+'%';$('gEase').checked=g.ease;$('gScaleV').textContent=Math.round(g.scale*100)+'%';$('gFovV').textContent=g.fov+'°';};
+  const saveGfx=()=>S.setPref('perf',{scale:E.perf.scale,fov:E.perf.fov,fps:E.perf.fps,walk:E.perf.walk,ease:E.perf.ease});
+  $('gWalk').oninput=()=>{E.setPerf({walk:$('gWalk').value/100});syncGfx();saveGfx();};$('gEase').onchange=()=>{E.setPerf({ease:$('gEase').checked});saveGfx();};
   $('gFps').onchange=()=>{E.setPerf({fps:$('gFps').checked});saveGfx();};
   $('gScale').oninput=()=>{E.setPerf({scale:$('gScale').value/100});syncGfx();saveGfx();};
   $('gFov').oninput=()=>{E.setPerf({fov:+$('gFov').value});syncGfx();saveGfx();};
@@ -150,8 +151,7 @@ function hooks(){
       p.button(400,880,(W-436-18)/2,70,'Нравится',()=>vote('like'),{bg:'#15803d',size:32});
       p.button(418+(W-436-18)/2,880,(W-436-18)/2,70,'Не нравится',()=>vote('dislike'),{bg:'#9a3412',size:32});
     }
-    if(E.roomId&&E.roomId!=='hall')p.button(W-36-300,940,300,60,'Сбросить стенд',()=>{E.toggleMenu(false);E.resetStand();},{bg:'#475569',size:30});
-    p.text('Меню: кнопка A или X',36,958,{size:28,color:'#94a3b8'});
+    p.text('Меню: кнопка A или X',W/2,968,{size:28,align:'center',color:'#94a3b8'});
   };
   E.hooks.onRoom=()=>{E.hud.dirty=true;};
 }

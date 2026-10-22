@@ -68,6 +68,7 @@
   <div id="deskHud"></div>
   <div id="cross"></div>
   <div id="fpsBox" hidden></div>
+  <div id="toastBox" hidden></div>
   <div id="lockHint" hidden>Щёлкни по экрану — мышь будет управлять взглядом без упора в край (Esc — освободить, F — полный экран)</div>
   <button id="helpBtn" class="btn ghost" title="Управление и настройки мыши (H)">? Управление</button>
   <div id="deskPanel" hidden>
@@ -98,8 +99,10 @@
     <div class="pane" id="pGfx" hidden>
     <label class="chk"><input id="gFps" type="checkbox"> Показывать fps в углу экрана</label>
     <label>Качество картинки (разрешение) <b id="gScaleV"></b><input id="gScale" type="range" min="50" max="150" step="10"></label>
-    <label>Угол обзора <b id="gFovV"></b><input id="gFov" type="range" min="50" max="100" step="2"></label>
-    <p class="muted small">Рябит или тормозит — уменьши качество до 70–80%. Картинка «режет глаза» на краях предметов — поставь 120–150% (мягче края, но нужна видеокарта посильнее). Узкий угол обзора (60–70°) меньше «растягивает» картинку при поворотах. Включи fps и смотри «худший кадр»: если он больше 40 мс, виноваты тормоза, а не мышь.</p>
+    <label>Угол обзора <b id="gFovV"></b><input id="gFov" type="range" min="40" max="100" step="2"></label>
+    <label>Скорость ходьбы <b id="gWalkV"></b><input id="gWalk" type="range" min="40" max="150" step="10"></label>
+    <label class="chk"><input id="gEase" type="checkbox"> Плавный разгон и торможение (меньше укачивает)</label>
+    <p class="muted small">Рябит или тормозит — уменьши качество до 70–80%. Картинка «режет глаза» на краях предметов — поставь 120–150% (мягче края, но нужна видеокарта посильнее). Подташнивает при ходьбе — уменьши угол обзора до 50–55°, скорость ходьбы до 60% и оставь плавный разгон: широкий угол и резкие старты — главные причины укачивания за экраном. Включи fps и смотри «худший кадр»: если он больше 40 мс, виноваты тормоза, а не мышь.</p>
     </div>
     <button id="helpClose" class="btn">Закрыть</button>
   </div>
