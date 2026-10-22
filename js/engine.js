@@ -373,15 +373,11 @@ void main(){
     E.tables.push({x,z,hx,hz,top});
     return E.addBox({x,z,hx,hz,top});
   };
-  /* кнопка «Сбросить стенд» стоит на каждом столе у края, ближнего к точке появления игрока, и повёрнута к этой точке лицом (не 0 и не спиной) */
+  /* кнопка «Сбросить стенд» — обычная кнопка на столе: её yaw = yaw стола (у столов он 0), стороны параллельны краям стола, точка появления игрока не влияет.
+     Стоит у переднего (+z) края столешницы, смещена к правому краю, чтобы не лежать на середине стенда */
   E.resetPose=t=>{
-    const sp=E.spawn||{x:0,z:0},dx=sp.x-t.x,dz=sp.z-t.z;
-    /* какой край ближе к игроку: сравниваем направление на точку появления с размерами стола */
-    const side=Math.abs(dx)/Math.max(t.hx,.01)>Math.abs(dz)/Math.max(t.hz,.01)&&t.hz>=.3||t.hx<.3;
-    const nx=side?Math.sign(dx)||1:0,nz=side?0:Math.sign(dz)||1,half=side?t.hz:t.hx;
-    /* по краю — правее середины, если смотреть со стороны игрока: правая рука игрока = (nz,-nx) */
-    const off=Math.max(0,half-.22),x=t.x+nx*(t.hx-.06)+nz*off,z=t.z+nz*(t.hz-.06)-nx*off;
-    return{pos:[x,t.top+.055,z],yaw:Math.atan2(sp.x-x,sp.z-z)};
+    const yaw=t.yaw||0,c=Math.cos(yaw),s=Math.sin(yaw),off=Math.max(0,t.hx-.22),lz=t.hz-.06;
+    return{pos:[t.x+c*off+s*lz,t.top+.055,t.z-s*off+c*lz],yaw};
   };
   function addResetButtons(){
     for(const t of E.tables.slice(0,3)){if(t.hx<.3&&t.hz<.3)continue;const rp=E.resetPose(t);
@@ -533,10 +529,10 @@ void main(){
     return best;
   }
   /* предмет под перекрестием (рабочий стол): луч из центра экрана, ближе любых панелей и целей */
-  function bodyOnRay(h,maxT){
+  function bodyOnRay(h,maxT,hit){
     let best=null,bt=maxT;
     for(const b of E.bodies){if(b.held!==null||b.fixed)continue;const t=raySphere(h.ro,h.rd,b.p,Math.max(.12,b.s*.9));if(t!==null&&t<bt){best=b;bt=t;}}
-    if(best){const r=rayHit(h);if(r&&r.t<bt)return null;}
+    if(best){const r=hit===undefined?rayHit(h):hit;if(r&&r.t<bt)return null;}
     return best;
   }
   function release(h){
@@ -565,16 +561,45 @@ void main(){
     return best;
   }
   E.rayHit=rayHit;
-  function aimTeleport(h){
-    h.tp=null;const o=h.ro,d=h.rd;
-    if(d[1]<-.05){const t=-o[1]/d[1];if(t>0&&t<12){const x=o[0]+d[0]*t,z=o[2]+d[2]*t;
-      const inside=E.open?Math.hypot(x,z)<5.3:(Math.abs(x)<E.bound&&Math.abs(z)<E.bound);
-      h.tp={x,z,valid:inside&&!E.boxes.some(b=>Math.abs(x-b.x)<b.hx+.4&&Math.abs(z-b.z)<b.hz+.4)};}}
+  /* луч телепорта «резиновый»: направление догоняет контроллер пружиной с затуханием (по реальному dt, а не по кадрам),
+     дуга — парабола к точке приземления, при резком движении слегка прогибается и мягко доезжает; кольцо-маркер тоже сглажено */
+  const ARC_W=22,ARC_Z=.72,ARC_SPEED=9.5,ARC_N=18,TP_TAU=.07;
+  E.arcStep=(st,tgt,dt)=>{
+    dt=Math.min(Math.max(dt,0),.1);const n=Math.max(1,Math.ceil(dt/.006)),h=dt/n;
+    for(let i=0;i<n;i++)for(let k=0;k<3;k++){
+      const acc=ARC_W*ARC_W*(tgt[k]-st.d[k])-2*ARC_Z*ARC_W*st.v[k];st.v[k]+=acc*h;st.d[k]+=st.v[k]*h;
+    }
+    const l=Math.hypot(st.d[0],st.d[1],st.d[2])||1;st.d[0]/=l;st.d[1]/=l;st.d[2]/=l;
+    return st;
+  };
+  /* точка приземления параболы из o со скоростью dir*speed; null, если дальше 12 м */
+  E.arcLand=(o,d)=>{
+    const vy=d[1]*ARC_SPEED,g=9.8,disc=vy*vy+2*g*o[1];if(!(o[1]>0))return null;
+    const t=(vy+Math.sqrt(disc))/g,x=o[0]+d[0]*ARC_SPEED*t,z=o[2]+d[2]*ARC_SPEED*t;
+    return Math.hypot(x-o[0],z-o[2])<=12?{x,z,t}:null;
+  };
+  function aimTeleport(h,dt){
+    const o=h.ro;
+    if(!h.arc){h.arc={d:h.rd.slice(),v:[0,0,0],tp:null,pts:null};}
+    const st=h.arc;E.arcStep(st,h.rd,dt);
+    const L=E.arcLand(o,st.d);h.tp=null;st.pts=null;
+    if(!L){st.tp=null;return;}
+    if(!st.tp)st.tp=[L.x,L.z];else{const k=1-Math.exp(-dt/TP_TAU);st.tp[0]+=(L.x-st.tp[0])*k;st.tp[1]+=(L.z-st.tp[1])*k;}
+    const x=st.tp[0],z=st.tp[1];
+    const inside=E.open?Math.hypot(x,z)<5.3:(Math.abs(x)<E.bound&&Math.abs(z)<E.bound);
+    h.tp={x,z,valid:inside&&!E.boxes.some(b=>Math.abs(x-b.x)<b.hx+.4&&Math.abs(z-b.z)<b.hz+.4)};
+    /* точки дуги: парабола + поправка, чтобы конец совпал со сглаженным кольцом, + прогиб от скорости поворота (затухает к концам) */
+    const pts=st.pts||(st.pts=[]),vs=Math.hypot(st.v[0],st.v[1],st.v[2]);pts.length=0;
+    const vy=st.d[1]*ARC_SPEED,ex=x-(o[0]+st.d[0]*ARC_SPEED*L.t),ez=z-(o[2]+st.d[2]*ARC_SPEED*L.t),bend=Math.min(.35,vs*.02*Math.hypot(L.x-o[0],L.z-o[2])*.25);
+    for(let i=1;i<ARC_N;i++){
+      const u=i/ARC_N,t=L.t*u,w=Math.sin(Math.PI*u)*bend,vl=vs||1;
+      pts.push([o[0]+st.d[0]*ARC_SPEED*t+ex*u*u-st.v[0]/vl*w,Math.max(.02,o[1]+vy*t-4.9*t*t-st.v[1]/vl*w),o[2]+st.d[2]*ARC_SPEED*t+ez*u*u-st.v[2]/vl*w]);
+    }
   }
   function handleInput(){
     for(let hi=0;hi<2;hi++){
       const h=H[hi];
-      if(!h.has){if(h.held)release(h);h.aim=false;h.tp=null;h.hit=null;continue;}
+      if(!h.has){if(h.held)release(h);h.aim=false;h.tp=null;h.arc=null;h.hov=null;h.hit=null;continue;}
       const gp=h.gp,ok=gp&&gp.axes&&gp.axes.length>=4,ax=ok?gp.axes[2]:0,ay=ok?gp.axes[3]:0;
       const trig=pressed(gp,0),sq=pressed(gp,1),mb=pressed(gp,4)||pressed(gp,5);
       const trigDown=trig&&!h.trigPrev,sqDown=sq&&!h.sqPrev,mbDown=mb&&!h.mbPrev;
@@ -596,15 +621,18 @@ void main(){
       if(h.held&&h.held.by==='sq'&&trigDown){shoot(h);used=true;}
       if(h.held&&!(h.held.by==='sq'?sq:trig))release(h);
       h.hit=(h.held||h.aim)?null:rayHit(h);
+      /* лёгкая подсветка: предмет, который можно взять (на луче или в руке), или цель под лучом */
+      h.hov=null;
+      if(!h.held&&!h.aim){const hb=bodyOnRay(h,10,h.hit)||nearestBody(gpos,E.session?.22:.42);if(hb)h.hov={b:hb};else if(h.hit&&h.hit.kind==='target')h.hov={tg:h.hit.tg};}
       if(trigDown&&!used&&!h.aim&&h.hit){
         if(h.hit.kind==='panel'){if(h.hit.bi>=0){const p=h.hit.p,b=p.btns[h.hit.bi];E.beep(880,.04,'square',.03);E.buzz(h,.3,25);p.dirty=true;try{b.fn(h);}catch(e){try{console.log('button error',e);}catch(_){}}}}
         else{try{h.hit.tg.sel(h);}catch(e){try{console.log('target error',e);}catch(_){}}}
       }
       if(!E.session)continue;
       if(!h.held){
-        if(ay<-.6){h.aim=true;aimTeleport(h);}
-        else if(h.aim&&ay>-.25){if(h.tp&&h.tp.valid){teleportTo(h.tp.x,h.tp.z);E.beep(660,.08);E.buzz(h,.3,30);}h.aim=false;h.tp=null;}
-      }else{h.aim=false;h.tp=null;}
+        if(ay<-.6){h.aim=true;aimTeleport(h,E.dt||.016);}
+        else if(h.aim&&ay>-.25){if(h.tp&&h.tp.valid){teleportTo(h.tp.x,h.tp.z);E.beep(660,.08);E.buzz(h,.3,30);}h.aim=false;h.tp=null;h.arc=null;}
+      }else{h.aim=false;h.tp=null;h.arc=null;}
       if(ay>.7&&!h.held&&!h.stepLock){h.stepLock=true;stepBack();}else if(ay<.3)h.stepLock=false;
       if(Math.abs(ax)>.7&&!h.turnLock){h.turnLock=true;turnBy(ax>0?-Math.PI/6:Math.PI/6);}
       else if(Math.abs(ax)<.3)h.turnLock=false;
@@ -648,12 +676,14 @@ void main(){
   /* ---------- общий шаг кадра ---------- */
   let hudT=0;
   function step(dt){
-    E.t+=dt;
+    E.t+=dt;E.dt=dt;
     if(E.deskInput||E.session)handleInput();
-    else for(const h of H)h.hit=null;
+    else for(const h of H){h.hit=null;h.hov=null;}
     E.targets=E.room&&E.room.targets?E.staticTargets.concat(E.room.targets(E,E.S)):E.staticTargets;
     if(E.room&&E.room.update)try{E.room.update(E,E.S,dt);}catch(e){try{console.log('room update error',e);}catch(_){}}
-    for(const b of E.bodies)stepBody(b,dt);
+    for(const b of E.bodies){stepBody(b,dt);
+      const goal=(H[0].hov&&H[0].hov.b===b)||(H[1].hov&&H[1].hov.b===b)?1:0,cur=b._hl||0;
+      if(cur!==goal){const nx=cur+(goal-cur)*Math.min(1,dt*14);b._hl=Math.abs(goal-nx)<.01?goal:nx;}}
     for(const c of E.conf){c.v[1]-=c.g*dt;for(let k=0;k<3;k++)c.p[k]+=c.v[k]*dt;c.life-=dt;}
     for(let i=E.conf.length-1;i>=0;i--)if(E.conf[i].life<=0||E.conf[i].p[1]<0)E.conf.splice(i,1);
     if(toast.show&&E.t>toast.data.until)toast.show=false;
@@ -678,7 +708,7 @@ void main(){
     for(const s of E.envStatics)L.push(s);
     for(const s of E.statics)L.push(s);
     if(E.room&&E.room.draw)try{E.room.draw(E,E.S,add);}catch(e){try{console.log('room draw error',e);}catch(_){}}
-    for(const b of E.bodies)add(b.mesh||(b.shape==='cube'?mesh.cube:mesh.ball),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),M.mul(b.m,M.scale(b.s,b.s,b.s))),b.col,b.em);
+    for(const b of E.bodies){const hl=(b._hl||0)*.22,c=b.col;add(b.mesh||(b.shape==='cube'?mesh.cube:mesh.ball),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),M.mul(b.m,M.scale(b.s,b.s,b.s))),hl?[c[0]+(1-c[0])*hl*2,c[1]+(1-c[1])*hl*2,c[2]+(1-c[2])*hl*2]:c,hl?Math.min(1,(b.em||0)+hl):b.em);}
     for(const c of E.conf)add(mesh.cube,TRS(c.p[0],c.p[1],c.p[2],c.size,c.size,c.size,c.life*5),c.col,.8);
     for(let hi=0;hi<2;hi++){
       const h=H[hi];if(!h.has)continue;
@@ -686,11 +716,12 @@ void main(){
         if(VR.controllers)VR.controllers.draw(add,mesh,h,hi,E.ctlOpt);
         else add(mesh.cube,M.mul(h.g,M.mul(M.trans(0,0,.04),M.scale(.045,.035,.13))),hi?[.95,.55,.2]:[.3,.55,1],.2);
         let len=2.5,col=[.6,.8,1];
-        if(h.aim){col=h.tp&&h.tp.valid?[.3,1,.8]:[1,.3,.3];len=h.tp?Math.min(12,dist3(h.ro,[h.tp.x,0,h.tp.z])):1.5;if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),col,1);}
+        if(h.aim){col=h.tp&&h.tp.valid?[.3,1,.8]:[1,.3,.3];len=h.tp?0:1.5;if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),col,1);
+          if(h.arc&&h.arc.pts)for(const q of h.arc.pts)add(mesh.sphere,TRS(q[0],q[1],q[2],.014,.014,.014),col,1);}
         else if(h.hit){len=h.hit.t;col=h.hit.kind==='panel'&&h.hit.bi<0?[.7,.75,.9]:[1,.9,.3];}
-        if(!h.held)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-len/2),M.scale(.004,.004,len))),col,1);
+        if(!h.held&&len>0)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-len/2),M.scale(.004,.004,len))),col,1);
       }
-      if(h.hit&&!h.aim){const q=[h.ro[0]+h.rd[0]*h.hit.t,h.ro[1]+h.rd[1]*h.hit.t,h.ro[2]+h.rd[2]*h.hit.t],k=E.session?.025:.012;add(mesh.sphere,TRS(q[0],q[1],q[2],k,k,k),[1,.9,.3],1);}
+      if(h.hit&&!h.aim){const q=[h.ro[0]+h.rd[0]*h.hit.t,h.ro[1]+h.rd[1]*h.hit.t,h.ro[2]+h.rd[2]*h.hit.t],k=(E.session?.025:.012)*(h.hov&&h.hov.tg?1.8:1);add(mesh.sphere,TRS(q[0],q[1],q[2],k,k,k),[1,.9,.3],1);}
     }
     for(const p of E.panels)if(p.show)add(mesh.quad,panelModel(p),[1,1,1],0,1,p.tex);
     for(const p of E.ui){

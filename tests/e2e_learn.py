@@ -200,15 +200,29 @@ try:
         over += ev("VR.app.E.panels.filter(p=>p.w===1.7&&p.accent==='#22c55e').map(p=>{VR.app.E.paintPanel(p);return p.over.join()}).filter(Boolean)")
         ok(not over, 'панели обучения: текст и кнопки в пределах текстуры (%s)' % over[:3])
         ok(ev("(()=>{const E=VR.app.E;E.loadRoom('learn');return E.S.main.W>=1280&&E.S.main.H>=900})()"), 'главная панель обучения рисуется в 1280 px по ширине — разметка под этот размер')
-        # ---- кнопка «Сбросить стенд»: во всех комнатах лицом к точке появления, на столе; сброс не двигает игрока
+        # ---- кнопка «Сбросить стенд»: обычная кнопка на столе, выровнена по осям стола (yaw = yaw стола, кратно 90°), точка появления не влияет, предметы не перекрывает
         r = ev("""(()=>{const E=VR.app.E,bad=[];let n=0;
           for(const id in E.rooms){try{E.loadRoom(id);}catch(e){continue;}
-            for(const p of E.panels){if(!p.data||!p.data.reset)continue;n++;
-              const sp=E.spawn,dx=sp.x-p.pos[0],dz=sp.z-p.pos[2],L=Math.hypot(dx,dz)||1,c=(Math.sin(p.yaw)*dx+Math.cos(p.yaw)*dz)/L;
-              const t=E.tables.find(t=>Math.abs(p.pos[0]-t.x)<=t.hx&&Math.abs(p.pos[2]-t.z)<=t.hz&&Math.abs(p.pos[1]-t.top-.055)<1e-6);
-              if(c<.999||!t)bad.push(id+' cos='+c.toFixed(3)+(t?'':' не на столе'));}}
+            for(const sp of[{x:0,z:0},{x:3,z:-2},{x:-4,z:5}]){E.spawn=sp;E.panels=E.panels.filter(p=>!(p.data&&p.data.reset));
+              for(const t of E.tables.slice(0,3)){if(t.hx<.3&&t.hz<.3)continue;const rp=E.resetPose(t);E.addPanel({w:.34,h:.1,res:340,pos:rp.pos,yaw:rp.yaw,data:{reset:1}});}
+              for(const p of E.panels){if(!p.data||!p.data.reset)continue;n++;
+              const ty=0,q=((p.yaw-ty)/(Math.PI/2)),t=E.tables.find(t=>Math.abs(p.pos[0]-t.x)<=t.hx&&Math.abs(p.pos[2]-t.z)<=t.hz&&Math.abs(p.pos[1]-t.top-.055)<1e-6);
+              if(Math.abs(q-Math.round(q))>1e-9)bad.push(id+' yaw '+p.yaw.toFixed(3));
+              if(!t){bad.push(id+' не на столе');continue;}
+              if(t.hx>=.3&&Math.abs(p.pos[0]-t.x)+.17>t.hx+1e-9)bad.push(id+' выступает по x');
+              for(const b of E.bodies)if(b.p[1]<t.top+.4&&Math.abs(b.p[0]-p.pos[0])<.17+b.s/2&&Math.abs(b.p[2]-p.pos[2])<.05+b.s/2)bad.push(id+' перекрывает предмет');}}}
           return{n,bad}})()""")
-        ok(r['n'] > 0 and not r['bad'], 'кнопки сброса (%d) смотрят на игрока и стоят на столе (%s)' % (r['n'], r['bad'][:3]))
+        ok(r['n'] > 0 and not r['bad'], 'кнопки сброса (%d): на столе, выровнены по столу, не зависят от точки появления, не перекрывают предметы (%s)' % (r['n'], r['bad'][:3]))
+        # ---- луч телепорта: дуга за 1 кадр не прыгает при скачке направления, за 0,5 с сходится; сглаживание по реальному dt
+        r = ev("""(()=>{const E=VR.app.E,n=a=>{const l=Math.hypot(...a);return a.map(x=>x/l)};
+          const mk=()=>({d:[0,-.3,-1].map((x,i,a)=>x/Math.hypot(...a)),v:[0,0,0]}),tgt=n([1,-.2,-1]),a=mk();
+          const d0=a.d.slice();E.arcStep(a,tgt,1/60);const j1=Math.hypot(a.d[0]-d0[0],a.d[1]-d0[1],a.d[2]-d0[2]),full=Math.hypot(tgt[0]-d0[0],tgt[1]-d0[1],tgt[2]-d0[2]);
+          for(let i=0;i<29;i++)E.arcStep(a,tgt,1/60);const e5=Math.hypot(a.d[0]-tgt[0],a.d[1]-tgt[1],a.d[2]-tgt[2]);
+          const A=mk(),B=mk();for(let i=0;i<30;i++)E.arcStep(A,tgt,1/60);for(let i=0;i<15;i++)E.arcStep(B,tgt,1/30);
+          const dd=Math.hypot(A.d[0]-B.d[0],A.d[1]-B.d[1],A.d[2]-B.d[2]);
+          const L=E.arcLand([0,1.2,0],n([0,-.2,-1]));
+          return{j1,full,e5,dd,L}})()""")
+        ok(r['j1'] < .15 * r['full'] and r['e5'] < .02 and r['dd'] < .02 and r['L'] and r['L']['z'] < -1, 'луч телепорта: за кадр сдвиг %.3f из %.3f, через 0,5 с остаток %.4f, 60 и 30 к/с совпадают (%.4f)' % (r['j1'], r['full'], r['e5'], r['dd']))
         r = ev("""(()=>{const E=VR.app.E;E.loadRoom('phys');E.setPose(1.3,-.7,.8);E.deskCam.pitch=-.3;E.resetStand();const q=E.poseNow();
           return{x:q.x,z:q.z,yaw:q.yaw,p:E.deskCam.pitch,room:E.roomId}})()""")
         ok(abs(r['x'] - 1.3) < 1e-9 and abs(r['z'] + .7) < 1e-9 and abs(r['yaw'] - .8) < 1e-9 and abs(r['p'] + .3) < 1e-9 and r['room'] == 'phys', 'сброс стенда оставляет игрока на месте и с тем же взглядом (%s)' % r)
