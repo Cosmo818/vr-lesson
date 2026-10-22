@@ -29,6 +29,7 @@ const isObj=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
 const num=(v,lo,hi,d)=>{v=typeof v==='number'?v:parseFloat(v);if(!isFinite(v))return d;return Math.min(hi,Math.max(lo,v));};
 const r1=v=>Math.round(v*10)/10;
 const str=(v,max)=>typeof v==='string'?v.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'').slice(0,max):'';
+const UP_RE=/^up:[0-9a-f]{12}$/;/* ссылка на файл учителя, загруженный на сервер школы */
 const oneOf=(v,set,d)=>typeof v==='string'&&Object.prototype.hasOwnProperty.call(set,v)?v:d;
 const color=(v,d)=>{if(typeof v==='string'&&Object.prototype.hasOwnProperty.call(COLORS,v))return v;if(typeof v==='string'&&/^#[0-9a-fA-F]{6}$/.test(v))return v.toLowerCase();return d;};
 const colorHex=v=>COLORS[v]?COLORS[v][1]:(/^#[0-9a-f]{6}$/i.test(v)?v:'#3b82f6');
@@ -51,7 +52,7 @@ const FIELDS={
     {k:'info',label:'Что рассказать, когда на предмет наведут и нажмут',kind:'area',max:LIM.info,def:''},
     {k:'shape',label:'Форма',kind:'select',opts:SHAPES,def:'cube'},
     {k:'color',label:'Цвет',kind:'color',def:'orange'},
-    {k:'tex',label:'Текстура',kind:'select',opts:TEXOPTS,def:''},
+    {k:'tex',label:'Текстура',kind:'select',opts:TEXOPTS,def:'',up:'texture'},
     {k:'size',label:'Размер, м',kind:'num',min:.1,max:1.2,step:.05,def:.4},
     {k:'lift',label:'Высота над полом, м (стол — 0.8)',kind:'num',min:0,max:2.5,step:.1,def:0},
     {k:'grab',label:'Можно брать в руки и бросать',kind:'check',def:false},
@@ -64,7 +65,7 @@ const FIELDS={
     {k:'d',label:'Ширина, м',kind:'num',min:.4,max:3,step:.1,def:.8},
     {k:'h',label:'Высота, м',kind:'num',min:.4,max:1.2,step:.05,def:.8},
     {k:'color',label:'Цвет',kind:'color',def:'gray'},
-    {k:'tex',label:'Текстура столешницы',kind:'select',opts:TEXOPTS,def:''}
+    {k:'tex',label:'Текстура столешницы',kind:'select',opts:TEXOPTS,def:'',up:'texture'}
   ],
   question:[
     {k:'q',label:'Вопрос',kind:'area',max:LIM.q,def:'Вопрос?'},
@@ -81,7 +82,7 @@ const FIELDS={
     {k:'subj',label:'Предмет теста',kind:'subject',def:'math'}
   ],
   model:[
-    {k:'asset',label:'Модель',kind:'select',opts:optsOf(MODELS),def:'tree'},
+    {k:'asset',label:'Модель',kind:'select',opts:optsOf(MODELS),def:'tree',up:'model'},
     {k:'label',label:'Название (по желанию)',kind:'text',max:LIM.label,def:''},
     {k:'info',label:'Что рассказать, когда на модель наведут и нажмут',kind:'area',max:LIM.info,def:''},
     {k:'h',label:'Высота, м',kind:'num',min:.2,max:3.5,step:.1,def:1.5},
@@ -90,7 +91,7 @@ const FIELDS={
     {k:'discover',label:'Считать открытием (+2 балла, один раз)',kind:'check',def:false}
   ],
   sound:[
-    {k:'asset',label:'Звук',kind:'select',opts:optsOf(SFX),def:'wind'},
+    {k:'asset',label:'Звук',kind:'select',opts:optsOf(SFX),def:'wind',up:'sound'},
     {k:'loop',label:'Звучит всё время, пока ученик в комнате',kind:'check',def:true},
     {k:'vol',label:'Громкость (0.1–1)',kind:'num',min:.1,max:1,step:.1,def:.6}
   ],
@@ -113,7 +114,7 @@ function cleanBlock(b,subjOk){
     else if(f.kind==='num')o[f.k]=num(v,f.min,f.max,f.def);
     else if(f.kind==='check')o[f.k]=typeof v==='boolean'?v:f.def;
     else if(f.kind==='color')o[f.k]=color(v,f.def);
-    else if(f.kind==='select')o[f.k]=oneOf(v,f.opts,f.def);
+    else if(f.kind==='select')o[f.k]=f.up&&typeof v==='string'&&UP_RE.test(v)?v:oneOf(v,f.opts,f.def);
     else if(f.kind==='subject')o[f.k]=subjOk(v)?v:null;
     else if(f.kind==='room')o[f.k]=typeof v==='string'&&ID_RE.test(v)?v:'hall';
   }
@@ -202,5 +203,6 @@ const TEMPLATES={
   ]})}
 };
 
-VR.roomspec={MODELS,SFX,TEXOPTS,SCHEMA,LIM,SHAPES,COLORS,PRESETS,SOUNDS,TYPES,PANEL_TYPES,FIELDS,TEMPLATES,clean,cost,discoverKeys,blockDefault,newRoomId,newBlockId,colorHex,isRoomId:id=>typeof id==='string'&&/^c-[a-z0-9_-]{1,38}$/.test(id)};
+const assetUrl=(kind,id)=>UP_RE.test(id)?id:'assets/'+(kind==='model'?'models/'+id+'.glb':'sounds/'+id+'.wav');
+VR.roomspec={UP_RE,assetUrl,MODELS,SFX,TEXOPTS,SCHEMA,LIM,SHAPES,COLORS,PRESETS,SOUNDS,TYPES,PANEL_TYPES,FIELDS,TEMPLATES,clean,cost,discoverKeys,blockDefault,newRoomId,newBlockId,colorHex,isRoomId:id=>typeof id==='string'&&/^c-[a-z0-9_-]{1,38}$/.test(id)};
 })();

@@ -50,14 +50,14 @@ function buildSpec(E,S,spec){
         S.items.push({b,x:b.x,y,z:b.z,m:E.mesh[b.shape]||E.mesh.cube,col:b.tex?[1,1,1].map((v,i)=>.55+col[i]*.45):col,tex:b.tex?E.tex(b.tex):null,rot:0});
       }
     }else if(b.type==='model'){
-      const def=RS.MODELS[b.asset];if(!def)continue;
+      if(!RS.MODELS[b.asset]&&!RS.UP_RE.test(b.asset))continue;
       /* модель грузится в фоне и появляется, когда готова; ученик при этом не ждёт */
       S.items.push({b:Object.assign({},b,{size:b.h,sound:'ding'}),x:b.x,y:b.lift+b.h/2,z:b.z,grab:false,model:true});
-      E.loadModel('assets/models/'+b.asset+'.glb').then(g=>{if(E.S!==S)return;E.addModel(g,b.x,b.lift,b.z,b.h,b.yaw*Math.PI/180);}).catch(()=>{if(!S.modelErr){S.modelErr=true;E.toast('Не удалось загрузить модель.','#fca5a5');}});
+      E.loadModel(RS.assetUrl('model',b.asset)).then(g=>{if(E.S!==S)return;E.addModel(g,b.x,b.lift,b.z,b.h,b.yaw*Math.PI/180);}).catch(()=>{if(!S.modelErr){S.modelErr=true;E.toast('Не удалось загрузить модель.','#fca5a5');}});
     }else if(b.type==='sound'){
       if(editing)continue;/* в редакторе фон не играет: комната пересобирается после каждой правки */
-      if(!RS.SFX[b.asset])continue;
-      E.loadSound('assets/sounds/'+b.asset+'.wav').then(buf=>{if(E.S!==S)return;E.playSound(buf,{pos:[b.x,1.5,b.z],loop:b.loop,vol:b.vol});}).catch(()=>{});
+      if(!RS.SFX[b.asset]&&!RS.UP_RE.test(b.asset))continue;
+      E.loadSound(RS.assetUrl('sound',b.asset)).then(buf=>{if(E.S!==S)return;E.playSound(buf,{pos:[b.x,1.5,b.z],loop:b.loop,vol:b.vol});}).catch(()=>{});
     }else if(b.type==='question'){
       const R={picked:-1,ok:false};
       const opts=shuffle([b.a0,b.a1,b.a2,b.a3].filter(Boolean));
@@ -151,7 +151,7 @@ function tabletDraw(E,S,c,p){
   p.button(X3(2),726,t3,84,'Удалить',()=>edit(E,s=>{if(!edBlock(s,ED.sel))return false;s.blocks=s.blocks.filter(k=>k.id!==ED.sel);ED.sel=null;}),{bg:'#b91c1c',size:34,disabled:!b});
   p.text('Каждая правка сохраняется сразу. Подробности: «Конструктор комнат» в кабинете учителя.',30,830,{size:26,color:'#94a3b8',maxW:W-60,maxY:p.H-10});
 }
-const blockTitle=b=>(RS.TYPES[b.type]||b.type)+': '+(b.title||b.label||b.q||(b.asset&&(RS.MODELS[b.asset]||RS.SFX[b.asset]||{}).title)||'');
+const blockTitle=b=>(RS.TYPES[b.type]||b.type)+': '+(b.title||b.label||b.q||(b.asset&&((RS.MODELS[b.asset]||RS.SFX[b.asset]||{}).title||VR.Store.fileName(b.asset)))||'');
 function blockPos(b){return b.type==='model'?[b.x,b.lift+b.h/2,b.z]:b.type==='sound'?[b.x,1.5,b.z]:b.type==='item'?[b.x,b.lift+b.size/2,b.z]:b.type==='table'?[b.x,b.h,b.z]:b.type==='portal'||b.type==='quiz'?[b.x,1.4,b.z]:[b.x,b.y,b.z];}
 function buildEditor(E,S,spec){
   S.edit=true;

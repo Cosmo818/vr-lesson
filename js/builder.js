@@ -8,7 +8,7 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const BANDS=['a','b','c','d'],BS={a:'1–4',b:'5–6',c:'7–8',d:'9–11'};
 const ICON={text:'Т',item:'●',table:'▭',question:'?',quiz:'✓',portal:'⇨',model:'▲',sound:'♪'};
 const SC=40,CS=480; /* пикселей на метр, размер плана: комната 12×12 м */
-let cur=null,sel=null,dirty=false,msg='',io=false,inRoom=false;
+let cur=null,sel=null,dirty=false,msg='',io=false,inRoom=false,filesOpen=false,filesMsg='';
 /* отмена и возврат: снимки комнаты до каждой правки (шаг назад / шаг вперёд, Ctrl+Z / Ctrl+Y) */
 let hist=[],fut=[],lastKey='',lastAt=0;
 const HMAX=100;
@@ -59,7 +59,13 @@ function fieldHtml(f,b){
   if(f.kind==='area')return`<label class="bdl">${esc(f.label)}<textarea data-k="${f.k}" maxlength="${f.max}" style="font-family:inherit;font-size:15px;min-height:70px">${esc(v)}</textarea></label>`;
   if(f.kind==='num')return`<label class="bdl">${esc(f.label)}<input type="number" data-k="${f.k}" value="${v}" min="${f.min}" max="${f.max}" step="${f.step}"></label>`;
   if(f.kind==='check')return`<label class="bdl" style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-k="${f.k}"${v?' checked':''}> ${esc(f.label)}</label>`;
-  if(f.kind==='select')return`<label class="bdl">${esc(f.label)}<select data-k="${f.k}">${Object.keys(f.opts).map(k=>`<option value="${k}"${k===v?' selected':''}>${esc(f.opts[k])}</option>`).join('')}</select></label>`;
+  if(f.kind==='select'){
+    let extra='';
+    if(f.up){/* файлы учителей школы: одобренные и свои; ссылка на файл, которого нет в списке, остаётся выбранной */
+      const fs=S.files.filter(x=>x.kind===f.up&&x.status!=='rejected');
+      if(RS.UP_RE.test(v)&&!fs.some(x=>x.id===v))fs.push({id:v,name:S.fileName(v),status:'approved'});
+      extra=fs.map(x=>`<option value="${x.id}"${x.id===v?' selected':''}>${esc('★ '+x.name+(x.status==='pending'?' (на проверке)':''))}</option>`).join('');}
+    return`<label class="bdl">${esc(f.label)}<select data-k="${f.k}">${Object.keys(f.opts).map(k=>`<option value="${k}"${k===v?' selected':''}>${esc(f.opts[k])}</option>`).join('')}${extra}</select></label>`;}
   if(f.kind==='color')return`<label class="bdl">${esc(f.label)}<select data-k="${f.k}">${Object.keys(RS.COLORS).map(k=>`<option value="${k}"${k===v?' selected':''}>${esc(RS.COLORS[k][0])}</option>`).join('')}</select></label>`;
   if(f.kind==='subject')return`<label class="bdl">${esc(f.label)}<select data-k="${f.k}">${Object.keys(D.Q).map(k=>`<option value="${k}"${k===v?' selected':''}>${esc(subjTitle(k))}</option>`).join('')}</select></label><p class="muted small">Ученик пройдёт встроенный тест по своему классу; ваши тесты из вкладки «Конструктор тестов» для этого предмета тоже будут в списке.</p>`;
   if(f.kind==='room')return`<label class="bdl">${esc(f.label)}<select data-k="${f.k}">${roomOpts(cur).map(([k,t])=>`<option value="${esc(k)}"${k===v?' selected':''}>${esc(t)}</option>`).join('')}</select></label>`;
@@ -80,9 +86,9 @@ function costHtml(){
 const frameHtml=()=>`<div class="card"><div class="small muted" style="margin-bottom:6px">Вы внутри комнаты. Дверь «← Холл» ведёт в холл; вернуться к правке — кнопка «← Вернуться в редактор». В шлеме комната открывается по кнопке VR внутри окна.</div><iframe title="Комната" src="index.html?room=${encodeURIComponent(cur.id)}&t=${Date.now()}" allow="xr-spatial-tracking; fullscreen" style="width:100%;height:480px;border:1px solid var(--line);border-radius:10px;background:#000"></iframe></div>`;
 function editHtml(){
   const b=S.bandsOf('room',cur.id);
-  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><button class="btn ghost" data-bd="undo" id="bdUndo" title="Шаг назад (Ctrl+Z)" ${hist.length?'':'disabled'}>↶ Назад</button><button class="btn ghost" data-bd="redo" id="bdRedo" title="Шаг вперёд (Ctrl+Y)" ${fut.length?'':'disabled'}>↷ Вперёд</button><span id="bdDirty" class="small" style="display:inline-block;min-width:200px"></span><button class="btn ghost" data-bd="preview">${inRoom?'← Вернуться в редактор':'Войти в комнату'}</button><button class="btn ghost" data-bd="newtab">В новой вкладке</button><button class="btn ghost" data-bd="vredit" title="Откроет комнату с планшетом-редактором на левой руке">Править в VR</button><button class="btn ghost" data-bd="export">Текст комнаты</button><a href="help-rooms.html" class="small">Инструкция</a></div>
+  return`<div class="row"><button class="btn ghost" data-bd="back">← К списку</button><button class="btn" data-bd="save" id="bdSave">Сохранить</button><button class="btn ghost" data-bd="undo" id="bdUndo" title="Шаг назад (Ctrl+Z)" ${hist.length?'':'disabled'}>↶ Назад</button><button class="btn ghost" data-bd="redo" id="bdRedo" title="Шаг вперёд (Ctrl+Y)" ${fut.length?'':'disabled'}>↷ Вперёд</button><span id="bdDirty" class="small" style="display:inline-block;min-width:200px"></span><button class="btn ghost" data-bd="preview">${inRoom?'← Вернуться в редактор':'Войти в комнату'}</button><button class="btn ghost" data-bd="newtab">В новой вкладке</button><button class="btn ghost" data-bd="vredit" title="Откроет комнату с планшетом-редактором на левой руке">Править в VR</button><button class="btn ghost" data-bd="export">Текст комнаты</button><button class="btn ghost" data-bd="files">Мои файлы</button><a href="help-rooms.html" class="small">Инструкция</a></div>
   <div id="bdFrame" ${inRoom?'':'hidden'}>${inRoom?frameHtml():''}</div>
-  <div id="bdMsg" class="note small" ${msg?'':'hidden'}>${esc(msg)}</div><div id="bdIO">${io?ioHtml(JSON.stringify(cur,null,1)):''}</div>
+  <div id="bdMsg" class="note small" ${msg?'':'hidden'}>${esc(msg)}</div><div id="bdFiles">${filesOpen?filesHtml():''}</div><div id="bdIO">${io?ioHtml(JSON.stringify(cur,null,1)):''}</div>
   <div class="card"><div class="row"><label class="bdl" style="flex:1;min-width:220px">Название комнаты<input data-r="title" value="${esc(cur.title)}" maxlength="${RS.LIM.title}"></label>
     <label class="bdl">Оформление<select data-r="env">${Object.keys(RS.PRESETS).map(k=>`<option value="${k}"${k===cur.env?' selected':''}>${esc(RS.PRESETS[k].title)}</option>`).join('')}</select></label></div>
     <label class="bdl">Подсказка при входе (по желанию)<input data-r="hint" value="${esc(cur.hint)}" maxlength="${RS.LIM.hint}"></label>
@@ -92,7 +98,7 @@ function editHtml(){
     <div class="small muted">План сверху: вверху задняя стена, внизу вход и дверь в холл. Зелёный треугольник — где ученик появляется (его тоже можно двигать).</div></div>
   <div><div class="card" style="margin-top:0;max-height:180px;overflow:auto;padding:8px" id="bdList">${listBlocks()}</div><div class="card" id="bdForm">${formHtml()}</div></div></div>`;
 }
-const blockTitle=b=>RS.TYPES[b.type]+': '+(b.title||b.label||b.q||(b.asset&&(RS.MODELS[b.asset]||RS.SFX[b.asset]||{}).title)||(b.type==='quiz'?subjTitle(b.subj):b.type==='portal'?(b.to==='hall'?'Холл':subjTitle(b.to)):'')||'');
+const blockTitle=b=>RS.TYPES[b.type]+': '+(b.title||b.label||b.q||(b.asset&&((RS.MODELS[b.asset]||RS.SFX[b.asset]||{}).title||S.fileName(b.asset)))||(b.type==='quiz'?subjTitle(b.subj):b.type==='portal'?(b.to==='hall'?'Холл':subjTitle(b.to)):'')||'');
 function listBlocks(){return cur.blocks.length?cur.blocks.map(b=>`<div class="bdb${b.id===sel?' on':''}" data-pick="${b.id}">${ICON[b.type]} ${esc(blockTitle(b).slice(0,48))}</div>`).join(''):'<span class="muted small">Блоков пока нет: добавьте их кнопками выше.</span>';}
 
 /* ---------- план ---------- */
@@ -150,6 +156,34 @@ function bindPlan(){
   };
   cv.onpointerup=cv.onpointercancel=()=>{drag=null;};
 }
+/* ---------- «Мои файлы»: модели, звуки и текстуры учителя (Б51, этап 2) ---------- */
+const KIND_T={model:'модель',sound:'звук',texture:'текстура'},ST_T={pending:'на проверке',approved:'одобрен',rejected:'отклонён'};
+const canModerate=()=>S.account.roles().some(r=>r.role==='director'||r.role==='superadmin');
+function filesHtml(){
+  if(!S.account.token())return'<div class="card"><p class="muted">Загрузка файлов доступна после входа по логину и паролю (кабинет учителя → «Войти»).</p></div>';
+  const mod=canModerate();
+  const rows=S.files.map(x=>`<tr><td>${esc(x.name)}</td><td>${KIND_T[x.kind]||''}</td><td>${ST_T[x.status]||''}</td><td>${esc(x.owner||'')}</td><td>${mod&&x.status==='pending'?`<button class="btn" data-bd="fok" data-id="${x.raw}">Одобрить</button> <button class="btn ghost" data-bd="fno" data-id="${x.raw}">Отклонить</button> `:''}${x.mine||mod?`<button class="btn red" data-bd="fdel" data-id="${x.raw}">Удалить</button>`:''}</td></tr>`).join('');
+  return`<div class="card"><p class="muted small">Модель — .glb до 4 МБ (до 20 000 треугольников), звук — .wav до 1 МБ, текстура — PNG или JPEG до 1024×1024. ${mod?'Ваши файлы одобрены сразу.':'Новый файл виден вам сразу, ученикам — после одобрения директором.'}</p>
+  <div class="row"><input type="file" id="bdFile" accept=".glb,.wav,.png,.jpg,.jpeg"><input id="bdFName" maxlength="60" placeholder="Название (необязательно)"><button class="btn" data-bd="fup">Загрузить</button></div>
+  <div id="bdFMsg" class="small muted">${esc(filesMsg)}</div>
+  <div style="overflow-x:auto"><table style="width:100%;min-width:480px">${S.files.length?'<tr><th align="left">Название</th><th align="left">Что это</th><th align="left">Статус</th><th align="left">Автор</th><th></th></tr>'+rows:'<tr><td class="muted">Файлов пока нет.</td></tr>'}</table></div></div>`;
+}
+function showFiles(){const h=$('bdFiles');if(h)h.innerHTML=filesOpen?filesHtml():'';refreshPanels();}
+async function filesAct(a,t){
+  if(a==='files'){filesOpen=!filesOpen;if(filesOpen)await S.refreshFiles();showFiles();return;}
+  if(a==='fup'){
+    const f=$('bdFile')&&$('bdFile').files[0];if(!f){filesMsg='Выберите файл.';showFiles();return;}
+    const ext=(f.name.split('.').pop()||'').toLowerCase(),kind={glb:'model',wav:'sound',png:'texture',jpg:'texture',jpeg:'texture'}[ext];
+    if(!kind){filesMsg='Подходят файлы .glb, .wav, .png, .jpg.';showFiles();return;}
+    const nm=($('bdFName').value.trim()||f.name.replace(/\.[^.]+$/,'')).slice(0,60);
+    filesMsg='Загружаю…';const m=$('bdFMsg');if(m)m.textContent=filesMsg;
+    const r=await S.upload(kind,nm,f);
+    filesMsg=r.status===200?(r.data.status==='pending'?'Загружено. Файл на проверке у директора.':'Загружено.'):(r.data.error||'Не удалось загрузить.');
+    await S.refreshFiles();showFiles();return;
+  }
+  const act={fok:'upload.approve',fno:'upload.reject',fdel:'upload.delete'}[a];
+  if(act){if(a==='fdel'&&!confirm('Удалить файл? Комнаты, где он используется, останутся без него.'))return;const r=await S.admin(act,{id:t.dataset.id});filesMsg=r.status===200?'Готово.':(r.data.error||'Не получилось.');await S.refreshFiles();showFiles();}
+}
 function refreshPanels(){
   const l=$('bdList'),f=$('bdForm');if(l)l.innerHTML=listBlocks();if(f)f.innerHTML=formHtml();
   const c=$('bdCost');if(c)c.innerHTML=costHtml();drawPlan();
@@ -170,7 +204,7 @@ function save(){
   if(sel&&!blk(sel))sel=null;
   show();return true;
 }
-function open(id){resetHist();inRoom=false;cur=JSON.parse(JSON.stringify(S.customRoom(id)));sel=null;dirty=false;msg='';io=false;show();}
+function open(id){resetHist();inRoom=false;cur=JSON.parse(JSON.stringify(S.customRoom(id)));sel=null;dirty=false;msg='';io=false;show();if(S.account.token())S.refreshFiles().then(()=>{if(cur)refreshPanels();});}
 function leave(){if(dirty&&!confirm('Есть несохранённые правки. Уйти без сохранения?'))return;resetHist();inRoom=false;cur=null;sel=null;dirty=false;msg='';io=false;show();}
 function create(spec){const res=S.saveRoom(spec);if(!res.spec){alert(res.errors.join(' '));return;}open(res.spec.id);}
 
@@ -180,6 +214,7 @@ function onClick(e){
   const t=e.target.closest('[data-bd]');if(!t)return;
   const a=t.dataset.bd;
   if(a==='new'){const tpl=RS.TEMPLATES[t.dataset.t].make();create(tpl);}
+  else if(a==='files'||a==='fup'||a==='fok'||a==='fno'||a==='fdel')filesAct(a,t);
   else if(a==='import'){io=!io;show();}
   else if(a==='closeio'){io=false;show();}
   else if(a==='doimport'){

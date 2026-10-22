@@ -6,7 +6,7 @@
   device  — для шлемов: ученики, результаты, открытия.
 Эндпоинты: GET /api/health, POST /api/sync, GET /api/export (только учитель).
 """
-import base64, getpass, hashlib, ipaddress, json, os, re, secrets, sqlite3, sys, threading, time, hmac
+import base64, getpass, struct, hashlib, ipaddress, json, os, re, secrets, sqlite3, sys, threading, time, hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DATA = os.environ.get('DATA_DIR', '/data')
@@ -255,6 +255,9 @@ def migrate_v4(c):
             created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER, used_by TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, school TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, name TEXT, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'revoked')),
             created INTEGER, created_by TEXT, last_seen INTEGER)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY, school TEXT NOT NULL, owner TEXT, kind TEXT NOT NULL, name TEXT, size INTEGER, ext TEXT, sha TEXT,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')), created INTEGER, decided_by TEXT, decided INTEGER)''')
+        c.execute('CREATE INDEX IF NOT EXISTS uploads_school ON uploads(school, status)')
         c.execute('''CREATE TABLE IF NOT EXISTS pair_codes(code_hash TEXT PRIMARY KEY, school TEXT NOT NULL, name TEXT, created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER)''')
         if 'device_limit' not in {r[1] for r in c.execute('PRAGMA table_info(schools)')}:
             c.execute('ALTER TABLE schools ADD COLUMN device_limit INTEGER NOT NULL DEFAULT 20')
@@ -857,6 +860,127 @@ def session_user(c, token):
 
 
 # ---------- администрирование учёток (шаг 7 PLAN.md, ROLES 4.x): все действия через can-правила и журнал в одной транзакции ----------
+UPLOAD_DIR = os.path.join(DATA, 'uploads')
+UPLOAD_LIM = {'model': 4 * 1024 * 1024, 'sound': 1024 * 1024, 'texture': 1024 * 1024}
+UPLOAD_MIME = {'glb': 'model/gltf-binary', 'wav': 'audio/wav', 'png': 'image/png', 'jpg': 'image/jpeg'}
+UPLOAD_FILES = 100  # файлов на школу
+UPLOAD_BYTES = 100 * 1024 * 1024  # байт на школу
+UPLOAD_PER_HOUR = 30  # загрузок в час от одного пользователя
+TEX_MAX = 1024  # сторона текстуры, пикселей (бюджет Quest 1)
+
+
+def check_upload(kind, data):
+    """Проверяет содержимое файла по сигнатуре и структуре; возвращает расширение или бросает AdminError. Расширению из имени не верим."""
+    if kind not in UPLOAD_LIM:
+        raise AdminError(400, 'Тип файла: model, sound или texture.')
+    if not data or len(data) > UPLOAD_LIM[kind]:
+        raise AdminError(413, 'Файл больше допустимого (%d КБ).' % (UPLOAD_LIM[kind] // 1024))
+    if kind == 'model':
+        if len(data) < 28 or data[:4] != b'glTF' or struct.unpack('<II', data[4:12]) != (2, len(data)):
+            raise AdminError(400, 'Это не файл .glb версии 2.')
+        n, typ = struct.unpack('<II', data[12:20])
+        if typ != 0x4E4F534A or 20 + n > len(data):
+            raise AdminError(400, 'В .glb нет блока описания.')
+        try:
+            js = json.loads(data[20:20 + n].decode('utf-8'))
+        except ValueError:
+            raise AdminError(400, 'Описание модели повреждено.')
+        if not isinstance(js, dict) or any(str(x.get('uri', 'data:'))[:5] != 'data:' for k in ('buffers', 'images') for x in js.get(k, []) if isinstance(x, dict)):
+            raise AdminError(400, 'Модель ссылается на внешние файлы: сохраните как единый .glb.')
+        if js.get('extensionsRequired'):
+            raise AdminError(400, 'Расширения .glb не поддерживаются.')
+        return 'glb'
+    if kind == 'sound':
+        if len(data) < 44 or data[:4] != b'RIFF' or data[8:12] != b'WAVE':
+            raise AdminError(400, 'Это не файл .wav.')
+        return 'wav'
+    if data[:8] == b'\x89PNG\r\n\x1a\n' and data[12:16] == b'IHDR':
+        w, h = struct.unpack('>II', data[16:24])
+        ext = 'png'
+    elif data[:3] == b'\xff\xd8\xff':
+        w = h = 0
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            mk = data[i + 1]
+            if mk in (0xD8, 0x01) or 0xD0 <= mk <= 0xD7 or mk == 0xFF:
+                i += 1 if mk == 0xFF else 2
+                continue
+            ln = struct.unpack('>H', data[i + 2:i + 4])[0]
+            if 0xC0 <= mk <= 0xCF and mk not in (0xC4, 0xC8, 0xCC):
+                h, w = struct.unpack('>HH', data[i + 5:i + 9])
+                break
+            i += 2 + ln
+        ext = 'jpg'
+    else:
+        raise AdminError(400, 'Текстура: файл PNG или JPEG.')
+    if not (0 < w <= TEX_MAX and 0 < h <= TEX_MAX):
+        raise AdminError(400, 'Текстура %dx%d: допустимо до %d px по стороне.' % (w, h, TEX_MAX))
+    return ext
+
+
+def upload_schools(p):
+    """Школы, куда пользователь может загружать: учитель и директор — свои; суперадмин и старый ключ — любая."""
+    if p['kind'] == 'user':
+        return None if my_rank(p) >= 4 else {r['school'] for r in p['roles'] if r['role'] in ('teacher', 'director')}
+    return None
+
+
+def upload_visible(c, p, row):
+    """row: (school, owner, status). Одобренное видит вся школа (и её шлемы); неодобренное — автор и директор школы."""
+    school, owner, status = row
+    if p['kind'] == 'device':
+        return status == 'approved' and (not p.get('school') or p['school'] == school)
+    if p['kind'] != 'user':
+        return True
+    rank = my_rank(p)
+    if rank >= 4 or (rank >= 3 and school in dir_schools(p)):
+        return True
+    return school in {r['school'] for r in p['roles']} and (status == 'approved' or owner == p['id'])
+
+
+def upload_create(c, p, kind, name, school, data, ip):
+    now = int(time.time() * 1000)
+    ext = check_upload(kind, data)
+    sch = upload_schools(p)
+    if p['kind'] == 'device':
+        raise AdminError(403, 'Шлем файлы не загружает.')
+    if p['kind'] == 'user':
+        if my_rank(p) < 2:
+            raise AdminError(403, 'Загружать файлы может учитель.')
+        if not school:
+            school = sorted(sch)[0] if sch else DEFAULT_SCHOOL
+        if sch is not None and school not in sch:
+            raise AdminError(403, 'Это чужая школа.')
+    else:
+        school = school or DEFAULT_SCHOOL
+    if not c.execute('SELECT 1 FROM schools WHERE id = ? AND status = ?', (school, 'active')).fetchone():
+        raise AdminError(404, 'Школы нет.')
+    who = ('user', p['id'], ip) if p['kind'] == 'user' else ('legacy', p.get('id', ''), ip)
+    if p['kind'] == 'user' and c.execute('SELECT COUNT(*) FROM uploads WHERE owner = ? AND created > ?', (p['id'], now - 3600000)).fetchone()[0] >= UPLOAD_PER_HOUR:
+        raise AdminError(429, 'Слишком много загрузок за час. Попробуйте позже.')
+    n, tot = c.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM uploads WHERE school = ? AND status != 'rejected'", (school,)).fetchone()
+    if n >= UPLOAD_FILES or tot + len(data) > UPLOAD_BYTES:
+        raise AdminError(413, 'Лимит файлов школы исчерпан: удалите ненужные.')
+    uid = secrets.token_hex(6)
+    auto = p['kind'] != 'user' or my_rank(p) >= 3  # директор и администратор одобряют сами себя
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    path = os.path.join(UPLOAD_DIR, '%s.%s' % (uid, ext))
+    with open(path, 'wb') as f:
+        f.write(data)
+    try:
+        c.execute('INSERT INTO uploads(id, school, owner, kind, name, size, ext, sha, status, created, decided_by, decided) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                  (uid, school, p.get('id') if p['kind'] == 'user' else None, kind, str(name or 'файл')[:60], len(data), ext, hashlib.sha256(data).hexdigest(), 'approved' if auto else 'pending', now, None, now if auto else None))
+        audit(c, who, 'upload.create', 'upload', uid, school, {'kind': kind, 'size': len(data), 'name': str(name or '')[:60]})
+    except Exception:
+        os.remove(path)
+        raise
+    return {'id': uid, 'status': 'approved' if auto else 'pending', 'kind': kind, 'school': school}
+
+
+
 class AdminError(Exception):
     def __init__(self, code, msg):
         Exception.__init__(self, msg)
@@ -930,7 +1054,7 @@ def admin_action(c, p, act, b, ip):
     rank = my_rank(p)
     sc = scope(c, p)
     S = lambda k, n=80: str(b.get(k) or '')[:n]  # noqa: E731
-    need_dir = act not in ('student.pin', 'student.move')
+    need_dir = act not in ('student.pin', 'student.move', 'upload.list', 'upload.delete')
     if rank < (3 if need_dir else 2):
         audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
         raise AdminError(403, 'Недостаточно прав.')
@@ -1074,6 +1198,30 @@ def admin_action(c, p, act, b, ip):
         c.execute('INSERT INTO pair_codes(code_hash, school, name, created_by, created, expires, used_at) VALUES(?, ?, ?, ?, ?, ?, NULL)', (thash(code), sch, S('name', 40), p['id'], now, now + PAIR_TTL))
         audit(c, who, 'device.code', 'school', sch, sch, {})
         return {'ok': True, 'code': code, 'expires': now + PAIR_TTL}
+    if act in ('upload.list', 'upload.approve', 'upload.reject', 'upload.delete'):
+        if act == 'upload.list':
+            sch = S('school', 40)
+            rows = c.execute('SELECT u.id, u.school, u.owner, u.kind, u.name, u.size, u.status, u.created, COALESCE(NULLIF(us.name, \'\'), us.login) FROM uploads u LEFT JOIN users us ON us.id = u.owner '
+                             'WHERE (? = \'\' OR u.school = ?) ORDER BY u.created DESC LIMIT 500', (sch, sch)).fetchall()
+            return {'items': [{'id': i, 'school': sc_, 'kind': k, 'name': n, 'size': z, 'status': st, 'created': cr, 'owner': ow or 'администратор', 'mine': o == p['id']}
+                              for i, sc_, o, k, n, z, st, cr, ow in rows if upload_visible(c, p, (sc_, o, st))]}
+        row = c.execute('SELECT school, owner, status, ext FROM uploads WHERE id = ?', (S('id', 20),)).fetchone()
+        if not row or not upload_visible(c, p, row[:3]):
+            raise AdminError(404, 'Файла нет.')
+        own = row[1] == p['id'] and act == 'upload.delete'
+        if not own and rank < 4 and row[0] not in dir_schools(p):
+            audit(c, who, 'admin.denied', 'upload', S('id', 20), row[0], {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это файл чужой школы.')
+        if act == 'upload.delete':
+            c.execute('DELETE FROM uploads WHERE id = ?', (S('id', 20),))
+            try:
+                os.remove(os.path.join(UPLOAD_DIR, '%s.%s' % (S('id', 20), row[3])))
+            except OSError:
+                pass
+        else:
+            c.execute('UPDATE uploads SET status = ?, decided_by = ?, decided = ? WHERE id = ?', ('approved' if act == 'upload.approve' else 'rejected', p['id'], now, S('id', 20)))
+        audit(c, who, act, 'upload', S('id', 20), row[0], {})
+        return {'ok': True}
     if act == 'class.assign':
         row = class_row(c, S('class_id', 60))
         if not row:
@@ -1382,6 +1530,8 @@ class H(BaseHTTPRequestHandler):
             with lock, db() as c:
                 st = state(c, False, p)
             return self.reply(200, st)
+        if self.path.startswith('/api/asset/'):
+            return self.asset_get()
         if self.path.startswith('/api/auth/'):
             return self.auth_api('GET')
         if self.path.startswith('/api/options') or self.path.startswith('/api/accounts'):
@@ -1526,6 +1676,57 @@ class H(BaseHTTPRequestHandler):
                     out = (200, {'key': key, 'school': row[0], 'id': did})
         return self.reply(*out)
 
+    def asset_get(self):
+        """GET /api/asset/<id>: файл, загруженный учителем. Одобренный видит вся школа и её шлемы, неодобренный — автор и директор."""
+        uid = self.path.split('?')[0][len('/api/asset/'):]
+        if not re.fullmatch(r'[0-9a-f]{12}', uid):
+            return self.reply(404, {'error': 'not found'})
+        p = self.principal()
+        if not p:
+            return
+        with lock, db() as c:
+            row = c.execute('SELECT school, owner, status, ext FROM uploads WHERE id = ?', (uid,)).fetchone()
+            ok = bool(row) and upload_visible(c, p, row[:3])
+        if not ok:
+            return self.reply(404, {'error': 'not found'})
+        try:
+            with open(os.path.join(UPLOAD_DIR, '%s.%s' % (uid, row[3])), 'rb') as f:
+                data = f.read()
+        except OSError:
+            return self.reply(404, {'error': 'not found'})
+        self.send_response(200)
+        self.cors()
+        self.send_header('Content-Type', UPLOAD_MIME.get(row[3], 'application/octet-stream'))
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Disposition', 'attachment')
+        self.send_header('Cache-Control', 'private, max-age=600')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def upload_post(self):
+        """POST /api/upload?kind=model|sound|texture&name=...&school=...: тело — сам файл. Учитель: на проверку; директор: сразу."""
+        from urllib.parse import urlparse, parse_qs
+        q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query[:400]).items()}
+        n = num(self.headers.get('Content-Length'))
+        if n <= 0 or n > MAX_BODY:
+            return self.reply(413, {'error': 'Файл больше допустимого.'})
+        p = self.principal()
+        if not p:
+            return
+        if n > UPLOAD_LIM['model']:  # дочитываем и выбрасываем, чтобы клиент получил понятный ответ, а не обрыв связи
+            left = n
+            while left > 0:
+                left -= len(self.rfile.read(min(65536, left)))
+            return self.reply(413, {'error': 'Файл больше допустимого (4 МБ).'})
+        data = self.rfile.read(n)
+        try:
+            with lock, db() as c:
+                res = upload_create(c, p, q.get('kind', ''), q.get('name', ''), q.get('school', ''), data, p['ip'])
+        except AdminError as e:
+            return self.reply(e.code, {'error': e.msg})
+        self.reply(200, res)
+
     def admin_api(self):
         """POST /api/admin/<действие>: только пользователь с токеном; legacy-ключи администрировать не могут (PLAN 1.5). Флаг accounts выключен — 404."""
         cfg = load_config()
@@ -1640,6 +1841,8 @@ class H(BaseHTTPRequestHandler):
             return self.auth_api('POST')
         if self.path.startswith('/api/admin/'):
             return self.admin_api()
+        if self.path.startswith('/api/upload'):
+            return self.upload_post()
         if self.path.startswith('/api/device/pair'):
             n = num(self.headers.get('Content-Length'))
             if n <= 0 or n > 1024:

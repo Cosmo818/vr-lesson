@@ -262,7 +262,13 @@ void main(){
     return t;
   }
   /* нарисованная кодом текстура по имени (дерево, кирпич, трава…), с повтором */
-  E.tex=name=>{if(texCache[name]!==undefined)return texCache[name];const cv=VR.assets&&VR.assets.proc(name);return texCache[name]=cv?glTex(cv,true):null;};
+  E.tex=name=>{if(texCache[name]!==undefined)return texCache[name];
+    if(/^up:[0-9a-f]{12}$/.test(name)){/* текстура учителя: сразу серая заглушка, настоящая подставляется в тот же объект после загрузки */
+      const c1=document.createElement('canvas');c1.width=c1.height=1;const g1=c1.getContext('2d');g1.fillStyle='#888';g1.fillRect(0,0,1,1);
+      const t=texCache[name]=glTex(c1,true);
+      VR.Store.getAsset(name,1024*1024).then(buf=>createImageBitmap(new Blob([buf]))).then(bm=>{if(bm.width>1024||bm.height>1024)throw 0;gl.bindTexture(gl.TEXTURE_2D,t);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,bm);gl.generateMipmap(gl.TEXTURE_2D);if(bm.close)bm.close();}).catch(()=>{});
+      return t;}
+    const cv=VR.assets&&VR.assets.proc(name);return texCache[name]=cv?glTex(cv,true):null;};
   /* модель .glb из папки assets/: Promise → {parts:[{m,color,tex}],min,max,tris}; одна и та же модель грузится один раз */
   E.loadModel=url=>{
     if(modelCache[url])return modelCache[url];

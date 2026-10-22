@@ -294,6 +294,25 @@ const Store=VR.Store={
   /* ---------- вызовы серверного API учёток (шаги 8–12): весь сетевой код — здесь (закон А2) ---------- */
   base(){const sv=Store.server();if(sv)return sv.url;return /(^|\.)github\.io$/.test(location.hostname)?'':location.origin;},
   me(){return Store.call('GET','/api/auth/me');},
+  authHeaders(){const t=Store.account.token(),sv=Store.server();return t?{Authorization:'Bearer '+t}:sv&&sv.key?{'X-Key':sv.key}:{};},
+  /* файлы учителей (Б51, этап 2): kind = model | sound | texture; тип и размер проверяет сервер */
+  async upload(kind,name,file,school){
+    const base=Store.base();if(!base)return{status:0,data:{error:'Сервер не указан.'}};
+    try{
+      const r=await fetch(base+'/api/upload?'+Store.qs({kind,name,school}),{method:'POST',headers:Store.authHeaders(),body:file});
+      let d={};try{d=await r.json();}catch(e){}
+      if(r.status===401)Store.account.clear();
+      return{status:r.status,data:d};
+    }catch(e){return{status:0,data:{error:'нет связи с сервером'}};}
+  },
+  files:[],/* список файлов, доступных пользователю: {id:'up:…', kind, name, status, mine} */
+  async refreshFiles(){
+    if(!Store.account.token())return Store.files;
+    const r=await Store.admin('upload.list',{});
+    if(r.status===200)Store.files=r.data.items.map(i=>({id:'up:'+i.id,raw:i.id,kind:i.kind,name:i.name,status:i.status,mine:i.mine,owner:i.owner,size:i.size,school:i.school}));
+    return Store.files;
+  },
+  fileName(id){const f=Store.files.find(x=>x.id===id);return f?f.name:'Мой файл';},
   async call(method,path,body,noAuth){
     const base=Store.base();if(!base)return{status:0,data:{error:'Сервер не указан. Откройте страницу с вашего сервера.'}};
     const tok=noAuth?'':Store.account.token(),h={};if(body!==undefined)h['Content-Type']='application/json';if(tok)h.Authorization='Bearer '+tok;
@@ -325,8 +344,9 @@ const Store=VR.Store={
   },
   /* файл ресурса (модель, звук): только из папки assets/ этого же сайта, с ограничением размера (Б51) */
   async getAsset(url,max){
-    if(!/^assets\/[A-Za-z0-9_\/.-]{1,120}$/.test(String(url))||String(url).indexOf('..')>=0)throw new Error('Недопустимый адрес ресурса.');
-    const r=await fetch(url);if(!r.ok)throw new Error('Ресурс не найден: '+url);
+    const up=/^up:([0-9a-f]{12})$/.exec(String(url));
+    if(!up&&(!/^assets\/[A-Za-z0-9_\/.-]{1,120}$/.test(String(url))||String(url).indexOf('..')>=0))throw new Error('Недопустимый адрес ресурса.');
+    const r=await fetch(up?Store.base()+'/api/asset/'+up[1]:url,up?{headers:Store.authHeaders()}:undefined);if(!r.ok)throw new Error('Ресурс не найден: '+url);
     const n=+r.headers.get('content-length');if(max&&n>max)throw new Error('Ресурс слишком большой.');
     const b=await r.arrayBuffer();if(max&&b.byteLength>max)throw new Error('Ресурс слишком большой.');return b;
   },
