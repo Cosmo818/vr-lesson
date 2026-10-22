@@ -26,7 +26,7 @@ SESSION_MIN_DEFAULT, SESSION_MIN_LO, SESSION_MIN_HI = 15, 5, 300
 LOGIN_FREE_TRIES = 5  # ошибок подряд без паузы; дальше пауза 30 с, растёт вдвое до 15 мин
 IP_PER_MIN = 20
 RESERVED_LOGINS = ('admin', 'root', 'superadmin', 'director', 'teacher')
-ROLES = ('superadmin', 'director', 'teacher', 'expert')
+ROLES = ('superadmin', 'region_admin', 'district_admin', 'director', 'teacher', 'expert')
 LOGIN_RE = re.compile(r'^[A-Za-z0-9._-]{3,32}$')
 COMMON_PW = frozenset('''1234567890 0123456789 12345678910 1q2w3e4r5t 1qaz2wsx3edc qwertyuiop qwerty1234 qwerty12345 qwertyuiop1 asdfghjkl1 password12 password123 password1234
 password12345 passw0rd123 iloveyou123 administrator qazwsxedc12 zaq12wsxcde 9876543210 1234554321 abcdefghij abcd123456 123456789a 1234567890q admin12345 admin123456 adminadmin
@@ -247,9 +247,17 @@ def migrate_v4(c):
             status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('pending', 'active', 'archived')), network TEXT NOT NULL DEFAULT '', created INTEGER, updated INTEGER)''')
         c.execute('''CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, login TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL DEFAULT '', email TEXT,
             pw TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')), pw_changed INTEGER, created INTEGER, updated INTEGER)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('superadmin', 'director', 'teacher', 'expert')),
+        c.execute('''CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('superadmin', 'region_admin', 'district_admin', 'director', 'teacher', 'expert')),
             school TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')), created INTEGER, created_by TEXT,
             PRIMARY KEY(user_id, role, school))''')
+        if 'region_admin' not in (c.execute("SELECT sql FROM sqlite_master WHERE name = 'user_roles'").fetchone()[0] or ''):  # старая таблица: расширяем список ролей пересборкой
+            c.execute('ALTER TABLE user_roles RENAME TO user_roles_old')
+            c.execute('''CREATE TABLE user_roles(user_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('superadmin', 'region_admin', 'district_admin', 'director', 'teacher', 'expert')),
+                school TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')), created INTEGER, created_by TEXT,
+                PRIMARY KEY(user_id, role, school))''')
+            c.execute('INSERT INTO user_roles SELECT user_id, role, school, status, created, created_by FROM user_roles_old')
+            c.execute('DROP TABLE user_roles_old')
+            c.execute('DROP INDEX IF EXISTS user_roles_school')
         c.execute('''CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created INTEGER, last_seen INTEGER, expires INTEGER, ip TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS invites(code_hash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('join', 'reset')), role TEXT, school TEXT, user_id TEXT,
             created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER, used_by TEXT)''')
@@ -295,8 +303,8 @@ def migrate_v4(c):
                     'CREATE INDEX IF NOT EXISTS classes_teacher ON classes(teacherId)',
                     'CREATE INDEX IF NOT EXISTS classes_school ON classes(school, status)'):
             c.execute(ddl)
-        if c.execute('PRAGMA user_version').fetchone()[0] < 4:
-            c.execute('PRAGMA user_version = 4')
+        if c.execute('PRAGMA user_version').fetchone()[0] < 5:
+            c.execute('PRAGMA user_version = 5')
         c.execute('COMMIT')
     except BaseException:
         if c.in_transaction:
@@ -675,10 +683,24 @@ def role_of(key):
 
 
 # ---------- учётки (шаги 4–5 PLAN.md): пароли, настройки, вход, сессии ----------
+_AI = {}
+
+
+def ai_module():
+    """Необязательный модуль помощника грузится по пути рядом с app.py и только при первом обращении: без него сервер работает как раньше."""
+    if 'm' not in _AI:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('vr_ai', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ai.py'))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _AI['m'] = m
+    return _AI['m']
+
+
 def load_config():
     """/data/config.json: accounts (по умолчанию false — новые эндпоинты отвечают 404), legacyTeacher (true), sessionMinutes (15). Читается на каждый запрос: выключатель действует без перезапуска.
     Это НЕ settings.flags: те синхронизируются и меняются ключом teacher, а флаг безопасности старым ключом включаться не должен."""
-    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False}
+    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False, 'ai': False, 'aiDaily': 30}
     try:
         with open(CONFIG_PATH, encoding='utf-8') as f:
             raw = json.load(f)
@@ -687,6 +709,10 @@ def load_config():
                 cfg['accounts'] = raw['accounts']
             if isinstance(raw.get('openRooms'), bool):
                 cfg['openRooms'] = raw['openRooms']
+            if isinstance(raw.get('ai'), bool):
+                cfg['ai'] = raw['ai']
+            if isinstance(raw.get('aiDaily'), int) and not isinstance(raw.get('aiDaily'), bool) and 1 <= raw['aiDaily'] <= 500:
+                cfg['aiDaily'] = raw['aiDaily']
             if isinstance(raw.get('legacyTeacher'), bool):
                 cfg['legacyTeacher'] = raw['legacyTeacher']
             m = raw.get('sessionMinutes')
@@ -785,12 +811,75 @@ def user_create(c, login, name, password, who):
     return uid
 
 
+def scope_key(role, region, district=''):
+    """Ключ области для роли регионального/районного администратора; None — если не хватает данных."""
+    region, district = str(region or '')[:60], str(district or '')[:60]
+    if '|' in region or '|' in district:
+        return None
+    if role == 'region_admin':
+        return 'r:' + region
+    if role == 'district_admin':
+        return 'd:%s|%s' % (region, district)
+    return None
+
+
+def key_parts(key):
+    """'r:Рег' -> ('Рег', None); 'd:Рег|Рай' -> ('Рег', 'Рай'); иначе None."""
+    key = str(key or '')
+    if key.startswith('r:'):
+        return key[2:], None
+    if key.startswith('d:') and '|' in key:
+        rg, _, ds = key[2:].partition('|')
+        return rg, ds
+    return None
+
+
+def key_schools(c, key, archived=False):
+    kp = key_parts(key)
+    if not kp:
+        return set()
+    q, a = 'SELECT id FROM schools WHERE region = ?', [kp[0]]
+    if kp[1] is not None:
+        q += ' AND district = ?'
+        a.append(kp[1])
+    if not archived:
+        q += " AND status != 'archived'"
+    return {r[0] for r in c.execute(q, a)}
+
+
+def scope_alive(c, role, school, archived=False):
+    """Есть ли куда выдавать роль: для администратора области — хотя бы одна школа в ней (пустой регион не выдаём), для остальных — школа."""
+    if role in SCOPE_ROLES:
+        kp = key_parts(school)
+        if not kp or (role == 'region_admin') != (kp[1] is None) or not kp[0]:
+            return False
+        return bool(key_schools(c, school, archived))
+    return bool(c.execute('SELECT 1 FROM schools WHERE id = ?' + ('' if archived else " AND status != 'archived'"), (school,)).fetchone())
+
+
+def expand_roles(c, roles):
+    """Роли для проверок прав: администратор региона/района получает права директора во всех школах своей области (по состоянию базы сейчас, новая школа области подхватывается сама)."""
+    out = list(roles)
+    have = {(r['role'], r['school']) for r in roles}
+    for r in roles:
+        if r['role'] in SCOPE_ROLES:
+            for sid in sorted(key_schools(c, r['school'])):
+                if ('director', sid) not in have:
+                    have.add(('director', sid))
+                    out.append({'role': 'director', 'school': sid, 'via': r['role']})
+    return out
+
+
+def principal_roles(c, uid):
+    return expand_roles(c, user_roles(c, uid))
+
+
 def role_add(c, user_id, role, school, who, created_by=None):
     if role not in ROLES:
         raise ValueError('Неизвестная роль.')
     school = '' if role == 'superadmin' else str(school or '')
-    if role != 'superadmin' and not c.execute('SELECT 1 FROM schools WHERE id = ?', (school,)).fetchone():
-        raise ValueError('Такой школы нет.')
+    if role != 'superadmin' and not scope_alive(c, role, school, archived=True):
+        raise ValueError('Такой области или школы нет.' if role in SCOPE_ROLES else 'Такой школы нет.')
     if not c.execute('SELECT 1 FROM users WHERE id = ?', (user_id,)).fetchone():
         raise ValueError('Такого пользователя нет.')
     c.execute('INSERT OR IGNORE INTO user_roles(user_id, role, school, status, created, created_by) VALUES(?, ?, ?, ?, ?, ?)',
@@ -961,7 +1050,7 @@ def check_upload(kind, data):
 def upload_schools(p):
     """Школы, куда пользователь может загружать: учитель и директор — свои; суперадмин и старый ключ — любая."""
     if p['kind'] == 'user':
-        return None if my_rank(p) >= 4 else {r['school'] for r in p['roles'] if r['role'] in ('teacher', 'director')}
+        return None if my_rank(p) >= SUPER else {r['school'] for r in p['roles'] if r['role'] in ('teacher', 'director')}
     return None
 
 
@@ -973,7 +1062,7 @@ def upload_visible(c, p, row):
     if p['kind'] != 'user':
         return True
     rank = my_rank(p)
-    if rank >= 4 or (rank >= 3 and school in dir_schools(p)):
+    if rank >= SUPER or (rank >= 3 and school in dir_schools(p)):
         return True
     return school in {r['school'] for r in p['roles']} and (status == 'approved' or owner == p['id'])
 
@@ -1024,7 +1113,9 @@ class AdminError(Exception):
         self.code, self.msg = code, msg
 
 
-RANK = {'superadmin': 4, 'director': 3, 'teacher': 2, 'expert': 1}
+RANK = {'superadmin': 6, 'region_admin': 5, 'district_admin': 4, 'director': 3, 'teacher': 2, 'expert': 1}
+SUPER = 6  # ранг суперадмина: всё и везде
+SCOPE_ROLES = ('region_admin', 'district_admin')  # у них в user_roles.school лежит ключ области: r:<регион> или d:<регион>|<район>
 CODE_ALPHA = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
 SCHOOL_RE = re.compile(r'^s-[a-z0-9-]{2,30}$')
 RESET_TTL = 24 * 3600 * 1000
@@ -1066,7 +1157,7 @@ def manageable(c, p, target):
     """Может ли p управлять учёткой target (архив, сброс пароля). Суперадмин — любой, кроме себя; директор — только учитель(и) целиком из его школ."""
     if target['id'] == p['id']:
         return False
-    if my_rank(p) >= 4:
+    if my_rank(p) >= SUPER:
         return True
     ds = dir_schools(p)
     roles = [r for r in all_roles(c, target['id']) if r['status'] == 'active']
@@ -1096,7 +1187,7 @@ def admin_action(c, p, act, b, ip):
         audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
         raise AdminError(403, 'Недостаточно прав.')
     if act == 'school.create':
-        if rank < 4:
+        if rank < SUPER:
             raise AdminError(403, 'Школы создаёт суперадмин.')
         name = S('name').strip()
         sid = S('id') or 's-' + secrets.token_hex(4)
@@ -1108,7 +1199,7 @@ def admin_action(c, p, act, b, ip):
         audit(c, who, 'school.create', 'school', sid, sid, {'name': name})
         return {'ok': True, 'id': sid}
     if act == 'school.update':
-        if rank < 4:
+        if rank < SUPER:
             raise AdminError(403, 'Школы меняет суперадмин.')
         row = c.execute('SELECT name, region, status, district FROM schools WHERE id = ?', (S('id'),)).fetchone()
         if not row:
@@ -1140,7 +1231,7 @@ def admin_action(c, p, act, b, ip):
             raise AdminError(403, 'Свои роли менять нельзя.')
         if role not in ('director', 'teacher', 'expert'):
             raise AdminError(403 if role == 'superadmin' else 400, 'Эту роль выдать нельзя.')
-        if RANK[role] >= rank or (rank < 4 and (role != 'teacher' or school not in dir_schools(p))):
+        if RANK[role] >= rank or (rank < SUPER and (role != 'teacher' or school not in dir_schools(p))):
             audit(c, who, 'admin.denied', 'user', uid, school or None, {'why': 'role', 'role': role, 'action': act})
             raise AdminError(403, 'Эту роль вы выдать не можете.')
         if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone():
@@ -1184,9 +1275,9 @@ def admin_action(c, p, act, b, ip):
     if act in ('invite.create', 'invite.list', 'invite.revoke'):
         if act == 'invite.list':
             rows = c.execute("SELECT code_hash, role, school, created, expires FROM invites WHERE kind = 'join' AND used_at IS NULL AND expires > ? ORDER BY created DESC", (now,)).fetchall()
-            return {'items': [{'id': h[:12], 'role': r, 'school': sch, 'created': cr, 'expires': ex} for h, r, sch, cr, ex in rows if rank >= 4 or sch in dir_schools(p)]}
+            return {'items': [{'id': h[:12], 'role': r, 'school': sch, 'created': cr, 'expires': ex} for h, r, sch, cr, ex in rows if rank >= SUPER or sch in dir_schools(p)]}
         if act == 'invite.revoke':
-            row = next((h for (h, sch) in c.execute("SELECT code_hash, school FROM invites WHERE kind = 'join' AND used_at IS NULL") if h[:12] == S('id', 12) and (rank >= 4 or sch in dir_schools(p))), None)
+            row = next((h for (h, sch) in c.execute("SELECT code_hash, school FROM invites WHERE kind = 'join' AND used_at IS NULL") if h[:12] == S('id', 12) and (rank >= SUPER or sch in dir_schools(p))), None)
             if not row:
                 raise AdminError(404, 'Приглашения нет.')
             c.execute('DELETE FROM invites WHERE code_hash = ?', (row,))
@@ -1195,7 +1286,7 @@ def admin_action(c, p, act, b, ip):
         role, school = S('role', 20), S('school', 40)
         if role not in ('director', 'teacher', 'expert'):
             raise AdminError(400, 'Приглашать можно директора, учителя или специалиста.')
-        if RANK[role] >= rank or (rank < 4 and school not in dir_schools(p)):
+        if RANK[role] >= rank or (rank < SUPER and school not in dir_schools(p)):
             audit(c, who, 'admin.denied', 'invite', None, school or None, {'why': 'role', 'role': role, 'action': act})
             raise AdminError(403, 'Эту роль вы выдать не можете.')
         if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone():
@@ -1208,7 +1299,7 @@ def admin_action(c, p, act, b, ip):
     if act in ('device.code', 'device.list', 'device.revoke'):
         if act == 'device.list':
             sch = S('school', 40)
-            if rank < 4 and sch not in dir_schools(p):
+            if rank < SUPER and sch not in dir_schools(p):
                 raise AdminError(403, 'Это шлемы чужой школы.')
             rows = c.execute('SELECT id, name, status, created, last_seen FROM devices WHERE school = ? ORDER BY created', (sch,)).fetchall()
             lim = c.execute('SELECT device_limit FROM schools WHERE id = ?', (sch,)).fetchone()
@@ -1218,14 +1309,14 @@ def admin_action(c, p, act, b, ip):
             row = c.execute('SELECT school FROM devices WHERE id = ?', (S('id', 40),)).fetchone()
             if not row:
                 raise AdminError(404, 'Шлема нет.')
-            if rank < 4 and row[0] not in dir_schools(p):
+            if rank < SUPER and row[0] not in dir_schools(p):
                 audit(c, who, 'admin.denied', 'device', S('id', 40), row[0], {'why': 'scope', 'action': act})
                 raise AdminError(403, 'Это шлем чужой школы.')
             c.execute("UPDATE devices SET status = 'revoked' WHERE id = ?", (S('id', 40),))
             audit(c, who, 'device.revoke', 'device', S('id', 40), row[0], {})
             return {'ok': True}
         sch = S('school', 40)
-        if rank < 4 and sch not in dir_schools(p):
+        if rank < SUPER and sch not in dir_schools(p):
             audit(c, who, 'admin.denied', 'device', None, sch or None, {'why': 'scope', 'action': act})
             raise AdminError(403, 'Это школа не ваша.')
         if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (sch,)).fetchone():
@@ -1238,13 +1329,13 @@ def admin_action(c, p, act, b, ip):
     if act == 'closed.list':
         # закрытые результаты: только специалист (роль expert) своей школы и администратор; директор и учитель их не видят
         sch = S('school', 40)
-        if rank < 4 and not any(r['role'] == 'expert' and r['school'] == sch for r in p['roles']):
+        if rank < SUPER and not any(r['role'] == 'expert' and r['school'] == sch for r in p['roles']):
             audit(c, who, 'admin.denied', 'closed', sch or None, sch or None, {'why': 'role', 'action': act})
             raise AdminError(403, 'Закрытые результаты видит только специалист школы.')
         studs = {}
         for sid, raw in c.execute('SELECT id, doc FROM students'):
             d = json.loads(raw)
-            if rank >= 4 and not sch or d.get('school') == sch:
+            if rank >= SUPER and not sch or d.get('school') == sch:
                 studs[sid] = d
         out = []
         for sid, raw in c.execute("SELECT sid, doc FROM results WHERE closed = 1 ORDER BY ts DESC LIMIT 1000"):
@@ -1264,7 +1355,7 @@ def admin_action(c, p, act, b, ip):
                 raise AdminError(413, 'Комната слишком большая для публикации.')
             if 'up:' in blob:
                 raise AdminError(400, 'В открытой комнате пока можно использовать только встроенные модели, звуки и текстуры. Уберите свои файлы.')
-            if rank < 4 and sch not in {r['school'] for r in p['roles'] if r['role'] in ('teacher', 'director')}:
+            if rank < SUPER and sch not in {r['school'] for r in p['roles'] if r['role'] in ('teacher', 'director')}:
                 raise AdminError(403, 'Это чужая школа.')
             if not c.execute("SELECT 1 FROM schools WHERE id = ? AND status = 'active'", (sch,)).fetchone():
                 raise AdminError(404, 'Школы нет.')
@@ -1282,13 +1373,13 @@ def admin_action(c, p, act, b, ip):
         if act == 'room.list':
             sch = S('school', 40)
             rows = c.execute('SELECT r.id, r.school, r.owner, r.src, r.title, r.status, r.updated, COALESCE(NULLIF(u.name, \'\'), u.login) FROM open_rooms r LEFT JOIN users u ON u.id = r.owner WHERE (? = \'\' OR r.school = ?) ORDER BY r.updated DESC LIMIT 300', (sch, sch)).fetchall()
-            sees = lambda school, owner, st: rank >= 4 or school in dir_schools(p) or owner == p['id'] or (st == 'approved' and school in {r['school'] for r in p['roles']})  # noqa: E731
+            sees = lambda school, owner, st: rank >= SUPER or school in dir_schools(p) or owner == p['id'] or (st == 'approved' and school in {r['school'] for r in p['roles']})  # noqa: E731
             return {'items': [{'id': i, 'school': sc_, 'src': sr, 'title': t, 'status': st, 'updated': up, 'owner': ow or '', 'mine': o == p['id']} for i, sc_, o, sr, t, st, up, ow in rows if sees(sc_, o, st)]}
         row = c.execute('SELECT school, owner FROM open_rooms WHERE id = ?', (S('id', 20),)).fetchone()
         if not row:
             raise AdminError(404, 'Комнаты нет.')
         own = row[1] == p['id'] and act == 'room.unpublish'
-        if not own and rank < 4 and row[0] not in dir_schools(p):
+        if not own and rank < SUPER and row[0] not in dir_schools(p):
             audit(c, who, 'admin.denied', 'room', S('id', 20), row[0], {'why': 'scope', 'action': act})
             raise AdminError(403, 'Это комната чужой школы.')
         if act == 'room.unpublish':
@@ -1308,7 +1399,7 @@ def admin_action(c, p, act, b, ip):
         if not row or not upload_visible(c, p, row[:3]):
             raise AdminError(404, 'Файла нет.')
         own = row[1] == p['id'] and act == 'upload.delete'
-        if not own and rank < 4 and row[0] not in dir_schools(p):
+        if not own and rank < SUPER and row[0] not in dir_schools(p):
             audit(c, who, 'admin.denied', 'upload', S('id', 20), row[0], {'why': 'scope', 'action': act})
             raise AdminError(403, 'Это файл чужой школы.')
         if act == 'upload.delete':
@@ -1325,7 +1416,7 @@ def admin_action(c, p, act, b, ip):
         row = class_row(c, S('class_id', 60))
         if not row:
             raise AdminError(404, 'Класса нет.')
-        if rank < 4 and row[0] not in dir_schools(p):
+        if rank < SUPER and row[0] not in dir_schools(p):
             audit(c, who, 'admin.denied', 'class', S('class_id', 60), row[0], {'why': 'scope', 'action': act})
             raise AdminError(403, 'Это класс чужой школы.')
         tid = S('teacher_id', 40) or None
@@ -1568,6 +1659,29 @@ def cli(argv):
             audit(c, who, 'config.openRooms', 'config', 'openRooms', None, {'from': old, 'to': cfg['openRooms']})
         print('Открытые комнаты %s.' % ('включены' if cfg['openRooms'] else 'выключены'))
         return 0
+    if cmd == 'ai' and len(argv) in (2, 3) and argv[1] in ('on', 'off', 'status', 'limit'):
+        cfg = load_config()
+        if argv[1] == 'limit':
+            try:
+                m = int(argv[2])
+            except (IndexError, ValueError):
+                m = 0
+            if not 1 <= m <= 500:
+                print('Лимит запросов на учителя в сутки — от 1 до 500.', file=sys.stderr)
+                return 1
+            cfg['aiDaily'] = m
+        elif argv[1] in ('on', 'off'):
+            cfg['ai'] = argv[1] == 'on'
+        if argv[1] != 'status':
+            with lock, db() as c:
+                save_config(cfg)
+                audit(c, who, 'config.ai', 'config', 'ai', None, {'ai': cfg['ai'], 'daily': cfg['aiDaily']})
+        try:
+            key = ai_module().key_set(DATA)
+        except Exception:
+            key = False
+        print('Помощник: %s; запросов на учителя в сутки: %d; ключ %s.' % ('включён' if cfg['ai'] else 'выключен', cfg['aiDaily'], 'есть' if key else 'не задан (файл ai.key в папке данных)'))
+        return 0
     if cmd == 'backup' and len(argv) == 2:
         # согласованный снимок базы «на лету» (backup API SQLite, без остановки сервера) + проверка целостности копии
         dst = argv[1]
@@ -1608,7 +1722,7 @@ def cli(argv):
             out.close()
         print('Целостность %s, учеников %d' % (res, n))
         return 0 if res == 'ok' else 1
-    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | backup <файл> | check <файл>', file=sys.stderr)
+    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | backup <файл> | check <файл> | ai on|off|status|limit <N>', file=sys.stderr)
     return 2
 
 
@@ -1654,7 +1768,7 @@ class H(BaseHTTPRequestHandler):
         if tok and cfg['accounts']:
             with lock, db() as c:
                 u = session_user(c, tok)
-                roles = user_roles(c, u['id']) if u else []
+                roles = principal_roles(c, u['id']) if u else []
             if not u:
                 self.reply(401, {'error': 'no session'})
                 return None
@@ -1687,6 +1801,8 @@ class H(BaseHTTPRequestHandler):
             with lock, db() as c:
                 st = state(c, False, p)
             return self.reply(200, st)
+        if self.path.startswith('/api/ai/'):
+            return self.ai_api('GET')
         if self.path.startswith('/api/open/'):
             return self.open_get()
         if self.path.startswith('/api/asset/'):
@@ -1708,7 +1824,7 @@ class H(BaseHTTPRequestHandler):
         with lock, db() as c:
             us = session_user(c, tok) if tok else None
             if us:
-                roles = user_roles(c, us['id'])
+                roles = principal_roles(c, us['id'])
                 p = {'kind': 'user', 'id': us['id'], 'login': us['login'], 'roles': roles}
                 try:
                     out = (200, options_api(c, p, q) if u.path == '/api/options' else accounts_api(c, p, q)) if roles else (403, {'error': 'no roles'})
@@ -1786,8 +1902,8 @@ class H(BaseHTTPRequestHandler):
                 who = ('user', uid, ip) if kind == 'reset' else ('cli', 'activate', ip)
                 try:
                     if kind == 'join':
-                        if c.execute("SELECT 1 FROM schools WHERE id = ? AND status != 'archived'", (school,)).fetchone() is None:
-                            raise ValueError('Школа больше не работает.')
+                        if not scope_alive(c, role, school):
+                            raise ValueError('Школа или область больше не работает.')
                         uid = user_create(c, login, name or login, password, ('user', None, ip))
                         role_add(c, uid, role, school, ('user', uid, ip), None)
                     else:
@@ -1836,6 +1952,59 @@ class H(BaseHTTPRequestHandler):
         return self.reply(*out)
 
     OPEN_HITS = {}
+
+    def ai_api(self, method):
+        """Необязательный помощник учителя (server/ai.py). Выключен — 404, как будто его нет. Любой сбой модуля не касается остального сервера."""
+        if not load_config()['ai']:
+            return self.reply(404, {'error': 'not found'})
+        p = self.principal()
+        if not p:
+            return
+        if p['kind'] != 'user' or not any(r['role'] in ('teacher', 'director', 'superadmin') for r in p['roles']):
+            return self.reply(403, {'error': 'Помощник доступен учителю, директору и администратору после входа по логину.'})
+        path = self.path.split('?')[0]
+        try:
+            ai = ai_module()
+        except Exception:
+            return self.reply(503, {'error': 'Помощник сейчас недоступен. Работайте как обычно.'})
+        daily = load_config()['aiDaily']
+        today = time.strftime('%Y-%m-%d', time.gmtime())
+        try:
+            with lock, db() as c:
+                c.execute('CREATE TABLE IF NOT EXISTS ai_usage(user_id TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id, day))')
+                row = c.execute('SELECT n FROM ai_usage WHERE user_id = ? AND day = ?', (p['id'], today)).fetchone()
+                used = row[0] if row else 0
+            if method == 'GET' and path == '/api/ai/status':
+                return self.reply(200, dict(ai.status(DATA), left=max(0, daily - used), daily=daily))
+            if method != 'POST' or path not in ('/api/ai/room', '/api/ai/questions'):
+                return self.reply(404, {'error': 'not found'})
+            if used >= daily:
+                return self.reply(429, {'error': 'На сегодня лимит помощника исчерпан (%d запросов). Завтра он обновится.' % daily})
+            if not ai.key_set(DATA):
+                return self.reply(503, {'error': 'Помощник не настроен администратором.'})
+            n = num(self.headers.get('Content-Length'))
+            if n <= 0 or n > 2048:
+                return self.reply(413, {'error': 'body size'})
+            try:
+                body = json.loads(self.rfile.read(n).decode('utf-8'))
+                if not isinstance(body, dict):
+                    raise ValueError
+            except ValueError:
+                return self.reply(400, {'error': 'bad json'})
+            task = path.rsplit('/', 1)[1]
+            with lock, db() as c:  # запрос считается сразу: сбой сети не даёт обойти лимит повторами
+                c.execute('INSERT INTO ai_usage(user_id, day, n) VALUES(?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET n = n + 1', (p['id'], today))
+            try:
+                res, tokens = ai.run_task(DATA, task, body)
+            except ai.AiError as e:
+                return self.reply(e.code, {'error': e.msg})
+            with lock, db() as c:
+                c.execute('UPDATE ai_usage SET tokens = tokens + ? WHERE user_id = ? AND day = ?', (tokens, p['id'], today))
+                schools = sorted({r['school'] for r in p['roles'] if r['school']})
+                audit(c, ('user', p['id'], p['ip']), 'ai.' + task, 'ai', None, schools[0] if schools else None, {'topic': ai.clean_topic(body.get('topic'))[:100], 'tokens': tokens})
+            return self.reply(200, dict(res, left=max(0, daily - used - 1)))
+        except Exception:
+            return self.reply(502, {'error': 'Помощник сейчас недоступен. Работайте как обычно.'})
 
     def open_get(self):
         """Публичные открытые комнаты: без входа и без записи результатов. Только одобренные; лимит 60 запросов в минуту с адреса."""
@@ -1937,7 +2106,7 @@ class H(BaseHTTPRequestHandler):
         with lock, db() as c:
             u = session_user(c, tok)
             if u:
-                roles = user_roles(c, u['id'])
+                roles = principal_roles(c, u['id'])
                 stored = c.execute('SELECT pw FROM users WHERE id = ?', (u['id'],)).fetchone()[0]
                 need_pw = act in ('role.assign', 'role.remove', 'invite.create') and body.get('role') == 'director'
                 wait = throttle(c, 'adm:' + u['login'], ip, now) if need_pw else 0
@@ -2025,6 +2194,8 @@ class H(BaseHTTPRequestHandler):
             return self.auth_api('POST')
         if self.path.startswith('/api/admin/'):
             return self.admin_api()
+        if self.path.startswith('/api/ai/'):
+            return self.ai_api('POST')
         if self.path.startswith('/api/upload'):
             return self.upload_post()
         if self.path.startswith('/api/device/pair'):

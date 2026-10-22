@@ -601,7 +601,7 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
     let p2=await start();
     try{
       ok(baks().length===1&&pyq(path.join(dir2,baks()[0]),'select count(*) from students')==='4','миграция: перед ней сделана копия базы v2 (4 ученика)');
-      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='4','миграция v2→v4: user_version = 4');
+      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='5','миграция v2→v4: user_version = 4');
       const exp=await (await fetch(url2+'/api/export',{headers:{'X-Key':'teach-secret'}})).json();
       const yr=id=>exp.students.find(x=>x.id===id).year;
       ok(exp.students.length===4&&exp.students.every(x=>x.school==='school-default'&&x.status==='active')&&yr('s1')===2025&&yr('s2')===2024&&yr('s3')===null&&yr('s4')===null&&exp.classes.find(x=>x.id==='c5a').year===2025,'миграция: ученики и классы дозаполнены, годы выведены');
@@ -612,7 +612,7 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
     await new Promise(r=>setTimeout(r,300));
     p2=await start();
     try{
-      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='4','миграция повторяема: после перезапуска новой копии нет');
+      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='5','миграция повторяема: после перезапуска новой копии нет');
     }finally{p2.kill();}
     /* обрыв миграции: на временной базе v2 ломаем заполнение на второй записи; база должна остаться целой v2, повторный запуск — дать ту же v3 */
     {
@@ -678,7 +678,7 @@ c=sqlite3.connect(sys.argv[1]);s=app.state(c);s.pop('v');print(json.dumps(s,ensu
     }finally{p4.kill();}
     await new Promise(r=>setTimeout(r,300));
     const d1=JSON.parse(py(dumpDb,db4));
-    ok(d1[0]===4&&NEWT.every(t=>d1[1].includes(t))&&d1[2].includes('teacherId'),'миграция v3→v4: user_version = 4, есть все новые таблицы и колонка classes.teacherId');
+    ok(d1[0]===5&&NEWT.every(t=>d1[1].includes(t))&&d1[2].includes('teacherId'),'миграция v3→v4: user_version = 4, есть все новые таблицы и колонка classes.teacherId');
     ok(py(stateJson,db4,srvDir,dir4)===before,'миграция v3→v4: состояние (state) до и после совпадает по всем данным, кроме номера схемы');
     ok(JSON.stringify([d1[3],d1[4],d1[5]])===JSON.stringify([d0[3],d0[4],d0[5]]),'миграция v3→v4: строки учеников, классов и число результатов не изменились');
     const cnt=(t,w)=>py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0])',db4,'select count(*) from '+t+(w?' where '+w:''));
@@ -718,7 +718,7 @@ import app,sqlite3
 c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
       py(run,db5,srvDir,dir5);
       const a5=snap(),A=JSON.parse(a5);
-      ok(A[0]===4&&A[1].includes('audit_log')&&A[2].includes('teacherId')&&A[3].length===4&&A[5]===5,'миграция v3→v4: повторный запуск после обрыва даёт v4 без потерь');
+      ok(A[0]===5&&A[1].includes('audit_log')&&A[2].includes('teacherId')&&A[3].length===4&&A[5]===5,'миграция v3→v4: повторный запуск после обрыва даёт v4 без потерь');
       py(run,db5,srvDir,dir5);
       ok(snap()===a5,'миграция v3→v4: ещё один запуск базу не меняет');
     }
@@ -742,7 +742,7 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
         ok(ex.v===4&&ex.students.length===5&&ex.students.some(x=>x.id==='rb1')&&ex.results.length===syN&&syN>0,'откат: новый сервер снова открывает базу после работы прежнего, данные не потеряны');
       }finally{p4.kill();}
       await new Promise(r=>setTimeout(r,300));
-      ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='4'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 4');
+      ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='5'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 4');
     }
   }
   /* учётки (шаги 4–7…): отдельные Python-файлы с живым сервером; их строки ok/FAIL входят в общий счёт */
