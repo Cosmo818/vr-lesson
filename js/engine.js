@@ -496,18 +496,26 @@ void main(){
     }
   }
   const deskPad={buttons:[0,1,2,3,4,5].map(()=>({pressed:false})),axes:[0,0,0,0]};
-  let deskClick=false,deskMenu=false,deskGrab=false;
+  let deskClick=false,deskMenu=false,deskGrab=false,mouseL=false,mouseR=false,reach=.5;
   function readDesk(dt){
     H[0].has=false;
     const cam=M.mul(M.trans(D.x,1.6,D.z),M.mul(M.rotY(D.yaw),M.rotX(D.pitch)));
-    deskPad.buttons[0].pressed=deskClick;deskClick=false;
-    deskPad.buttons[1].pressed=deskGrab;
+    deskPad.buttons[0].pressed=deskClick||mouseL;deskClick=false;
+    deskPad.buttons[1].pressed=deskGrab||mouseR;
+    if(!H[1].held)reach=.5;
     deskPad.buttons[4].pressed=deskMenu;deskMenu=false;
-    setHand(H[1],M.mul(cam,M.trans(.14,-.16,-.5)),cam,null,E.deskInput?deskPad:null,dt,true);
+    setHand(H[1],M.mul(cam,M.trans(.14,-.16,-reach)),cam,null,E.deskInput?deskPad:null,dt,true);
   }
   function nearestBody(pos,maxD){
     let best=null,bd=maxD;
     for(const b of E.bodies){if(b.held!==null||b.fixed)continue;const d=dist3(pos,b.p);if(d<bd){best=b;bd=d;}}
+    return best;
+  }
+  /* предмет под перекрестием (рабочий стол): луч из центра экрана, ближе любых панелей и целей */
+  function bodyOnRay(h,maxT){
+    let best=null,bt=maxT;
+    for(const b of E.bodies){if(b.held!==null||b.fixed)continue;const t=raySphere(h.ro,h.rd,b.p,Math.max(.12,b.s*.9));if(t!==null&&t<bt){best=b;bt=t;}}
+    if(best){const r=rayHit(h);if(r&&r.t<bt)return null;}
     return best;
   }
   function release(h){
@@ -545,7 +553,8 @@ void main(){
       if(mbDown)E.toggleMenu();
       const gpos=[h.g[12],h.g[13],h.g[14]];let used=false;
       if(!h.held&&(trigDown||sqDown)){
-        const b=nearestBody(gpos,E.session?.22:.42);
+        let b=nearestBody(gpos,E.session?.22:.42);
+        if(!b&&!E.session&&hi===1)b=bodyOnRay(h,3);
         if(b){b.held=hi;b.by=sqDown?'sq':'trig';b.off=M.mul(M.inv(h.g),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),b.m));h.held=b;used=true;E.buzz(h,.4,30);E.beep(520,.06);
           if(E.room&&E.room.onGrab)try{E.room.onGrab(E,E.S,b);}catch(e){}}
       }
@@ -637,7 +646,8 @@ void main(){
     for(let hi=0;hi<2;hi++){
       const h=H[hi];if(!h.has)continue;
       if(E.session){
-        add(mesh.cube,M.mul(h.g,M.mul(M.trans(0,0,.04),M.scale(.045,.035,.13))),hi?[.95,.55,.2]:[.3,.55,1],.2);
+        if(VR.controllers)VR.controllers.draw(add,mesh,h,hi,E.ctlOpt);
+        else add(mesh.cube,M.mul(h.g,M.mul(M.trans(0,0,.04),M.scale(.045,.035,.13))),hi?[.95,.55,.2]:[.3,.55,1],.2);
         let len=2.5,col=[.6,.8,1];
         if(h.aim){col=h.tp&&h.tp.valid?[.3,1,.8]:[1,.3,.3];len=h.tp?Math.min(12,dist3(h.ro,[h.tp.x,0,h.tp.z])):1.5;if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),col,1);}
         else if(h.hit){len=h.hit.t;col=h.hit.kind==='panel'&&h.hit.bi<0?[.7,.75,.9]:[1,.9,.3];}
@@ -709,11 +719,48 @@ void main(){
   E.exitXR=()=>{if(E.session)try{E.session.end();}catch(e){}};
 
   /* ---------- режим экрана (ПК / телефон / проверка без шлема) ---------- */
-  const keys={};let drag=null;
+  const keys={};let drag=null,locked=false,lockFail=false,sens=.0022;
   /* сброс всех зажатых клавиш и кнопок: при потере фокуса, уходе со вкладки, отмене указателя */
-  const releaseAll=()=>{for(const k in keys)keys[k]=false;drag=null;deskGrab=false;};
+  const releaseAll=()=>{for(const k in keys)keys[k]=false;drag=null;deskGrab=false;mouseL=mouseR=false;};
   E.releaseInput=releaseAll;
-  canvas.addEventListener('pointerdown',e=>{if(e.button!==0&&e.pointerType==='mouse')return;drag={id:e.pointerId,x:e.clientX,y:e.clientY,moved:false};try{canvas.setPointerCapture(e.pointerId);}catch(_){}});
+  /* ---- мышь как в шутерах: захват указателя (Pointer Lock), сырое движение, без упора в край экрана ----
+     ЛКМ — выбрать / нажать / взять (держать), ПКМ или E — взять (держать), колесо — дальше/ближе, F — полный экран */
+  const canLock=!!canvas.requestPointerLock;
+  E.mouseLocked=()=>locked;
+  /* сначала просим «сырое» движение (без ускорения системы); если браузер отказал — обычный захват; отказ обоих — запасной способ */
+  let plainTried=false;
+  const plainLock=()=>{plainTried=true;try{const r=canvas.requestPointerLock();if(r&&r.catch)r.catch(()=>{});}catch(e){}};
+  E.lockMouse=()=>{
+    if(!canLock||locked)return;plainTried=false;
+    try{const r=canvas.requestPointerLock({unadjustedMovement:true});if(r&&r.catch)r.catch(()=>{if(!plainTried)plainLock();});}
+    catch(e){plainLock();}
+  };
+  E.unlockMouse=()=>{try{if(document.pointerLockElement)document.exitPointerLock();}catch(e){}};
+  E.toggleFullscreen=()=>{
+    const d=document,el=d.documentElement;
+    try{if(d.fullscreenElement)d.exitFullscreen();else if(el.requestFullscreen){const r=el.requestFullscreen({navigationUI:'hide'});if(r&&r.catch)r.catch(()=>{});}}catch(e){}
+    if(E.deskInput)E.lockMouse();
+  };
+  document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===canvas;if(locked)lockFail=false;else{mouseL=mouseR=false;}if(E.hooks.onLock)try{E.hooks.onLock(locked);}catch(e){}});
+  document.addEventListener('pointerlockerror',()=>{if(!plainTried){plainLock();return;}lockFail=true;if(E.hooks.onLock)try{E.hooks.onLock(false,true);}catch(e){}});
+  document.addEventListener('mousemove',e=>{
+    if(!locked||!E.deskInput)return;
+    const dx=e.movementX||0,dy=e.movementY||0;
+    if(Math.abs(dx)>600||Math.abs(dy)>600)return;/* редкие скачки драйвера */
+    D.yaw-=dx*sens;D.pitch=Math.max(-1.5,Math.min(1.5,D.pitch-dy*sens));
+  });
+  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+  canvas.addEventListener('wheel',e=>{if(!locked)return;e.preventDefault();if(H[1].held)reach=Math.max(.3,Math.min(2.2,reach-Math.sign(e.deltaY)*.12));},{passive:false});
+  canvas.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse'&&canLock&&!lockFail&&E.deskInput){
+      if(!locked){if(e.button===0)E.lockMouse();return;}/* первый щелчок только захватывает мышь */
+      if(e.button===0)mouseL=true;else if(e.button===2)mouseR=true;
+      e.preventDefault();return;
+    }
+    if(e.button!==0&&e.pointerType==='mouse')return;
+    drag={id:e.pointerId,x:e.clientX,y:e.clientY,moved:false};try{canvas.setPointerCapture(e.pointerId);}catch(_){}
+  });
+  /* запасной способ (телефон, мышь без захвата): тянуть пальцем / зажатой кнопкой */
   canvas.addEventListener('pointermove',e=>{
     if(!drag||!E.deskInput)return;
     if(e.pointerType==='mouse'&&e.buttons===0){drag=null;return;}
@@ -723,7 +770,7 @@ void main(){
   });
   const up=()=>{if(drag&&!drag.moved&&E.deskInput)deskClick=true;drag=null;};
   canvas.addEventListener('pointerup',up);
-  window.addEventListener('pointerup',()=>{drag=null;});
+  window.addEventListener('pointerup',e=>{drag=null;if(e.button===0)mouseL=false;else if(e.button===2)mouseR=false;});
   for(const ev of['pointercancel','lostpointercapture'])canvas.addEventListener(ev,()=>{drag=null;});
   window.addEventListener('blur',releaseAll);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseAll();});
@@ -733,8 +780,11 @@ void main(){
     if(e.code==='KeyE')deskGrab=true;
     if(e.code==='KeyM'||e.code==='Tab'){deskMenu=true;e.preventDefault();}
     if(e.code==='Space'){deskClick=true;e.preventDefault();}
+    if(e.code==='KeyF'&&!e.repeat){E.toggleFullscreen();e.preventDefault();}
+    if(e.code==='BracketLeft'||e.code==='BracketRight'){sens=Math.max(.0008,Math.min(.006,sens*(e.code==='BracketRight'?1.2:1/1.2)));E.toast('Чувствительность мыши: '+Math.round(sens/.0022*100)+'%');}
   });
   window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyE')deskGrab=false;if(e.key==='Meta'||e.key==='Alt')releaseAll();});
+  const crossEl=document.getElementById('cross');let crossHot=false;
   E.startDesk=()=>{
     const id=++deskId;let lt=0;E.desk=true;
     const f=t=>{
@@ -742,7 +792,7 @@ void main(){
       requestAnimationFrame(f);
       const dt=lt?Math.min(.05,(t-lt)/1000):.016;lt=t;
       if(E.deskInput){
-        const sp=2.2*dt,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
+        const sp=(keys.ShiftLeft||keys.ShiftRight?3.6:2.2)*dt,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
         if(keys.KeyW||keys.ArrowUp){D.x+=fx*sp;D.z+=fz*sp;}
         if(keys.KeyS||keys.ArrowDown){D.x-=fx*sp;D.z-=fz*sp;}
         if(keys.KeyD||keys.ArrowRight){D.x+=rx*sp;D.z+=rz*sp;}
@@ -752,6 +802,7 @@ void main(){
       }else{D.yaw=Math.sin(t/6000)*.35;}
       readDesk(dt);
       step(dt);
+      if(crossEl&&crossEl.classList){const hot=!!(H[1].hit||H[1].held);if(hot!==crossHot){crossHot=hot;crossEl.classList.toggle('hot',hot);}}
       const dpr=Math.min(window.devicePixelRatio||1,2),w=(canvas.clientWidth*dpr)|0,h=(canvas.clientHeight*dpr)|0;
       if(w>0&&h>0&&(canvas.width!==w||canvas.height!==h)){canvas.width=w;canvas.height=h;}
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,canvas.width,canvas.height);gl.enable(gl.DEPTH_TEST);

@@ -3,6 +3,7 @@
 Короткая выжимка для нового чата. Сначала читать этот файл, затем только модуль, с которым работаешь. Весь проект целиком читать не нужно.
 
 ## Статус
+- Управление и обучение (22.10.2026): мышь — Pointer Lock в `js/engine.js` (E.lockMouse/toggleFullscreen/mouseLocked, подсказка `#lockHint`, ЛКМ=курок, ПКМ/E=хват, взятие по лучу `bodyOnRay`); модель контроллера в руках — `js/controllers.js` (VR.controllers.kind/parts/draw, E.ctlOpt для подсветки); комнаты `learn`/`learnT` — `js/learn.js` (панель в холле на задней стене слева); тест `tests/e2e_learn.py`.
 - Версия 3.1: полевой прототип (каркас), графика без текстур. Ученики тестируют и оставляют отзывы.
 - Сайт: https://vrklass.ru (Caddy на Pi, `deploy/Caddyfile`, контейнер `vrklass-web`) и запасной https://cosmo818.github.io/vr-lesson/ (GitHub Pages, ветка `main`). Учителю: `teacher.html`.
 - Сервер синхронизации: `server/app.py` в Docker на VPS RUVDS (`vr-lesson-api`, данные `/opt/vr-lesson-data`), сайт — Caddy `vrklass-web`. Обновление само: cron → `deploy/autoupdate.sh`. Pi — запасная копия (контейнер остановлен).

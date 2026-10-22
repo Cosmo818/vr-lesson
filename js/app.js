@@ -73,16 +73,19 @@ async function go(){
     catch(e){$('err').textContent=e.message;}
   }else{
     $('ov').hidden=true;$('desk').hidden=false;E.deskInput=true;
+    showLockHint(!E.mouseLocked());
     if(!pv)E.toast(E.rooms.hall.hint);
   }
 }
+/* подсказка «щёлкни, чтобы захватить мышь»: только когда есть мышь и захват не удался или снят (Esc) */
+function showLockHint(on){const h=$('lockHint');if(!h)return;h.hidden=!(on&&E.deskInput&&(typeof matchMedia!=='function'||matchMedia('(pointer:fine)').matches));}
 function endSession(){
   if(!sess)return;
   const st=E.student;let msg='';
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
   try{sessionStorage.removeItem('vrl.editor');}catch(e){}
-  lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
+  lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
   $('summary').textContent=msg;$('summary').hidden=false;
@@ -110,6 +113,7 @@ function hooks(){
     if(!E.session){$('deskHud').textContent=E.hooks.hud().a+'  ·  '+E.hooks.hud().b+'  ·  '+(E.room?E.room.title:'');}
   };
   E.hooks.onXREnd=()=>endSession();
+  E.hooks.onLock=l=>showLockHint(!l);
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
