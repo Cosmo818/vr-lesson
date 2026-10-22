@@ -113,19 +113,19 @@ function hooks(){
     p.text((st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
     p.button(36,150,W-72,86,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
     const bw=(W-90)/2;
-    VR.ORDER.forEach((k,i)=>{
+    VR.openRooms(st.grade||5).forEach((k,i)=>{
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';
       p.button(36+(i%2)*(bw+18),252+((i/2)|0)*100,bw,86,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(k);},{bg:E.roomId===k?'#f8fafc':sub.color,fg:'#0b1020',size:36});
     });
-    p.button(36,670,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
-    p.button(54+bw,670,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
+    p.button(36,780,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
+    p.button(54+bw,780,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
     if(E.roomId&&E.roomId!=='hall'){
-      p.text('Как тебе эта комната?',36,782,{size:32,color:'#b8c7ea'});
+      p.text('Как тебе эта комната?',36,892,{size:32,color:'#b8c7ea'});
       const vote=k=>{const st=E.student||{};S.addFeedback({kind:k,room:E.roomId,grade:st.grade||null});E.toast('Спасибо за отзыв!');E.chime();};
-      p.button(400,770,(W-436-18)/2,70,'Нравится',()=>vote('like'),{bg:'#15803d',size:32});
-      p.button(418+(W-436-18)/2,770,(W-436-18)/2,70,'Не нравится',()=>vote('dislike'),{bg:'#9a3412',size:32});
+      p.button(400,880,(W-436-18)/2,70,'Нравится',()=>vote('like'),{bg:'#15803d',size:32});
+      p.button(418+(W-436-18)/2,880,(W-436-18)/2,70,'Не нравится',()=>vote('dislike'),{bg:'#9a3412',size:32});
     }
-    p.text('Меню: кнопка A или X',W/2,880,{size:28,align:'center',color:'#94a3b8'});
+    p.text('Меню: кнопка A или X',W/2,968,{size:28,align:'center',color:'#94a3b8'});
   };
   E.hooks.onRoom=()=>{E.hud.dirty=true;};
 }

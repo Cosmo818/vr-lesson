@@ -3,13 +3,15 @@
 'use strict';
 const VR=window.VR,D=VR.DATA,M=VR.M,TRS=VR.TRS,G=VR.geo;
 const ROOMS=VR.ROOMS={};
-const ORDER=['math','phys','chem','bio','space','soc','logic','hist'];
+const ORDER=['math','phys','chem','bio','space','soc','logic','hist','inf'];
+/* комнаты, открытые для класса (настройка учителя, Б44) */
+const openRooms=g=>ORDER.filter(k=>VR.Store.roomOn(k,g));
 const fmt=(x,d)=>x.toFixed(d===undefined?1:d).replace('.',',');
 const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;const t=a[i];a[i]=a[j];a[j]=t;}return a;};
 const YL=Math.PI/2,YR=-Math.PI/2;
 const faceTo=(pos,tx,tz)=>Math.atan2(tx-pos[0],tz-pos[2]);
 const backDoor=(E,z)=>E.door(0,z||5.88,Math.PI,'hall','← Холл','#94a3b8');
-VR.ORDER=ORDER;VR.RU={shuffle,fmt,faceTo,backDoor,YL,YR};
+VR.ORDER=ORDER;VR.openRooms=openRooms;VR.RU={shuffle,fmt,faceTo,backDoor,YL,YR};
 
 /* ======================= ТЕСТ ======================= */
 function makeQuiz(E,subj,pos,yaw,opt){
@@ -84,24 +86,25 @@ function makeQuiz(E,subj,pos,yaw,opt){
 VR.makeQuiz=makeQuiz;
 
 /* ======================= ХОЛЛ ======================= */
-const DOORS=[['math',-5.88,-4.2,YL],['phys',-5.88,-1.6,YL],['chem',-5.88,1,YL],['bio',-5.88,3.6,YL],['space',5.88,-4.2,YR],['soc',5.88,-1.6,YR],['logic',5.88,1,YR],['hist',5.88,3.6,YR]];
+const DOORS=[['math',-5.88,-4.2,YL],['phys',-5.88,-1.6,YL],['chem',-5.88,1,YL],['bio',-5.88,3.6,YL],['space',5.88,-4.2,YR],['soc',5.88,-1.6,YR],['logic',5.88,1,YR],['hist',5.88,3.6,YR],['inf',-4.2,5.88,Math.PI]];
 ROOMS.hall={
   title:'Холл',env:{floor:[.07,.1,.18],wall:[.12,.17,.3],trim:[.2,.7,1],grid:[.25,.55,.9]},
   hint:'Холл. Наведи луч на дверь или кнопку и нажми курок. Меню: кнопка A или X.',
   build(E,S){
-    E.addPanel({w:3.4,h:2.4,pos:[0,1.7,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
+    E.addPanel({w:3.4,h:2.7,pos:[0,1.85,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
       const st=E.student;
       p.text('Привет, '+(st?st.name:'гость')+'!',50,30,{size:64,bold:true});
       p.text((st&&st.grade?st.grade+' класс  ·  ':'')+'Выбери комнату, изучи её и пройди тест.',50,112,{size:34,color:'#b8c7ea'});
       const best=st&&st.id?VR.Store.best(st.id):null;
-      ORDER.forEach((k,i)=>{
+      openRooms(st&&st.grade?st.grade:5).forEach((k,i)=>{
         const sub=D.subjects[k],x=50+(i%2)*474,y=170+((i/2)|0)*104;
         const b=best&&best[k].best!==null?'  ✓ '+best[k].best+'/'+best[k].total:'';
         p.button(x,y,450,92,sub.title+b,()=>E.goRoom(k),{bg:sub.color,fg:'#0b1020',size:40});
       });
-      p.text('Стик вперёд и отпустить — телепорт  ·  Стик вбок — поворот  ·  Кнопка A или X — меню\nТесты учителя — на стене у тебя за спиной',50,600,{size:28,color:'#cbd5e1',lh:38});
+      p.text('Стик вперёд и отпустить — телепорт  ·  Стик вбок — поворот  ·  Кнопка A или X — меню\nТесты учителя — на стене у тебя за спиной',50,700,{size:28,color:'#cbd5e1',lh:38});
     }});
-    for(const [k,x,z,yaw] of DOORS)E.door(x,z,yaw,k,D.subjects[k].title,D.subjects[k].color);
+    const gr=E.student&&E.student.grade?E.student.grade:5;
+    for(const [k,x,z,yaw] of DOORS)if(VR.Store.roomOn(k,gr))E.door(x,z,yaw,k,D.subjects[k].title,D.subjects[k].color);
     makeQuiz(E,'gen',[0,1.6,5.86],Math.PI,{teacherOnly:true});
     /* разминка: стол с предметами */
     const T=E.addTable(-2.7,-3.7,.7,.35,.8);

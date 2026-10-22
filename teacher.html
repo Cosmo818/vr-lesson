@@ -70,6 +70,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
     <div class="tabs" id="tabs">
       <button class="tab on" data-t="rating">Рейтинг</button>
       <button class="tab" data-t="students">Классы и ученики</button>
+      <button class="tab" data-t="rooms">Комнаты</button>
       <button class="tab" data-t="tests">Конструктор тестов</button>
       <button class="tab" data-t="questions">Сложные вопросы</button>
       <button class="tab" data-t="feedback">Отзывы</button>
@@ -93,6 +94,12 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
       <h2>Рейтинг классов</h2>
       <div class="scroll card" style="padding:0"><table id="cRank"></table></div>
       <p class="muted small">Рейтинг класса — средний балл активных учеников с поправкой на размер класса (байесовское среднее): к классу добавляются 5 «средних» учеников по всей школе. Так класс из двух сильных учеников не обгоняет всех случайно, а большой класс не проигрывает из-за размера. Активность и точность ответов показаны отдельно.</p>
+    </section>
+
+    <section id="t-rooms" hidden>
+      <p class="muted">Здесь выбирается, каким классам что показывать в VR. Комната целиком — для ваших диапазонов; внутри комнаты можно включать и выключать отдельные задания. Ученик видит изменения при следующем входе в комнату. Содержимое заданий правится в конструкторе комнат (отдельный раздел, он в разработке).</p>
+      <div id="rmCard"></div>
+      <div class="row"><button class="btn ghost" id="rmReset">Вернуть стандартные настройки</button></div>
     </section>
 
     <section id="t-tests" hidden>
@@ -193,7 +200,7 @@ $('pinForm').onsubmit=async e=>{
 };
 
 /* ---- вкладки ---- */
-$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
+$('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);for(const t of['rating','students','rooms','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
 
 /* ---- рейтинг ---- */
 function rows(){
@@ -371,7 +378,27 @@ $('fbF').onchange=renderFeedback;
 $('fTable').onclick=e=>{const tr=e.target.closest('[data-id]');if(tr&&e.target.classList.contains('del')&&confirm('Удалить отзыв?')){S.removeFeedback(tr.dataset.id);renderFeedback();}};
 $('fbCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';download('vr-urok-otzyvy-'+stamp()+'.csv','\ufeff'+[['Дата','Тип','Комната','Оценка','Текст','Класс'].map(q).join(';'),...S.feedback().map(x=>[new Date(x.ts).toLocaleString('ru-RU'),KIND[x.kind]||x.kind,roomName(x.room),x.rating||'',x.text||'',x.grade||''].map(q).join(';'))].join('\r\n'),'text/csv');};
 // каждая вкладка рисуется отдельно: ошибка в одной не должна ломать остальные и статус сервера
-function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderTests,renderQuestions,renderFeedback,renderArchive]){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
+function renderAll(){if($('app').hidden)return;for(const f of [renderData,renderRating,renderStudents,renderRooms,renderTests,renderQuestions,renderFeedback,renderArchive]){if(VR.errors)VR.errors.guard('teacher.'+f.name,f)();else try{f();}catch(e){console.error(f.name,e);}}}
+/* ---- комнаты: наполнение по диапазонам классов (Б44) ---- */
+const BANDS=['a','b','c','d'],BAND_SHORT={a:'1–4',b:'5–6',c:'7–8',d:'9–11'};
+const bandBoxes=(kind,id,dis)=>{const cur=S.bandsOf(kind,id);return BANDS.map(b=>`<label class="small" style="white-space:nowrap;margin-right:10px"><input type="checkbox" data-kind="${kind}" data-id="${id}" data-b="${b}"${cur.indexOf(b)>=0?' checked':''}${dis?' disabled':''}> ${BAND_SHORT[b]}</label>`).join('');};
+function renderRooms(){
+  const el=$('rmCard');if(!el)return;
+  /* не перерисовываем под рукой пользователя: флажок остаётся в фокусе */
+  const rooms=Object.keys(D.subjects).filter(k=>k!=='gen');
+  el.innerHTML=rooms.map(k=>{
+    const sub=D.subjects[k],packs=(D.packs||[]).filter(p=>p.room===k);
+    return`<div class="card"><div class="row"><b style="color:${sub.color};font-size:18px">${esc(sub.title)}</b><span class="muted small">Комната для классов:</span>${bandBoxes('room',k,false)}</div>`+
+      (packs.length?'<table style="min-width:0">'+packs.map(p=>{const on=S.bandsOf('room',k);return`<tr><td style="width:34%"><b>${esc(p.title)}</b><div class="muted small">${esc(p.text)}</div></td><td>${bandBoxes('pack',p.id,false)}</td></tr>`;}).join('')+'</table>':'<p class="muted small">Комната пока без отдельных заданий: в ней есть тест по классам. Задания появятся вместе с конструктором комнат.</p>')+'</div>';
+  }).join('');
+}
+$('rmCard').onchange=e=>{
+  const i=e.target.closest('input[data-kind]');if(!i)return;
+  const kind=i.dataset.kind,id=i.dataset.id,cur=S.bandsOf(kind,id).split('').filter(b=>b!==i.dataset.b);
+  if(i.checked)cur.push(i.dataset.b);
+  S.setBands(kind,id,cur.join(''));renderRooms();
+};
+$('rmReset').onclick=()=>{if(confirm('Вернуть стандартное наполнение комнат для всех классов?')){S.resetContent();renderRooms();}};
 /* ---- конструктор тестов ---- */
 let ed=null,edErr='';
 const gOpts=(v)=>Array.from({length:11},(_,i)=>`<option value="${i+1}"${i+1===v?' selected':''}>${i+1}</option>`).join('');

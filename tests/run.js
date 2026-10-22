@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/inf.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -150,8 +150,8 @@ function makeCtx(xr){
   // все панели нарисованы
   run(20);
   ok(E.panels.every(p=>!p.dirty),'все панели холла отрисованы ('+E.panels.length+')');
-  const welcome=E.panels.find(p=>p.btns.length===8);
-  ok(!!welcome,'на приветственной панели 8 кнопок комнат');
+  const welcome=E.panels.find(p=>p.btns.length===9);
+  ok(!!welcome,'на приветственной панели 9 кнопок комнат');
   // луч из камеры попадает в кнопку «Математика»
   const b0=welcome.btns[0];
   const lx=(b0.x+b0.w/2)/welcome.W-.5,ly=.5-(b0.y+b0.h/2)/welcome.H;
@@ -244,6 +244,30 @@ function makeCtx(xr){
   run(5);
   const sqp=E.panels.find(p=>p.btns.length===4&&p!==B.hp);for(let i=0;i<3;i++){sqp.dirty=true;run(3);const L=B.sq.opts.indexOf(B.sq.ans);sqp.btns[L].fn();}
   ok(B.streak===3&&St.discoveries(stu.id).includes('logic:seq'),'3 последовательности подряд');
+  {
+    const T=VR.infTest;
+    /* каждый уровень робота решается за допустимое число команд (поиск в ширину по состояниям) */
+    for(const [li,L] of T.ROBOT_LEVELS.entries()){
+      let fr=[[L.start[0],L.start[1],0,[]]],seen=new Set(),sol=null;
+      for(let dep=0;dep<=L.max&&!sol;dep++){const nx=[];for(const [x,y,d,pr] of fr){
+        if(x===L.star[0]&&y===L.star[1]){sol=pr;break;}
+        if(dep===L.max)continue;
+        for(const c of 'FLR'){const q=pr.concat(c),r=T.robotRun(L,q);if(r.bump)continue;const key=r.x+','+r.y+','+r.d+','+q.length;if(seen.has(key))continue;seen.add(key);nx.push([r.x,r.y,r.d,q]);}}
+        fr=nx;if(!sol&&fr.some(f=>f[0]===L.star[0]&&f[1]===L.star[1]))continue;}
+      ok(!!sol||fr.some(f=>f[0]===L.star[0]&&f[1]===L.star[1]),'инф: уровень робота '+(li+1)+' решается в пределах '+L.max+' команд');
+    }
+    ok(T.caesar(T.caesar('КОМПЬЮТЕР',3),-3)==='КОМПЬЮТЕР'&&T.caesar('Я',1)==='А','инф: шифр Цезаря обратим и замкнут по алфавиту');
+    ok(T.GATES['ИСКЛ. ИЛИ'](1,1)===0&&T.GATES['НЕ-И'](1,1)===0&&T.GATES['И'](1,0)===0&&T.GATES['НЕ'](0)===1,'инф: таблицы вентилей верны');
+    let a=[5,3,4,1,2],st={i:0,pass:0},n=0;for(;n<100;n++){const r=T.bubbleStep(a,st);a=r.arr;st={i:r.i,pass:r.pass};if(r.done)break;}
+    ok(a.join()==='1,2,3,4,5'&&n<100,'инф: пузырёк упорядочивает за конечное число шагов');
+    const S0=VR.Store;S0.resetContent();
+    ok(S0.packOn('inf-robot',2)&&!S0.packOn('inf-robot',9)&&S0.packOn('inf-gates',10)&&!S0.packOn('inf-gates',3),'наполнение: стандартные диапазоны блоков');
+    S0.setBands('pack','inf-robot','d');ok(S0.packOn('inf-robot',10)&&!S0.packOn('inf-robot',2),'наполнение: учитель включил блок только 9–11');
+    S0.setBands('room','inf','ab');ok(S0.roomOn('inf',3)&&!S0.roomOn('inf',9)&&!S0.packOn('inf-colors',9),'наполнение: комната выключена для старших — её блоки тоже');
+    ok(VR.openRooms(10).indexOf('inf')<0&&VR.openRooms(3).indexOf('inf')>=0,'наполнение: закрытая комната не попадает в список холла и меню');
+    ok(JSON.stringify(VR.schema.validate('settings',{content:{rooms:{inf:'zz',Bad:'a'},packs:{x:'ab'}}}).value.content)==='{"rooms":{},"packs":{"x":"ab"}}','наполнение: схема отбрасывает неверные записи');
+    S0.resetContent();ok(S0.roomOn('inf',9),'наполнение: сброс возвращает стандарт');
+  }
   const sq=VR.rooms2Test.seqGen('d');ok(sq.opts.length===4&&sq.opts.includes(sq.ans),'генератор рядов даёт 4 варианта');
   // ---- история
   E.goRoom('hist');run(25);
@@ -264,14 +288,14 @@ function makeCtx(xr){
   St.removeTest(tt.id);
   // ---- отзыв из меню VR
   E.goRoom('space');run(5);E._test.deskKey('menu');run(3);
-  const lk=E.menu.btns.find((x,i)=>i===11);lk.fn();
+  const lk=E.menu.btns.find((x,i)=>i===12);lk.fn();
   ok(St.feedback().some(f=>f.kind==='like'&&f.room==='space'),'кнопка «Нравится» в меню сохранила отзыв');
   E.toggleMenu(false);
   ok(typeof E.releaseInput==='function','есть сброс зажатых клавиш');
   // ---- меню и итоги
   E._test.deskKey('menu');run(3);
   ok(E.menuOpen&&E.menu.show&&!E.menu.dirty,'меню открыто и нарисовано');
-  ok(E.menu.btns.length===11||E.menu.btns.length===13,'в меню '+E.menu.btns.length+' кнопок');
+  ok(E.menu.btns.length===12||E.menu.btns.length===14,'в меню '+E.menu.btns.length+' кнопок');
   E.menu.btns[0].fn();ok(E.roomId==='hall'&&!E.menuOpen,'из меню в холл');
   const pts=St.points(stu.id);
   ok(pts.tests===50&&pts.discCount>=10,'баллы: тесты '+pts.tests+', открытий '+pts.discCount+', всего '+pts.total);

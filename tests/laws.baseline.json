@@ -33,7 +33,11 @@
    "hist-a": 6,
    "hist-b": 6,
    "hist-c": 6,
-   "hist-d": 7
+   "hist-d": 7,
+   "inf-a": 6,
+   "inf-b": 6,
+   "inf-c": 6,
+   "inf-d": 6
   },
   "hash": {
    "math-a-1": "8254ad3f",
@@ -231,7 +235,31 @@
    "hist-d-4": "73ab31a8",
    "hist-d-5": "1b2d1b1f",
    "hist-d-6": "ebb4e5d9",
-   "hist-d-7": "002b09b1"
+   "hist-d-7": "002b09b1",
+   "inf-a-1": "50e7bc71",
+   "inf-a-2": "a14f87a7",
+   "inf-a-3": "e8efddc3",
+   "inf-a-4": "ada55f7f",
+   "inf-a-5": "09d38a15",
+   "inf-a-6": "1e2be31c",
+   "inf-b-1": "cfb8cf86",
+   "inf-b-2": "3926afaa",
+   "inf-b-3": "04494472",
+   "inf-b-4": "a6f9c8df",
+   "inf-b-5": "b85a27a6",
+   "inf-b-6": "ac1bb977",
+   "inf-c-1": "da22775a",
+   "inf-c-2": "1fa2e502",
+   "inf-c-3": "81d1350c",
+   "inf-c-4": "6d51b917",
+   "inf-c-5": "63f983c1",
+   "inf-c-6": "beb33031",
+   "inf-d-1": "ff4e4006",
+   "inf-d-2": "6ff9e900",
+   "inf-d-3": "6819dc90",
+   "inf-d-4": "aacb084f",
+   "inf-d-5": "a560532f",
+   "inf-d-6": "6515e891"
   }
  }
 }

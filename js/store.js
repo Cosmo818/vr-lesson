@@ -6,7 +6,7 @@
 'use strict';
 const VR=window.VR=window.VR||{};
 const KEY='vrlesson.v1',SKEY='vrlesson.server';
-const SUBJ=['math','phys','chem','space','bio','soc','logic','hist','gen'];
+const SUBJ=['math','phys','chem','space','bio','soc','logic','hist','inf','gen'];
 const blank=()=>VR.schema.blank();
 let db=null;
 const now=()=>Date.now();
@@ -194,6 +194,25 @@ const Store=VR.Store={
   /* настройки */
   settings(){return Object.assign({},load().settings);},
   setSettings(p){Object.assign(load().settings,p,{updated:now()});save();Store.syncSoon();},
+  /* наполнение комнат по классам (Б44): settings.content = {rooms:{id:'abcd'}, packs:{id:'ab'}}; нет записи — стандарт (комнаты: все классы, блоки: D.packs[].bands) */
+  bandsOf(kind,id){
+    const c=(load().settings.content||{})[kind==='room'?'rooms':'packs'];
+    if(c&&typeof c[id]==='string')return c[id];
+    if(kind==='pack'){const p=((VR.DATA&&VR.DATA.packs)||[]).find(x=>x.id===id);return p?p.bands:'';}
+    return 'abcd';
+  },
+  roomOn(id,grade){return Store.bandsOf('room',id).indexOf(Store.band(grade))>=0;},
+  packOn(id,grade){
+    const p=((VR.DATA&&VR.DATA.packs)||[]).find(x=>x.id===id);
+    return !!p&&Store.roomOn(p.room,grade)&&Store.bandsOf('pack',id).indexOf(Store.band(grade))>=0;
+  },
+  setBands(kind,id,bands){
+    const d=load(),c=Object.assign({},d.settings.content||{}),k=kind==='room'?'rooms':'packs';
+    c[k]=Object.assign({},c[k]);
+    const v=['a','b','c','d'].filter(x=>String(bands).indexOf(x)>=0).join('');
+    c[k][id]=v;d.settings.content=c;d.settings.updated=now();save();Store.syncSoon();
+  },
+  resetContent(){const d=load();delete d.settings.content;d.settings.updated=now();save();Store.syncSoon();},
   clearResults(){const d=load();d.settings.resetAt=now();d.settings.updated=now();d.results=[];d.disc={};save();Store.syncSoon();},
 
   exportJSON(){return JSON.stringify(load());},

@@ -35,6 +35,17 @@ function cleanFlags(f){
   for(const k of Object.keys(f)){if(n>=100)break;if(!FLAG_RE.test(k))continue;const v=f[k],t=typeof v;/* неизвестные значения от более новых версий сохраняем (А6); flags.on читает только boolean */if(t==='boolean'||(t==='number'&&isFinite(v))||(t==='string'&&v.length<=200)){o[k]=v;n++;}}
   return o;
 }
+/* settings.content: {rooms:{id:'abcd'}, packs:{id:'ab'}} — только допустимые id и буквы диапазонов */
+function cleanContent(c){
+  const o={};
+  for(const k of ['rooms','packs']){
+    if(!isObj(c[k])||Array.isArray(c[k]))continue;
+    const m={};let n=0;
+    for(const id of Object.keys(c[k])){if(n>=60)break;const v=c[k][id];if(/^[a-z][a-z0-9-]{0,39}$/.test(id)&&typeof v==='string'&&/^[abcd]{0,4}$/.test(v)){m[id]=v;n++;}}
+    o[k]=m;
+  }
+  return o;
+}
 function settings(x){
   const s=Object.assign(blank().settings,x||{});
   if('flags' in s){
@@ -42,6 +53,7 @@ function settings(x){
     if(!f||typeof f!=='object'||Array.isArray(f))delete s.flags;
     else s.flags=cleanFlags(f);
   }
+  if('content' in s){if(!isObj(s.content)||Array.isArray(s.content))delete s.content;else s.content=cleanContent(s.content);}
   return s;
 }
 /* v3: новые поля копируются только если допустимы (недопустимые отбрасываются) */

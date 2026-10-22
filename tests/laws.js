@@ -146,7 +146,7 @@ function run(root) {
     'js/questions.js': [/VR\.(Store|app|ROOMS|createEngine|errors|flags)\b/, /\bdocument\./],
     'js/store.js': [/VR\.(app|ROOMS|createEngine|makeQuiz)\b/, /\bdocument\./],
     'js/engine.js': [/VR\.(app|ROOMS|makeQuiz)\b/],
-    'js/rooms.js': [/VR\.app\b/], 'js/rooms2.js': [/VR\.app\b/],
+    'js/rooms.js': [/VR\.app\b/], 'js/rooms2.js': [/VR\.app\b/], 'js/inf.js': [/VR\.app\b/],
     'js/schema.js': [/VR\.(Store|app|ROOMS|createEngine|flags)\b/, /localStorage/],
     'js/errors.js': [/VR\.(Store|app|ROOMS|createEngine|flags)\b/, /localStorage/],
     'js/flags.js': [/VR\.(app|ROOMS|createEngine)\b/, /localStorage/]
@@ -162,7 +162,7 @@ function run(root) {
   add(!layerBad.length, 'слои (А2): запрещённые зависимости не найдены' + (layerBad.length ? ' — ' + layerBad.join('; ') : ''));
 
   /* L6 */
-  const shadowUnits = ['js/app.js', 'js/store.js', 'js/rooms.js', 'js/rooms2.js'].filter(f => ex(root, f)).map(f => ({name: f, text: rd(root, f)}));
+  const shadowUnits = ['js/app.js', 'js/store.js', 'js/rooms.js', 'js/rooms2.js', 'js/inf.js'].filter(f => ex(root, f)).map(f => ({name: f, text: rd(root, f)}));
   if (ex(root, 'teacher.html')) shadowUnits.push({name: 'teacher.html', text: inlineScripts(root, 'teacher.html').join('\n')});
   const shadow = [];
   for (const u of shadowUnits) {
@@ -228,7 +228,7 @@ function run(root) {
     const fns = 'merge norm band reload onChange canSave students student addStudent updateStudent removeStudent classes klass className addClass removeClass studentsOf archiveStudent restoreStudent archiveClass restoreClass genPin pinHash setStudentPin checkStudentPin classStats addResult results addDiscovery discoveries best points lastActive tests test testsFor saveTest removeTest question addFeedback feedback removeFeedback settings setSettings clearResults exportJSON importJSON server setServer sync onStatus syncSoon'.split(' ');
     const lost = fns.filter(k => typeof S[k] !== 'function');
     add(!lost.length, 'контракт VR.Store: методы на месте' + (lost.length ? ' (нет: ' + lost.join(', ') + ')' : ''));
-    add(Array.isArray(S.SUBJ) && S.SUBJ.length === 9 && S.SUBJ.every(x => typeof x === 'string'), 'контракт VR.Store: SUBJ — 9 строк');
+    add(Array.isArray(S.SUBJ) && S.SUBJ.length === 10 && S.SUBJ.every(x => typeof x === 'string'), 'контракт VR.Store: SUBJ — 10 строк');
     add(S.status !== null && typeof S.status === 'object', 'контракт VR.Store: status — объект');
 
     /* L9 */
