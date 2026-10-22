@@ -26,6 +26,7 @@ jobs:
         run: |
           mkdir -p graphify-out/obsidian/_проект
           cp HANDOFF.md CHECKLIST.md CLAUDE.md README.md graphify-out/obsidian/_проект/
+          mkdir -p graphify-out/obsidian/_проект/docs && cp docs/*.md graphify-out/obsidian/_проект/docs/
       - name: Публикация в ветку graph
         run: |
           cd graphify-out && rm -rf cache
