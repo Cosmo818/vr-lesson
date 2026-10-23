@@ -739,7 +739,7 @@ void main(){
         if(VR.controllers)VR.controllers.draw(add,mesh,h,hi,E.ctlOpt);
         else add(mesh.cube,M.mul(h.g,M.mul(M.trans(0,0,.04),M.scale(.045,.035,.13))),hi?[.95,.55,.2]:[.3,.55,1],.2);
         let len=2.5,col=[.6,.8,1];
-        if(h.aim){col=h.tp&&h.tp.valid?[.3,1,.8]:[1,.3,.3];len=h.tp?0:1.5;if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),col,1);
+        if(h.aim){col=h.tp&&h.tp.valid?[.72,.6,1]:[1,.5,.6];len=h.tp?0:1.5;if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),col,1);
           if(h.arc&&h.arc.pts)for(const q of h.arc.pts)add(mesh.sphere,TRS(q[0],q[1],q[2],.014,.014,.014),col,1);}
         else if(h.hit){len=h.hit.t;col=h.hit.kind==='panel'&&h.hit.bi<0?[.7,.75,.9]:[1,.9,.3];}
         if(!h.held&&len>0)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-len/2),M.scale(.004,.004,len))),col,1);

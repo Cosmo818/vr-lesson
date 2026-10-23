@@ -296,72 +296,27 @@ ROOMS.phys={
 function bob(S){return[PIV[0]+S.L*Math.sin(S.th),PIV[1]-S.L*Math.cos(S.th),PIV[2]];}
 
 /* ======================= ХИМИЯ ======================= */
-const RX=-3.9,RTOP=.85,PLATE=[-3.9,1.3];
-const DISP=[['H',-1.25],['O',-.6],['C',.05],['N',.7]];
 ROOMS.chem={
   title:'Химия',env:{floor:[.05,.14,.09],wall:[.1,.26,.17],trim:[.35,1,.6],grid:[.3,.9,.5]},spawn:{x:0,z:-.9},
   hint:'Химия: наведи на элемент таблицы и нажми хват (ПКМ/E) — он прилетит в руку. Сосуд слева — слияние (до 6 атомов), справа — разложение молекул (режим «Химия») или распад (режим «Ядра»), посередине — склад, куда ложатся результаты; реакция идёт по нажатию на светящуюся табличку на краю стола. Слева от стола — дерево элемента; X (левая рука) или I — карточка. Атомы молекул — на столе слева.',
   build(E,S){
     backDoor(E);
     S.lab=null;try{VR.chemLab.build(E,S);S.lab=true;}catch(e){S.lab=null;E.toast('Лаборатория временно недоступна','#fca5a5');}
-    S.made=null;S.chk=0;S.comp={};S.hint=-1;
     S.found=new Set();
     if(E.student&&E.student.id)for(const k of VR.Store.discoveries(E.student.id))if(k.indexOf('chem:mol_')===0)S.found.add(k.slice(9));
-    /* стол-реактор */
-    E.addTable(RX,0,.45,1.75,RTOP,[.3,.32,.36]);
-    for(const [el,z] of DISP)E.addStatic(E.mesh.cyl,TRS(RX,RTOP+.03,z,.3,.06,.3),D.atoms[el].col,.3);
-    E.addStatic(E.mesh.disc,TRS(PLATE[0],RTOP+.005,PLATE[1],.3,1,.3),[.6,1,.8],.8);
-    E.addStatic(E.mesh.circle,TRS(PLATE[0],RTOP+.01,PLATE[1],.32,1,.32),[1,1,1],1,3);
-    const clear=()=>{for(const b of onPlate(E))E.removeBody(b);S.made=null;S.comp={};S.rp.dirty=true;};
-    const hint=()=>{const left=D.molecules.filter(m=>!S.found.has(m.key));const list=left.length?left:D.molecules;S.hint=(S.hint+1)%list.length;S.hintM=list[S.hint];S.rp.dirty=true;};
-    S.rp=E.addPanel({w:2.5,h:1.15,pos:[-5.86,1.95,.1],yaw:YL,accent:'#86efac',draw:(c,p)=>{
-      const W=p.W;
-      p.text('Реактор молекул',36,22,{size:52,bold:true});
-      p.text('Собрано: '+S.found.size+' из '+D.molecules.length,W-36,32,{size:36,align:'right',color:'#86efac',maxW:420});
-      const parts=Object.keys(S.comp).map(k=>k+' × '+S.comp[k]);
-      if(S.made){const m=D.molecules.find(x=>x.key===S.made);p.text('Получилось: '+m.name+' '+m.formula,36,96,{size:46,bold:true,color:'#fde68a'});p.text(m.text,36,160,{size:32,color:'#cbd5e1',maxY:290});}
-      else{p.text(parts.length?'На платформе: '+parts.join(', '):'Нажми на чашу с цветом атома, затем положи атомы на светлый круг.',36,100,{size:36,maxY:230});
-        p.text(S.hintM?'Подсказка: '+S.hintM.name+' '+S.hintM.formula+' ('+Object.keys(S.hintM.f).map(k=>S.hintM.f[k]+' '+k).join(' + ')+')':'Белый — H, красный — O, серый — C, синий — N',36,232,{size:32,color:'#94a3b8'});}
-      p.button(36,p.H-120,420,96,'Очистить круг',clear,{bg:'#334155',size:38});
-      p.button(480,p.H-120,360,96,'Подсказка',hint,{bg:'#15803d',size:38});
-    }});
     makeQuiz(E,'chem',[5.86,1.5,1.5],YR);
   },
-  targets(E,S){return DISP.map(([el,z])=>({c:[RX,RTOP+.28,z],r:.2,id:'disp'+el,sel:()=>spawnAtom(E,el,z)}));},
+  targets(E,S){return[];},
   pick(E,S,h,hit){return S.lab?VR.chemLab.pick(E,S,h,hit):null;},
   onGrab(E,S,b){if(S.lab)VR.chemLab.onGrab(E,S,b);},
   hasX(E,S){return !!(S&&S.lab);},onX(E,S){if(S&&S.lab)VR.chemLab.toggleCard(E,S);},
   update(E,S,dt){
     if(S.lab)try{VR.chemLab.update(E,S,dt);}catch(e){}
-    S.chk-=dt;if(S.chk>0)return;S.chk=.25;
-    const comp={};for(const b of onPlate(E))comp[b.data.el]=(comp[b.data.el]||0)+1;
-    const key=Object.keys(comp).sort().map(k=>k+comp[k]).join('');
-    if(key!==S.compKey){S.compKey=key;S.comp=comp;S.rp.dirty=true;}
-    const m=D.molecules.find(x=>{const ks=Object.keys(x.f);return ks.length===Object.keys(comp).length&&ks.every(k=>comp[k]===x.f[k]);});
-    const mk=m?m.key:null;
-    if(mk!==S.made){
-      S.made=mk;S.rp.dirty=true;
-      if(m){S.found.add(m.key);E.burst([PLATE[0],RTOP+.4,PLATE[1]],40);E.fanfare();E.discover('chem','mol_'+m.key,m.name+' '+m.formula);if(S.hintM&&S.hintM.key===m.key)S.hintM=null;}
-    }
   },
   draw(E,S,add){
     if(S.lab)try{VR.chemLab.draw(E,S,add);}catch(e){}
-    for(const [el,z] of DISP){const k=el==='H'?.08:.11;add(E.mesh.sphere,TRS(RX,RTOP+.28+Math.sin(E.t*2+z)*.03,z,k,k,k),D.atoms[el].col,.25);}
-    if(S.made){
-      const m=D.molecules.find(x=>x.key===S.made),base=M.mul(M.trans(PLATE[0],RTOP+.6,PLATE[1]),M.rotY(E.t*.8)),sc=2.2;
-      for(const [el,x,y,z] of m.atoms){const k=el==='H'?.09:.13;add(E.mesh.sphere,M.mul(base,TRS(x*sc,y*sc,z*sc,k,k,k)),D.atoms[el].col,.3);}
-    }
   }
 };
-function onPlate(E){return E.bodies.filter(b=>b.data&&b.data.el&&b.held===null&&Math.hypot(b.p[0]-PLATE[0],b.p[2]-PLATE[1])<.32&&b.p[1]<RTOP+.35&&b.p[1]>RTOP-.1);}
-function spawnAtom(E,el,z){
-  const atoms=E.bodies.filter(b=>b.data&&b.data.el);
-  if(atoms.length>=20){const old=atoms.find(b=>b.held===null);if(old)E.removeBody(old);}
-  const b=E.addBody({shape:'ball',p:[RX+.2,RTOP+.25,z],s:el==='H'?.08:.1,col:D.atoms[el].col,em:.2,data:{el}});
-  b.v=[0,.5,0];E.beep(el==='H'?880:el==='O'?660:el==='C'?520:740,.07);
-  return b;
-}
-VR.chemTest={onPlate,spawnAtom,PLATE,RTOP};
 
 /* ======================= КОСМОС ======================= */
 const SUN=[0,1.3,-2.9],PAD=[3.9,-2.7];

@@ -66,7 +66,6 @@ function makeCtx(xr){
     const sy={};PT.forEach(r=>sy[r[0]]=r[3]);
     ok(sy.H===1&&sy.He===4&&sy.C===12&&sy.O===16&&sy.Fe===56&&sy.Au===197&&sy.Pb===208&&sy.U===238&&sy.Og===294,'ptable: контрольные A (H, He, C, O, Fe, Au, Pb, U, Og)');
     ok(PT.every((r,i)=>{const z=i+1,brk=/^\[\d+\]$/.test(r[2]);return(brk===(z===43||z===61||z>=84&&z!==90&&z!==91&&z!==92))&&(brk||/^\d+(,\d+)?$/.test(r[2]));}),'ptable: масса — число, а [A] ровно у радиоактивных без Th, Pa, U');
-    ok(V0.flags.on('chemLab')===true,'flags: chemLab включён по умолчанию');
     const cs=new Set();let cOk=true;for(let z=1;z<=118;z++){const c=N.cell(z);cs.add(c.row+','+c.col);if(c.col<1||c.col>18||![1,2,3,4,5,6,7,9,10].includes(c.row))cOk=false;}
     ok(cs.size===118&&cOk&&N.el(0)===null&&N.el(119)===null&&N.el(26).sym==='Fe'&&N.el(26).period===4&&N.el(92).rad&&!N.el(26).rad,'nuc: cell даёт 118 разных ячеек, el(Z) корректен');
     ok(Array.from({length:20},(_,i)=>N.be(i+1,PT[i][3])).every(b=>b&&b.exact),'nuc: у 20 первых элементов изотоп из таблицы есть в EX');
@@ -251,14 +250,7 @@ function makeCtx(xr){
 
   // ---- химия
   E.goRoom('chem');run(25);
-  const Ch=E.S,ct=VR.chemTest;
-  for(const el of['H','H','O']){const b=ct.spawnAtom(E,el,0);b.p=[ct.PLATE[0]+(Math.random()-.5)*.2,ct.RTOP+.06,ct.PLATE[1]];b.v=[0,0,0];}
-  run(30);
-  ok(Ch.made==='H2O','собрана вода H₂O');
-  ok(St.discoveries(stu.id).includes('chem:mol_H2O'),'молекула записана в открытия');
-  Ch.rp.btns[0].fn();run(30);ok(ct.onPlate(E).length===0&&Ch.made===null,'круг очищен');
-  for(let i=0;i<25;i++)ct.spawnAtom(E,'C',0);
-  ok(E.bodies.filter(b=>b.data.el).length===20,'атомов не больше 20');
+  const Ch=E.S;
   run(10);
   {/* стенд «Химия» (Б65, шаг 30) */
     const L=VR.chemLab,N=VR.nuc,zb=()=>E.bodies.filter(b=>b.data&&b.data.zn),near=(v,t,d)=>Math.abs(v-t)<=d;
@@ -378,7 +370,6 @@ function makeCtx(xr){
     /* лимит тел и атомы реактора */
     for(let i=0;i<L.MAXN;i++)mk(6,12,2,3+i*.01,2);
     ok(VR.ROOMS.chem.pick(E,Ch,E.H[1],{t:2,kind:'panel',p:Ch.pt,bi:25})===null&&zb().length===L.MAXN,'pick: 31-й элемент не создаётся');
-    ct.onPlate(E);mk(6,12,ct.PLATE[0],ct.RTOP+.06,ct.PLATE[1]);ok(ct.onPlate(E).length===0,'реактор молекул не видит тел-элементов');
     clr();
     /* геометрия: без перекрытий, по осям */
     {const tb=E.tables,sp=VR.ROOMS.chem.spawn;let ov=0;
