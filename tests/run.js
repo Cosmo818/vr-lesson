@@ -262,7 +262,7 @@ function makeCtx(xr){
   run(10);
   {/* стенд «Химия» (Б65, шаг 30) */
     const L=VR.chemLab,N=VR.nuc,zb=()=>E.bodies.filter(b=>b.data&&b.data.zn),near=(v,t,d)=>Math.abs(v-t)<=d;
-    const clr=()=>{for(const b of zb())E.removeBody(b);};
+    const clr=()=>{for(const b of E.bodies.filter(b=>b.data&&(b.data.zn||b.data.mol)))E.removeBody(b);};
     const mk=(z,a,x,y,zz)=>{const b=L.makeBody(E,z,a,[x,y,zz]);b.v=[0,0,0];return b;};
     const pt=Ch.pt;ok(Ch.lab===true&&pt.btns.length===118&&pt.btns.every((b,i)=>b.z===i+1),'в таблице 118 кнопок, у каждой поле z');
     pt.btns[5].fn();ok(Ch.el===5&&St.discoveries(stu.id).includes('chem:el_C'),'выбран углерод, открытие chem:el_C');
@@ -279,10 +279,9 @@ function makeCtx(xr){
     ok(Ch.tabs[0].btns[0]&&!Ch.tabs[0].btns[0].disabled,'табличка слияния — активная кнопка, когда реакция возможна');
     ok(press(0),'нажатие на табличку слияния');
     const o16=zb();
-    ok(o16.length===1&&o16[0].data.zn===8&&o16[0].data.a===16&&o16[0].data.fresh&&Ch.last&&Ch.last.ok&&near(Ch.last.q,7.16,.02),'слияние C-12 + He-4 → O-16 по кнопке (fresh), Q ≈ 7,16');
+    ok(o16.length===1&&o16[0].data.zn===8&&o16[0].data.a===16&&Ch.slots.includes(o16[0])&&Ch.last&&Ch.last.ok&&near(Ch.last.q,7.16,.02),'слияние C-12 + He-4 → O-16 по кнопке, результат лежит в гнезде склада, Q ≈ 7,16');
     ok(St.discoveries(stu.id).includes('chem:fusion')&&Ch.hist.length===1,'открытие chem:fusion, история реакций');
     ok(Ch.cur.z===8,'текущий элемент дерева — результат реакции');
-    L.toggleMode(E,Ch);run(3);ok(Ch.nuclear===false,'режим переключается обратно на «Химию»');
     clr();run(3);
     /* распад и отказ */
     mk(92,238,L.DV[0],.95,L.DV[1]);run(80);
@@ -290,7 +289,8 @@ function makeCtx(xr){
     ok(press(2),'нажатие на табличку распада');
     const dz=zb().map(b=>b.data.zn+'-'+b.data.a).sort().join();
     ok(dz==='2-4,90-234'&&Ch.last.kind==='alpha'&&St.discoveries(stu.id).includes('chem:alpha'),'распад U-238 → Th-234 + He-4');
-    clr();run(3);const h0=Ch.hist.length;
+    ok(zb().every(b=>Ch.slots.includes(b))&&zb().length===2,'продукты распада — в гнёздах склада');
+    clr();run(3);L.toggleMode(E,Ch);run(3);ok(Ch.nuclear===false,'режим «Химия»');const h0=Ch.hist.length;
     mk(1,1,L.FV[0]-.06,.95,L.FV[1]);mk(1,1,L.FV[0]+.06,.95,L.FV[1]);run(60);
     ok(Ch.vs[0].items.length===2||zb().length===2,'два протона лежат в сосуде');
     ok(Ch.vs[0].ready===true&&Ch.vs[0].plan.kind==='molecule','H + H в сосуде слияния — молекула H₂, а не ядерное слияние');
@@ -306,8 +306,13 @@ function makeCtx(xr){
     {const pl=Ch.vs[0].plan;ok(Ch.vs[0].items.length===2&&Ch.last.kind!=='molecule'&&!(pl&&pl.mol&&pl.mol.key==='H2O'),'H + O: сосуд копит атомы, воды ещё нет, реакция сама не пошла');}
     mk(1,1,L.FV[0],.95,L.FV[1]);run(60);
     ok(Ch.vs[0].items.length===3&&Ch.vs[0].plan&&Ch.vs[0].plan.kind==='molecule'&&Ch.vs[0].plan.mol.key==='H2O'&&Ch.last.kind!=='molecule','H + O + H: доступна вода, но сама не образуется');
-    ok(press(0)&&Ch.last.kind==='molecule'&&Ch.last.mol.key==='H2O'&&zb().length===0&&Ch.vs[0].items.length===0,'H + H + O по кнопке → H2O (химическая реакция, тела израсходованы)');
+    ok(press(0)&&Ch.last.kind==='molecule'&&Ch.last.mol.key==='H2O'&&zb().length===0&&Ch.vs[0].items.length===0&&Ch.slots.some(b=>b&&b.data.mol==='H2O'),'H + H + O по кнопке → молекула H2O в гнезде склада (атомы израсходованы)');
     ok(St.discoveries(stu.id).includes('chem:mol_H2O'),'вода записана в открытия');
+    /* «Химия»: разложение молекулы в правом сосуде на атомы в склад */
+    {const wb=Ch.slots.find(b=>b&&b.data.mol==='H2O');delete wb.data.sp;wb.p=[L.DV[0],.95,L.DV[1]];wb.v=[0,0,0];run(60);
+      ok(Ch.vs[1].ready===true&&Ch.vs[1].plan.kind==='decomp'&&Ch.tabs[2].btns[0]&&!Ch.tabs[2].btns[0].disabled,'«Химия»: молекула воды в правом сосуде — табличка «Разложение» горит');
+      ok(press(2)&&Ch.last.kind==='decomp'&&zb().map(b=>b.data.zn).sort().join()==='1,1,8'&&zb().every(b=>Ch.slots.includes(b))&&!E.bodies.some(b=>b.data.mol),'H2O → H + H + O: три атома в гнёздах склада, молекула израсходована');
+      clr();run(3);mk(8,16,L.DV[0],.95,L.DV[1]);run(60);ok(Ch.vs[1].ready===false&&!press(2),'«Химия»: атом в правом сосуде не раскладывается');clr();run(3);}
     /* режим «Химия»: H + O не даёт ничего; режим «Ядра»: F-17, и его распад */
     mk(1,1,L.FV[0],.95,L.FV[1]);run(40);mk(8,16,L.FV[0],.95,L.FV[1]);run(60);
     ok(Ch.vs[0].ready===false&&!press(0)&&zb().length===2&&/Нет такого вещества/.test(Ch.vs[0].live),'«Химия»: H + O — кнопка тусклая, подсказка «нет такого вещества»');
@@ -338,6 +343,12 @@ function makeCtx(xr){
     ok(Ch.tree.btns.length>=4&&Ch.tree.btns.some(b=>b.z===92)&&Ch.tree.btns.length===6,'дерево Fe нарисовано: области наведения есть (3 слияния, центр, 2 осколка); рамки за краем проверяет e2e_chem');
     {const i=Ch.tree.btns.findIndex(b=>b.z===93);Ch.tree.hover=i;L.update(E,Ch,.016);ok(Ch.tip.show&&Ch.tip.data.z===93,'наведение на узел дерева показывает справку');Ch.tree.hover=-1;L.update(E,Ch,.016);ok(!Ch.tip.show,'справка скрывается');}
     Ch.nuclear=false;
+    /* карточка в VR: на тыльной стороне левой руки, параллельно плоскости запястья */
+    {const M=VR.M,g=M.mul(M.trans(1,1.2,-1),M.mul(M.rotY(.7),M.rotX(.3))),m=L.cardModel(g),nrm=(a,b,c)=>{const l=Math.hypot(a,b,c);return[a/l,b/l,c/l];},dot=(u,v)=>u[0]*v[0]+u[1]*v[1]+u[2]*v[2];
+      const n=nrm(m[8],m[9],m[10]),up=nrm(m[4],m[5],m[6]),hy=nrm(g[4],g[5],g[6]),hz=nrm(g[8],g[9],g[10]);
+      ok(dot(n,hy)>.999,'карточка в VR: нормаль вдоль «вверх» ладонной системы руки (тыльная сторона кисти)');
+      ok(dot(up,[-hz[0],-hz[1],-hz[2]])>.999,'карточка в VR: верх карточки — к пальцам');
+      ok(Math.hypot(m[12]-g[12],m[13]-g[13],m[14]-g[14])<.12,'карточка в VR: центр у кисти');}
     /* карточка: X / I */
     {const was=Ch.cardOff;VR.ROOMS.chem.onX(E,Ch);ok(Ch.cardOff===!was,'X/I переключает карточку');VR.ROOMS.chem.onX(E,Ch);ok(Ch.cardOff===was,'повторное нажатие возвращает');}
     clr();
@@ -352,7 +363,13 @@ function makeCtx(xr){
     run(10);ok(Ch.slots.filter(Boolean).length===20,'склад: занято 20 гнёзд');
     const x21=mk(6,12,0,.95,-2.4);run(1);
     ok(x21.data.fresh===true&&x21.v[2]>1&&Ch.slots.filter(Boolean).length===20,'склад: 21-й элемент получил скорость к игроку');
-    clr();
+    clr();run(3);
+    /* склад полон: результат реакции скатывается и растворяется */
+    for(let i=0;i<20;i++)mk(6,12,L.SLOTX[i%5],.95,L.SLOTZ[(i/5)|0]);run(10);
+    mk(1,1,L.FV[0]-.06,.95,L.FV[1]);mk(1,1,L.FV[0]+.06,.95,L.FV[1]);run(60);
+    ok(press(0)&&E.bodies.some(b=>b.data.mol==='H2'&&b.data.fresh&&!Ch.slots.includes(b)),'склад полон: молекула H2 не легла в склад');
+    run(300);ok(!E.bodies.some(b=>b.data.mol),'лишний результат скатился и растворился на полу');
+    clr();run(3);
     /* пол растворяет */
     const fl=mk(8,16,2,.05,2);run(60);ok(!E.bodies.includes(fl),'тело на полу растворилось');
     const fl2=mk(8,16,2,.05,2);run(12);const s0=fl2.data.s0;ok(fl2.data.die!==undefined&&fl2.s<s0,'растворение началось');VR.ROOMS.chem.onGrab(E,Ch,fl2);
@@ -380,9 +397,6 @@ function makeCtx(xr){
       ok(rb.length>=1&&rb.every(p=>Math.abs(Math.sin(2*p.yaw))<1e-9)&&rb.some(p=>Math.abs(p.pos[0]-1.38)<.01),'геометрия: кнопка сброса на столе стенда по оси стола');
       const bx=[Ch.board.pos[0]],t0=tb[0];ok(Math.abs(t0.x)<1e-9&&Math.abs(t0.z+2.4)<1e-9&&bx[0]-.0>t0.x+t0.hx+.5,'геометрия: стол стенда первый, доска правее него');}
     /* флаг выключен — прежняя комната */
-    VR.flags.set('chemLab',false);E.goRoom('chem');run(25);
-    ok(E.S.lab===null&&E.S.pt.btns.length===20,'флаг chemLab=false: прежняя таблица на 20 элементов');
-    VR.flags.set('chemLab',true);E.goRoom('chem');run(25);ok(E.S.lab===true,'флаг включён обратно');
   }
   {/* движок: keepTex и labelTex (Б65, шаг 27) */
     let nk=0,nn=0;

@@ -195,18 +195,23 @@ function glyph(c,kind,cx,cy,r,col){
 function isoName(z,a){const e=N.el(z);return(e?e.name:'?')+'-'+a;}
 function isoSym(z,a){const e=N.el(z);return(e?e.sym:'?')+'-'+a;}
 function eqText(r){
+  if(r.kind==='decomp')return r.mol.formula+' → '+r.to.map(x=>N.el(x.z).sym).join(' + ');
   if(r.kind==='molecule')return r.from.map(x=>N.el(x.z).sym).join(' + ')+' → '+r.mol.formula;
   const l=r.from.map(x=>isoSym(x.z,x.a)).join(' + ');
   if(!r.ok)return l;
   return l+' → '+r.to.map(x=>isoSym(x.z,x.a)).join(' + ')+(r.lep?' + '+r.lep:'')+(r.n?' + '+(r.n>1?r.n+' ':'')+'n':'');
 }
 function nameText(r){
+  if(r.kind==='decomp')return r.mol.name.toLowerCase()+' → '+r.to.map(x=>N.el(x.z).name.toLowerCase()).join(' + ');
   if(r.kind==='molecule')return r.from.map(x=>N.el(x.z).name.toLowerCase()).join(' + ')+' → '+r.mol.name.toLowerCase();
   const l=r.from.map(x=>isoName(x.z,x.a)).join(' + ');
   if(!r.ok)return l;
   return l+' → '+r.to.map(x=>isoName(x.z,x.a)).join(' + ')+(r.lep?' + '+(r.lz<0?'электрон':'позитрон'):'')+(r.n?' + '+(r.n>1?r.n+' ':'')+(r.n>1?'нейтрона':'нейтрон'):'');
 }
-function elBodies(E){return E.bodies.filter(b=>b.data&&b.data.zn);}
+function elBodies(E){return E.bodies.filter(b=>b.data&&(b.data.zn||b.data.mol));}/* элементы и молекулы */
+function zOf(sym){const t=VR.DATA.ptable;for(let i=0;i<t.length;i++)if(t[i][0]===sym)return i+1;return 0;}
+function makeMol(E,key,p){return E.addBody({shape:'ball',p:p.slice(),s:.09,col:[.8,.9,1],em:.35,data:{mol:key}});}
+function molByKey(k){return D().molecules.find(m=>m.key===k)||null;}
 function yawTo(px,pz,hx,hz){return Math.atan2(hx-px,hz-pz);}
 
 function makeBody(E,z,a,p){
@@ -219,9 +224,12 @@ function heldEl(E){for(const h of E.H){const b=h.held;if(b&&b.data&&b.data.zn)re
 function toast(E,S,msg){if(!S.toastT||E.t-S.toastT>1.5){S.toastT=E.t;E.toast(msg,'#fde68a');}}
 function slotPos(S,i){return[SLOTX[i%5],SLOTZ[(i/5)|0]];}
 
+/* карточка в VR — на тыльной стороне левой руки: нормаль вдоль +y контроллера (от тыльной стороны кисти), верх карточки — к пальцам (−z),
+   то есть параллельно плоскости запястья; читается, когда повернёшь руку тыльной стороной к себе */
+function cardModel(g){const M=VR.M;return M.mul(g,M.mul(M.trans(0,.06,-.05),M.mul(M.rotX(-Math.PI/2),M.scale(CARD.w*.8,CARD.h*.8,1))));}
 function setCur(S,z,a){if(!S.cur||S.cur.z!==z||S.cur.a!==a){S.cur={z,a};if(S.tree)S.tree.dirty=true;}}
 function toggleMode(E,S){
-  S.nuclear=!S.nuclear;S.modeTab.dirty=true;S.tree.dirty=true;S.board.dirty=true;
+  S.nuclear=!S.nuclear;S.modeTab.dirty=true;S.tabs[2].dirty=true;S.tree.dirty=true;S.board.dirty=true;
   for(const v of S.vs)v.key=null;
   E.toast(S.nuclear?'Режим «Ядра»: ядерные реакции, не химия':'Режим «Химия»: только известные вещества','#fde68a');
 }
@@ -245,23 +253,36 @@ function molOf(xs){
 /* null — реакция невозможна; иначе результат (химическое соединение или ядерная реакция) */
 function planOf(kind,xs,nuc){
   if(kind==='fus'){
-    if(xs.length<2)return null;
-    if(!nuc){const m=molOf(xs);return m?{ok:true,kind:'molecule',from:xs,to:[],mol:m,n:0,q:0}:null;}/* «Химия»: только известные молекулы */
+    if(xs.length<2||xs.some(x=>x.mol))return null;
+    if(!nuc){const m=molOf(xs);return m?{ok:true,kind:'molecule',from:xs,to:[{mol:m.key}],mol:m,n:0,q:0}:null;}/* «Химия»: только известные молекулы */
     const r=nuclearFuse(xs);return r.ok?r:null;
   }
   if(xs.length!==1)return null;
-  const r=N.decayOf(xs[0].z,xs[0].a);return r.ok?r:null;
+  const x=xs[0];
+  if(!nuc){/* «Химия»: разложение молекулы на атомы */
+    if(!x.mol)return null;
+    const m=molByKey(x.mol);if(!m)return null;
+    const to=[];for(const k of Object.keys(m.f))for(let i=0;i<m.f[k];i++){const z=zOf(k);to.push({z,a:tableA(z)});}
+    return{ok:true,kind:'decomp',from:xs,to,mol:m,n:0,q:0};
+  }
+  if(x.mol)return null;
+  const r=N.decayOf(x.z,x.a);return r.ok?r:null;
 }
 function liveText(v,nuc){
-  const xs=v.items.map(b=>({z:b.data.zn,a:b.data.a}));
+  const xs=v.items.map(b=>b.data.mol?{mol:b.data.mol}:{z:b.data.zn,a:b.data.a});
   if(!xs.length)return '';
-  const l=(v.kind==='fus'?'В сосуде слияния: ':'В сосуде распада: ')+xs.map(x=>isoSym(x.z,x.a)).join(', ')+'. ';
+  const nm=x=>x.mol?molByKey(x.mol).formula:isoSym(x.z,x.a);
+  const l=(v.kind==='fus'?'В сосуде слияния: ':nuc?'В сосуде распада: ':'В сосуде разложения: ')+xs.map(nm).join(', ')+'. ';
+  if(v.kind==='fus'&&xs.some(x=>x.mol))return l+'В слияние молекулы не идут: положи атомы.';
   if(v.plan){
     if(v.plan.kind==='molecule')return l+'Нажми «Слияние»: получится '+v.plan.mol.name.toLowerCase()+' '+v.plan.mol.formula+' (химическая реакция).';
+    if(v.plan.kind==='decomp')return l+'Нажми «Разложение»: молекула распадётся на атомы (химическая реакция).';
     return l+(v.kind==='fus'?'Нажми «Слияние»: ядра сольются (ядерная реакция).':'Нажми «Распад».');
   }
   if(v.kind==='dec'){
-    if(xs.length>1)return l+'Для распада нужен один элемент.';
+    if(xs.length>1)return l+'Нужен один элемент.';
+    if(!nuc)return l+'Это атом, а не молекула: для разложения нужна молекула (её даёт слияние атомов).';
+    if(xs[0].mol)return l+'Молекула не распадается ядерно: для неё есть режим «Химия».';
     const w=N.decayOf(xs[0].z,xs[0].a).why;
     return l+(w==='nodata'?'Для этого изотопа нет данных о распаде.':'Стабильный элемент: не распадается.');
   }
@@ -289,13 +310,13 @@ function build(E,S){
   S.tabs=TABS.map((t,i)=>E.addPanel({w:t.w,h:TAB.h,res:512,pos:[t.x,TAB.y,TAB.z],yaw:0,tilt:TAB.tilt,accent:'#64748b',noHit:i===1,keepTex:true,draw:(c,p)=>{
     if(i===1){p.text('Склад '+S.slots.filter(Boolean).length+'/20',p.W/2,p.H/2-24,{size:48,bold:true,align:'center',maxW:p.W-30});return;}
     const v=S.vs[i===0?0:1],ready=!!v.ready,k=.5+.5*Math.sin(E.t*6);
-    p.button(8,8,p.W-16,p.H-16,t.t,()=>react(E,S,v),{size:60,disabled:!ready,
+    p.button(8,8,p.W-16,p.H-16,i===2&&!S.nuclear?'Разложение':t.t,()=>react(E,S,v),{size:i===2&&!S.nuclear?52:60,disabled:!ready,
       bg:ready?'rgb('+Math.round(245+10*k)+','+Math.round(158+66*k)+','+Math.round(11+60*k)+')':undefined,fg:ready?'#1f1300':undefined});
   }}));
   S.nuclear=false;
   S.modeTab=E.addPanel({w:.4,h:TAB.h,res:512,pos:[-.49,TAB.y,TAB.z],yaw:0,tilt:TAB.tilt,accent:'#64748b',keepTex:true,draw:(c,p)=>{
     p.button(8,8,p.W-16,p.H-16,'Режим: '+(S.nuclear?'Ядра':'Химия'),()=>toggleMode(E,S),{size:46,bg:S.nuclear?'#b45309':'#0f766e'});}});
-  S.cur=null;S.cardOff=false;S.mol=null;S.tipKey='';S.live='';
+  S.cur=null;S.cardOff=false;S.tipKey='';S.live='';
   S.tree=E.addPanel({w:TREE.w,h:TREE.h,res:TREE.res,pos:TREE.pos,yaw:TREE.yaw,accent:'#60a5fa',bg:'#0f2438',keepTex:true,draw:(c,p)=>treeDraw(E,S,c,p)});
   S.tip=E.addPanel({w:TIP.w,h:TIP.h,res:TIP.res,pos:TIP.pos,yaw:TIP.yaw,accent:'#38bdf8',show:false,noHit:true,draw:(c,p)=>cardDrawZ(c,p,p.data.z,p.data.a)});
   S.board=E.addPanel({w:BOARD.w,h:BOARD.h,res:BOARD.res,pos:BOARD.pos,yaw:BOARD.yaw,accent:'#e2e8f0',bg:'#14301f',draw:(c,p)=>boardDraw(E,S,c,p)});
@@ -365,12 +386,12 @@ function boardDraw(E,S,c,p){
   if(!r){
     let y=130;
     y=p.text('Клади атомы в левый сосуд (до 6) и нажми табличку «Слияние»: в режиме «Химия» получится молекула (например, вода), в режиме «Ядра» — новое ядро.',40,y,{size:34,maxW:700})+14;
-    y=p.text('Один элемент в правом сосуде и табличка «Распад» — он распадётся. Табличка светится, когда реакция возможна.',40,y,{size:34,maxW:700})+14;
+    y=p.text('Правый сосуд: в режиме «Химия» молекула раскладывается на атомы («Разложение»), в режиме «Ядра» нестабильный элемент распадается («Распад»). Результаты ложатся на склад. Табличка светится, когда реакция возможна.',40,y,{size:34,maxW:700})+14;
     p.text('Здесь появится уравнение, выделенная энергия и пояснение.',40,y,{size:32,color:'#94a3b8',maxW:700});
   }else{
     let y=110;
     y=p.text(r.ok?eqText(r):'Не получилось: '+eqText(r),40,y,{size:r.ok?48:42,bold:true,maxW:700,color:r.ok?'#e2e8f0':'#fca5a5'})+4;
-    if(r.kind==='molecule'){y=p.text(nameText(r),40,y,{size:30,color:'#94a3b8',maxW:700})+12;y=p.text('Это химическая реакция: атомы соединились в молекулу «'+r.mol.name+'». Ядра не менялись — все элементы остались прежними, энергия ядер не выделялась.',40,y,{size:34,bold:true,color:'#86efac',maxW:700})+12;p.text(r.mol.text,40,y,{size:32,color:'#bbf7d0',maxW:700,maxY:p.H-190});}else{
+    if(r.kind==='molecule'||r.kind==='decomp'){y=p.text(nameText(r),40,y,{size:30,color:'#94a3b8',maxW:700})+12;y=p.text(r.kind==='molecule'?'Это химическая реакция: атомы соединились в молекулу «'+r.mol.name+'». Ядра не менялись — все элементы остались прежними, энергия ядер не выделялась.':'Это химическая реакция: молекула «'+r.mol.name+'» разложилась на атомы. Ядра не менялись — атомы лежат на складе.',40,y,{size:34,bold:true,color:'#86efac',maxW:700})+12;p.text(r.mol.text,40,y,{size:32,color:'#bbf7d0',maxW:700,maxY:p.H-190});}else{
     y=p.text(nameText(r),40,y,{size:30,color:'#94a3b8',maxW:700})+12;
     if(r.ok)y=p.text(r.kind==='fusion'?'Ядерная реакция (так светят звёзды), не химия.':'Ядерная реакция, не химия.',40,y,{size:32,bold:true,color:'#fca5a5',maxW:700})+10;
     if(r.ok&&r.q===null)y=p.text('Энергия бета-распада в этой модели не считается.',40,y,{size:32,color:'#93c5fd',maxW:700})+10;
@@ -387,7 +408,7 @@ function boardDraw(E,S,c,p){
   const hy=r?620:120;
   if(S.hist.length>1){
     p.text('Раньше:',770,hy,{size:28,bold:true,color:'#cbd5e1'});
-    let y=hy+34;for(const h of S.hist.slice(1)){y=p.text(eqText(h)+(h.ok&&h.kind!=='molecule'&&h.q!==null?'  '+N.fmtQ(h):''),770,y,{size:28,color:'#cbd5e1',maxW:470,maxY:p.H-120})+4;}
+    let y=hy+34;for(const h of S.hist.slice(1)){y=p.text(eqText(h)+(h.ok&&h.kind!=='molecule'&&h.kind!=='decomp'&&h.q!==null?'  '+N.fmtQ(h):''),770,y,{size:28,color:'#cbd5e1',maxW:470,maxY:p.H-120})+4;}
   }
   p.text('Модель: энергия — разность энергий связи ядер; ≈ — оценка по формуле Вайцзеккера; энергия бета-распада и барьер не считаются',40,p.H-110,{size:26,color:'#94a3b8',maxW:p.W-80});
 }
@@ -440,7 +461,7 @@ function treeDraw(E,S,c,p){
   for(let i=0;i<nUp;i++)uxs.push((i+.5)*p.W/nUp);
   const uw=nUp>=4?290:380;
   for(let i=0;i<nUp;i++)line(cx,cy-80,uxs[i],290,t.nuc?'#fb923c':'#4ade80');
-  if(t.down){const dx=t.down.to.length>1?[340,940]:[640];t.down.to.forEach((x,i)=>line(cx,cy+80,dx[i],640,'#60a5fa'));}
+  if(t.nuc&&t.down){const dx=t.down.to.length>1?[340,940]:[640];t.down.to.forEach((x,i)=>line(cx,cy+80,dx[i],640,'#60a5fa'));}
   if(t.nuc)t.up.forEach((u,i)=>node(uxs[i],210,uw,160,u.to.z,u.to.a,'+ '+isoSym(u.p.z,u.p.a),N.fmtQ(u.r)+(u.r.q>0?' выделится':' нужно'),u.r.q>0?'#fde68a':'#93c5fd'));
   else t.mols.slice(0,4).forEach((m,i)=>{
     const x=uxs[i],y=210;c.fillStyle='#16314d';R(c,x-uw/2,y-80,uw,160,18);c.fill();c.lineWidth=4;c.strokeStyle='#4ade80';R(c,x-uw/2+2,y-78,uw-4,156,16);c.stroke();
@@ -452,7 +473,9 @@ function treeDraw(E,S,c,p){
   if(!t.nuc&&!t.mols.length)p.text('С этим атомом в таблице веществ нет молекул. Режим «Ядра» покажет ядерные слияния.',40,200,{size:34,color:'#fca5a5',maxW:p.W-120});
   /* центр: сужение дерева */
   node(cx,cy,420,150,t.x.z,t.x.a,'',N.cond(t.x.z)?'категория условная':'',null,true);
-  if(t.down){
+  if(!t.nuc){
+    p.text('Атомы сами не распадаются. Молекулу положи в правый сосуд — «Разложение» вернёт её атомы на склад. Ядерный распад — в режиме «Ядра».',40,590,{size:32,color:'#93c5fd',maxW:p.W-120});
+  }else if(t.down){
     const d=t.down,dx=d.to.length>1?[340,940]:[640];
     const kind=d.kind==='alpha'?'альфа-распад':d.kind==='beta'?'бета-распад ('+d.lep+' улетает)':'деление (после захвата нейтрона)';
     c.fillStyle='#0f2438';c.fillRect(30,548,p.W-60,48);
@@ -478,8 +501,8 @@ function pick(E,S,h,hit){
   return b;
 }
 function onGrab(E,S,b){
-  const d=b.data;if(!d||!d.zn)return;
-  delete d.fresh;delete d.sp;setCur(S,d.zn,d.a);
+  const d=b.data;if(!d||!(d.zn||d.mol))return;
+  delete d.fresh;delete d.sp;if(d.zn)setCur(S,d.zn,d.a);
   if(d.die!==undefined){delete d.die;if(d.s0)b.s=d.s0;}
   S.cardHide=false;
 }
@@ -513,11 +536,11 @@ function update(E,S,dt){
       if(Math.hypot(b.p[0]-v.c[0],b.p[2]-v.c[1])>=.2)continue;
       if(v.items.length>=CAP[v.kind]){
         b.v=[0,1.2,1.4];d.fresh=true;
-        toast(E,S,v.kind==='fus'?'В сосуд слияния — до '+CAP.fus+' атомов':'В сосуд распада — один элемент');
+        toast(E,S,v.kind==='fus'?'В сосуд слияния — до '+CAP.fus+' атомов':'В правый сосуд — один элемент или одна молекула');
       }else{
         let vi=0;if(v.kind==='fus'){const used=v.items.map(x=>x.data.vi);vi=RORD.find(i=>!used.includes(i));}
         const sp=v.kind==='fus'?[v.c[0]+Math.cos(vi*Math.PI/3)*RING,v.c[1]+Math.sin(vi*Math.PI/3)*RING]:v.c.slice();
-        d.sp=sp;d.vi=vi;v.items.push(b);b.p=[sp[0],STAND.top+b.s/2+.005,sp[1]];b.v=[0,0,0];setCur(S,d.zn,d.a);
+        d.sp=sp;d.vi=vi;v.items.push(b);b.p=[sp[0],STAND.top+b.s/2+.005,sp[1]];b.v=[0,0,0];if(d.zn)setCur(S,d.zn,d.a);
       }
       done=true;break;
     }
@@ -534,8 +557,8 @@ function update(E,S,dt){
   /* 5. реакция — только по кнопке; здесь считаем, возможна ли она, и подсвечиваем табличку */
   let liveChanged=false;
   for(const v of S.vs){
-    const key=(S.nuclear?'N':'C')+v.items.map(b=>b.data.zn+'-'+b.data.a).join(',');
-    if(key!==v.key){v.key=key;v.plan=planOf(v.kind,v.items.map(b=>({z:b.data.zn,a:b.data.a})),S.nuclear);const lt=liveText(v,S.nuclear);v.live=lt;liveChanged=true;}
+    const key=(S.nuclear?'N':'C')+v.items.map(b=>b.data.mol?'m'+b.data.mol:b.data.zn+'-'+b.data.a).join(',');
+    if(key!==v.key){v.key=key;v.plan=planOf(v.kind,v.items.map(b=>b.data.mol?{mol:b.data.mol}:{z:b.data.zn,a:b.data.a}),S.nuclear);const lt=liveText(v,S.nuclear);v.live=lt;liveChanged=true;}
     const rd=!!v.plan,tab=S.tabs[v.kind==='fus'?0:2];
     if(rd!==!!v.ready){v.ready=rd;tab.dirty=true;}
     else if(rd&&(!v.pt||E.t-v.pt>.09)){v.pt=E.t;tab.dirty=true;}/* пульсация */
@@ -555,23 +578,31 @@ function update(E,S,dt){
   const hp=E.headPose(),L=E.H[0];let q;
   if(E.session&&L&&L.has)q=[L.g[12],L.g[13]+.22,L.g[14]];
   else{const rr=[-hp.f[1],hp.f[0]];q=[hp.pos[0]+hp.f[0]*.9-rr[0]*.42,hp.pos[1]+.2,hp.pos[2]+hp.f[1]*.9-rr[1]*.42];}
-  S.card.setPose(q,yawTo(q[0],q[2],hp.pos[0],hp.pos[2]));
+  if(E.session&&L&&L.has)S.card.model=cardModel(L.g);else S.card.setPose(q,yawTo(q[0],q[2],hp.pos[0],hp.pos[2]));
+}
+/* результат реакции — в ближайшее свободное гнездо склада; склад полон — тело скатывается и растворяется на полу */
+function emit(E,S,v,list){
+  for(const x of list){
+    let best=-1,bd=1e9;
+    for(let i=0;i<20;i++)if(!S.slots[i]){const q=slotPos(S,i),dd=Math.hypot(v.c[0]-q[0],v.c[1]-q[1]);if(dd<bd){bd=dd;best=i;}}
+    const p0=[v.c[0],.97,v.c[1]],b=x.mol?makeMol(E,x.mol,p0):makeBody(E,x.z,x.a,p0);
+    if(best<0){b.v=[0,1.6,2.8];b.data.fresh=true;toast(E,S,'Склад полон: лишнее скатывается');}
+    else{const q=slotPos(S,best);b.data.sp=q;S.slots[best]=b;b.p=[q[0],STAND.top+b.s/2+.005,q[1]];b.v=[0,0,0];}
+  }
 }
 function react(E,S,v){
   const r=v.plan;
   if(!r||!v.items.length)return;
   const items=v.items.slice();v.items=[];v.key=null;v.plan=null;
-  const put=(x,pos)=>{const b=makeBody(E,x.z,x.a,[pos[0],.97,pos[1]]);b.data.fresh=true;return b;};
   for(const b of items)E.removeBody(b);
   const cx=v.c[0],cz=v.c[1];
-  S.mol=null;
-  if(r.kind==='molecule'){
-    S.mol={m:r.mol,t:E.t};
+  if(r.kind==='molecule'||r.kind==='decomp'){
+    emit(E,S,v,r.to);
     E.burst([cx,1.05,cz],30,[[.4,.8,1],[.5,1,.7]],.9);E.fanfare();
-    E.discover('chem','mol_'+r.mol.key,r.mol.name+' '+r.mol.formula);
-    if(S.found)S.found.add(r.mol.key);
+    E.discover('chem',r.kind==='molecule'?'mol_'+r.mol.key:'decomp_'+r.mol.key,r.kind==='molecule'?r.mol.name+' '+r.mol.formula:'Разложение: '+r.mol.name);
+    if(r.kind==='molecule'&&S.found)S.found.add(r.mol.key);
   }else{
-    if(v.kind==='fus')put(r.to[0],OUTF);else r.to.forEach((x,i)=>put(x,OUTD[i]));
+    emit(E,S,v,r.to);
     setCur(S,r.to[0].z,r.to[0].a);
     const gain=r.q>0;
     E.burst([cx,1.05,cz],gain?Math.min(60,10+Math.round(Math.abs(r.q)/3)):12,gain?[[1,.8,.2],[1,.5,.2],[1,.3,.2]]:[[.4,.7,1],[.6,.85,1]],gain?1.3:.7);
@@ -597,6 +628,12 @@ function draw(E,S,add){
   if(S.el>=0)frame(S.el+1,[1,.85,.1]);
   /* плашки символов над телами */
   for(const b of elBodies(E)){
+    if(b.data.mol){
+      const m=molByKey(b.data.mol);if(!m)continue;
+      const tx=E.labelTex('mol:'+m.key,(c,n)=>{c.fillStyle='#0f172a';VR.ui.rrect(c,4,24,n-8,n-48,18);c.fill();c.lineWidth=6;c.strokeStyle='#e2e8f0';VR.ui.rrect(c,6,26,n-12,n-52,16);c.stroke();c.fillStyle='#fff';c.font='bold 46px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText(m.formula,n/2,n/2+2);});
+      if(tx)add(mesh.quad,TRS(b.p[0],b.p[1]+b.s/2+.05,b.p[2],.1,.1,1,yawTo(b.p[0],b.p[2],hp[0],hp[2])),[1,1,1],0,1,tx);
+      continue;
+    }
     const z=b.data.zn,e=N.el(z);if(!e)continue;
     const tex=E.labelTex('sym:'+z,(c,n)=>{
       c.fillStyle='#0f172a';VR.ui.rrect(c,4,24,n-8,n-48,18);c.fill();
@@ -609,11 +646,7 @@ function draw(E,S,add){
   }
   /* свечение сосуда во время отсчёта */
   for(const v of S.vs)if(v.ready){const k=.05+.012*Math.sin(E.t*6);add(mesh.sphere,TRS(v.c[0],1.02,v.c[1],k,k,k),v.kind==='fus'?[1,.6,.2]:[.4,.7,1],1);}
-  if(S.mol){
-    const m=S.mol.m,base=VR.M.mul(VR.M.trans(OUTF[0]+.0,1.2,OUTF[1]),VR.M.rotY(E.t*.8));
-    for(const [el,x,y,z] of m.atoms){const k=el==='H'?.05:.07;add(mesh.sphere,VR.M.mul(base,TRS(x*1.3,y*1.3,z*1.3,k,k,k)),D().atoms[el].col,.3);}
-  }
 }
 
-VR.chemLab={build,pick,toggleCard,toggleMode,setCur,treeOf,planOf,react,TREE,TIP,TAB,CAP,onGrab,update,draw,cellPx,pxToWorld,makeBody,MAXN,TP,TW,TH,FV,DV,OUTF,OUTD,STAND,BOARD,TABS,CARD,SLOTX,SLOTZ,SLOTR};
+VR.chemLab={cardModel,build,pick,toggleCard,toggleMode,setCur,treeOf,planOf,react,TREE,TIP,TAB,CAP,onGrab,update,draw,cellPx,pxToWorld,makeBody,MAXN,TP,TW,TH,FV,DV,OUTF,OUTD,STAND,BOARD,TABS,CARD,SLOTX,SLOTZ,SLOTR};
 })();

@@ -300,41 +300,13 @@ const RX=-3.9,RTOP=.85,PLATE=[-3.9,1.3];
 const DISP=[['H',-1.25],['O',-.6],['C',.05],['N',.7]];
 ROOMS.chem={
   title:'Химия',env:{floor:[.05,.14,.09],wall:[.1,.26,.17],trim:[.35,1,.6],grid:[.3,.9,.5]},spawn:{x:0,z:-.9},
-  hint:'Химия: наведи на элемент таблицы и нажми хват (ПКМ/E) — он прилетит в руку. Сосуд слева — слияние (до 6 атомов), справа — распад, посередине — склад; реакция идёт по нажатию на светящуюся табличку на краю стола. Слева от стола — дерево элемента; X (левая рука) или I — карточка. Атомы молекул — на столе слева.',
+  hint:'Химия: наведи на элемент таблицы и нажми хват (ПКМ/E) — он прилетит в руку. Сосуд слева — слияние (до 6 атомов), справа — разложение молекул (режим «Химия») или распад (режим «Ядра»), посередине — склад, куда ложатся результаты; реакция идёт по нажатию на светящуюся табличку на краю стола. Слева от стола — дерево элемента; X (левая рука) или I — карточка. Атомы молекул — на столе слева.',
   build(E,S){
     backDoor(E);
-    S.lab=null;if(VR.chemLab&&VR.flags.on('chemLab')){try{VR.chemLab.build(E,S);S.lab=true;}catch(e){S.lab=null;E.toast('Лаборатория временно недоступна','#fca5a5');}}
-    if(!S.lab){S.el=-1;}S.made=null;S.chk=0;S.comp={};S.hint=-1;
+    S.lab=null;try{VR.chemLab.build(E,S);S.lab=true;}catch(e){S.lab=null;E.toast('Лаборатория временно недоступна','#fca5a5');}
+    S.made=null;S.chk=0;S.comp={};S.hint=-1;
     S.found=new Set();
     if(E.student&&E.student.id)for(const k of VR.Store.discoveries(E.student.id))if(k.indexOf('chem:mol_')===0)S.found.add(k.slice(9));
-    /* таблица Менделеева */
-    if(!S.lab)S.pt=E.addPanel({w:4.6,h:1.9,res:1600,pos:[0,1.75,-5.86],yaw:0,accent:'#4ade80',draw:(c,p)=>{
-      p.text('Таблица Менделеева: первые 20 элементов',30,24,{size:50,bold:true});
-      const R=VR.ui.rrect;
-      for(const el of D.elements){
-        const [n,sym,name,,row,col,cat]=el,x=30+(col-1)*128,y=100+(row-1)*126,w=120,h=118;
-        const hov=p.area(x,y,w,h,()=>{S.el=n-1;S.pt.dirty=true;E.discover('chem','el_'+sym,name+' '+sym);E.beep(700,.06);});
-        const cc=D.elCats[cat][1];
-        c.fillStyle=S.el===n-1?cc:'#1b2540';R(c,x,y,w,h,14);c.fill();
-        c.lineWidth=hov?7:4;c.strokeStyle=hov?'#ffffff':cc;R(c,x+2,y+2,w-4,h-4,12);c.stroke();
-        const fg=S.el===n-1?'#0b1020':'#e8efff';
-        c.fillStyle=fg;c.font='26px sans-serif';c.textAlign='left';c.fillText(String(n),x+10,y+8);
-        c.font='bold 54px sans-serif';c.textAlign='center';c.fillText(sym,x+w/2,y+36);
-        c.font='18px sans-serif';c.fillText(name,x+w/2,y+94);c.textAlign='left';
-      }
-      const ix=1090;
-      if(S.el<0){
-        p.text('Нажми на элемент',ix,110,{size:42,bold:true,maxW:480});
-        let y=180;for(const k in D.elCats){if(!D.elements.some(e=>e[6]===k))continue;c.fillStyle=D.elCats[k][1];c.fillRect(ix,y+6,28,28);p.text(D.elCats[k][0],ix+44,y,{size:30,maxW:440});y+=48;}
-      }else{
-        const [n,sym,name,mass,,,cat,fact]=D.elements[S.el];
-        p.text(sym,ix,96,{size:150,bold:true,color:D.elCats[cat][1]});
-        p.text(name,ix+(sym.length>1?210:130),130,{size:52,bold:true,maxW:480-(sym.length>1?210:130)});
-        p.text('№ '+n+'  ·  масса '+mass,ix+(sym.length>1?210:130),200,{size:30,color:'#b8c7ea',maxW:300});
-        p.text(D.elCats[cat][0],ix,270,{size:32,color:D.elCats[cat][1],bold:true,maxW:480});
-        p.text(fact,ix,326,{size:32,color:'#cbd5e1',maxW:480,maxY:640});
-      }
-    }});
     /* стол-реактор */
     E.addTable(RX,0,.45,1.75,RTOP,[.3,.32,.36]);
     for(const [el,z] of DISP)E.addStatic(E.mesh.cyl,TRS(RX,RTOP+.03,z,.3,.06,.3),D.atoms[el].col,.3);
