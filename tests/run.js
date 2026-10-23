@@ -78,12 +78,27 @@ function makeCtx(xr){
     const ff=N.fuse(en(26,56),en(26,56));ok(ff.q<0&&!ff.exact,'nuc: Fe-56 + Fe-56 поглощает энергию, оценка');
     const sU=N.split(en(92,238)),fq=N.fissionQ(92,238);
     ok(sU.kind==='alpha'&&sU.to[0].z===90&&sU.to[0].a===234&&sU.to[1].z===2&&sU.q>2&&sU.q<9,'nuc: U-238 → Th-234 + He-4, альфа-распад');
-    ok(N.split(en(92,235)).kind==='alpha'&&N.split(en(82,208)).kind==='fission'&&N.split(en(82,208)).q>0,'nuc: U-235 альфа; Pb-208 — деление с выигрышем');
-    ok(fq.q>150&&fq.q<230&&N.split(en(26,56)).q<0,'nuc: деление U-238 ≈ 183 МэВ; Fe-56 — поглощение');
+    ok(N.split(en(92,235)).kind==='fission'&&N.split(en(92,235)).to.length===2&&N.split(en(82,208)).why==='stable'&&N.split(en(84,210)).kind==='alpha','nuc: U-235 — деление на 2 осколка; Pb-208 стабилен; Po-210 — альфа');
+    ok(fq.q>150&&fq.q<230&&N.split(en(26,56)).why==='stable','nuc: принудительное деление U-238 ≈ 183 МэВ (fissionQ); Fe-56 стабилен, не распадается');
     const sh=N.split(en(2,4)),sl=N.split(en(3,7));
-    ok(sh.n===2&&sh.to.length===2&&sh.to.every(t=>t.z===1&&t.a===1)&&near(sh.q,-28.30,.02),'nuc: He-4 → 2 H-1 + 2 n, −28,30 МэВ');
-    ok(sl.n===2&&sl.to[0].z===1&&sl.to[1].z===2&&sl.to[1].a===4&&near(sl.q,-10.95,.02),'nuc: Li-7 → H-1 + He-4 + 2 n, −10,95 МэВ');
+    ok(!sh.ok&&sh.why==='stable','nuc: He-4 стабилен');
+    ok(!sl.ok&&sl.why==='stable','nuc: Li-7 стабилен');
     ok(N.split(en(1,1)).why==='h','nuc: у водорода делить нечего');
+    {/* распад: одна модель для всех 118 элементов (Б65): сохранение Z и A, стабильные не распадаются */
+      const cnt={};let bad=[];
+      for(let z=1;z<=118;z++){const e=N.el(z),r=N.decayOf(z,e.a),k=r.ok?r.kind:r.why;cnt[k]=(cnt[k]||0)+1;
+        if(r.ok){const sz=r.to.reduce((u,x)=>u+x.z,0)+(r.lz||0),sa=r.to.reduce((u,x)=>u+x.a,0)+r.n;if(sz!==z||sa!==e.a)bad.push(z);
+          if(r.kind==='alpha'&&!(r.to.length===2&&r.to[1].z===2&&r.to[1].a===4&&r.to[0].z===z-2&&r.to[0].a===e.a-4))bad.push('α'+z);
+          if(z<=82&&z!==43&&z!==61)bad.push('нестабильный '+z);}
+        else if(z>=84||z===43||z===61)bad.push('не распадается '+z);}
+      ok(bad.length===0,'распад: сохранение Z и A на всех 118, альфа = дочернее + He-4, Z ≤ 82 (кроме Tc, Pm) стабильны '+bad.join());
+      ok(cnt.stable===80&&cnt.h===1&&cnt.beta===2&&cnt.alpha===35,'распад: 80 стабильных, H, 2 бета (Tc, Pm), 35 альфа '+JSON.stringify(cnt));
+      const po=N.decayOf(84,210),c12=N.decayOf(6,12),bi=N.decayOf(83,209),f17=N.decayOf(9,17),u5=N.decayOf(92,235);
+      ok(po.kind==='alpha'&&po.to[0].z===82&&po.to[0].a===206&&po.to[1].a===4,'распад: Po-210 → Pb-206 + He-4');
+      ok(!c12.ok&&c12.why==='stable'&&!bi.ok&&!N.decayOf(26,56).ok&&!N.decayOf(9,19).ok,'распад: C-12, Bi-209, Fe-56, F-19 стабильны');
+      ok(f17.kind==='beta'&&f17.to[0].z===8&&f17.to[0].a===17&&f17.lep==='e⁺','распад: F-17 → O-17 + e⁺ (бета-плюс)');
+      ok(u5.to[0].z+u5.to[1].z===92&&u5.to[0].a+u5.to[1].a+u5.n===235&&u5.n>=2,'распад: U-235 — два осколка и нейтроны, Z и A сохраняются');
+      ok(N.decayOf(4,8).to.length===2&&N.decayOf(4,8).to.every(x=>x.z===2&&x.a===4),'распад: Be-8 → 2 He-4');}
     ok(/0,42/.test(N.note(N.fuse(en(1,1),en(1,1))))&&/1,44/.test(N.note(N.fuse(en(1,1),en(1,1))))&&/аннигиляц/.test(N.note(N.fuse(en(1,1),en(1,1)))),'nuc: pp — 0,42 МэВ без аннигиляции и 1,44 МэВ с ней');
     ok(N.cond(34)&&N.cond(84)&&N.cond(85)&&N.cond(109)&&N.cond(118)&&!N.cond(26)&&!N.cond(108),'nuc: пометка «условно» у Se, Po, At и 109–118');
     ok(near(N.semf(26,56)/N.REF['26-56'],1,.01)&&near(N.semf(92,238)/N.REF['92-238'],1,.015),'nuc: формула Вайцзеккера в пределах 1 % / 1,5 % от справочника');
@@ -255,20 +270,83 @@ function makeCtx(xr){
     ok(fe&&fe.data.zn===26&&fe.data.a===56&&E.bodies.includes(fe),'pick: из ячейки Fe появилось тело zn 26, a 56');
     ok(VR.ROOMS.chem.pick(E,Ch,E.H[1],{t:2,kind:'panel',p:Ch.board,bi:0})===null,'pick: по другой панели — null');
     clr();
-    /* слияние */
+    /* слияние: только по кнопке-табличке; атомы копятся */
+    const press=i=>{const p=Ch.tabs[i];run(2);const bt=p.btns[0];if(!bt||bt.disabled)return false;bt.fn();run(2);return true;};
     mk(6,12,L.FV[0]-.06,.95,L.FV[1]);mk(2,4,L.FV[0]+.06,.95,L.FV[1]);run(80);
+    ok(zb().length===2&&Ch.nuclear===false&&!Ch.vs[0].ready,'режим «Химия» по умолчанию: C + He — не вещество, табличка тусклая '+zb().length+Ch.nuclear+Ch.vs[0].ready);
+    L.toggleMode(E,Ch);run(5);
+    ok(Ch.nuclear===true&&zb().length===2&&Ch.last===null&&Ch.vs[0].ready===true,'слияние: само не срабатывает, табличка «Слияние» готова');
+    ok(Ch.tabs[0].btns[0]&&!Ch.tabs[0].btns[0].disabled,'табличка слияния — активная кнопка, когда реакция возможна');
+    ok(press(0),'нажатие на табличку слияния');
     const o16=zb();
-    ok(o16.length===1&&o16[0].data.zn===8&&o16[0].data.a===16&&o16[0].data.fresh&&Ch.last&&Ch.last.ok&&near(Ch.last.q,7.16,.02),'слияние C-12 + He-4 → O-16 (fresh), Q ≈ 7,16');
+    ok(o16.length===1&&o16[0].data.zn===8&&o16[0].data.a===16&&o16[0].data.fresh&&Ch.last&&Ch.last.ok&&near(Ch.last.q,7.16,.02),'слияние C-12 + He-4 → O-16 по кнопке (fresh), Q ≈ 7,16');
     ok(St.discoveries(stu.id).includes('chem:fusion')&&Ch.hist.length===1,'открытие chem:fusion, история реакций');
-    clr();
+    ok(Ch.cur.z===8,'текущий элемент дерева — результат реакции');
+    L.toggleMode(E,Ch);run(3);ok(Ch.nuclear===false,'режим переключается обратно на «Химию»');
+    clr();run(3);
     /* распад и отказ */
     mk(92,238,L.DV[0],.95,L.DV[1]);run(80);
+    ok(Ch.last.kind==='fusion'&&zb().length===1,'распад: сам не срабатывает');
+    ok(press(2),'нажатие на табличку распада');
     const dz=zb().map(b=>b.data.zn+'-'+b.data.a).sort().join();
     ok(dz==='2-4,90-234'&&Ch.last.kind==='alpha'&&St.discoveries(stu.id).includes('chem:alpha'),'распад U-238 → Th-234 + He-4');
-    clr();mk(1,1,L.FV[0]-.06,.95,L.FV[1]);mk(1,1,L.FV[0]+.06,.95,L.FV[1]);run(80);
-    ok(zb().length===2&&zb().every(b=>b.data.fresh)&&Ch.last.ok===false&&Ch.last.why==='pp','отказ pp: оба тела вернулись на выход, помечены fresh');
-    clr();mk(1,1,L.DV[0],.95,L.DV[1]);run(80);ok(Ch.last.why==='h'&&zb().length===1,'отказ распада водорода');
+    clr();run(3);const h0=Ch.hist.length;
+    mk(1,1,L.FV[0]-.06,.95,L.FV[1]);mk(1,1,L.FV[0]+.06,.95,L.FV[1]);run(60);
+    ok(Ch.vs[0].items.length===2||zb().length===2,'два протона лежат в сосуде');
+    ok(Ch.vs[0].ready===true&&Ch.vs[0].plan.kind==='molecule','H + H в сосуде слияния — молекула H₂, а не ядерное слияние');
+    clr();run(3);
+    mk(1,1,L.DV[0],.95,L.DV[1]);run(60);
+    ok(Ch.vs[1].ready===false&&!press(2)&&zb().length===1&&Ch.hist.length===h0,'кнопка распада водорода не реагирует');
+    clr();run(3);
+    mk(1,1,L.FV[0],.95,L.FV[1]);run(60);
+    ok(Ch.vs[0].ready===false&&!press(0)&&zb().length===1,'кнопка слияния при одном атоме не реагирует');
+    clr();run(3);
+    /* вода по кнопке: атомы копятся без реакции */
+    mk(1,1,L.FV[0],.95,L.FV[1]);run(40);mk(8,16,L.FV[0],.95,L.FV[1]);run(60);
+    {const pl=Ch.vs[0].plan;ok(Ch.vs[0].items.length===2&&Ch.last.kind!=='molecule'&&!(pl&&pl.mol&&pl.mol.key==='H2O'),'H + O: сосуд копит атомы, воды ещё нет, реакция сама не пошла');}
+    mk(1,1,L.FV[0],.95,L.FV[1]);run(60);
+    ok(Ch.vs[0].items.length===3&&Ch.vs[0].plan&&Ch.vs[0].plan.kind==='molecule'&&Ch.vs[0].plan.mol.key==='H2O'&&Ch.last.kind!=='molecule','H + O + H: доступна вода, но сама не образуется');
+    ok(press(0)&&Ch.last.kind==='molecule'&&Ch.last.mol.key==='H2O'&&zb().length===0&&Ch.vs[0].items.length===0,'H + H + O по кнопке → H2O (химическая реакция, тела израсходованы)');
+    ok(St.discoveries(stu.id).includes('chem:mol_H2O'),'вода записана в открытия');
+    /* режим «Химия»: H + O не даёт ничего; режим «Ядра»: F-17, и его распад */
+    mk(1,1,L.FV[0],.95,L.FV[1]);run(40);mk(8,16,L.FV[0],.95,L.FV[1]);run(60);
+    ok(Ch.vs[0].ready===false&&!press(0)&&zb().length===2&&/Нет такого вещества/.test(Ch.vs[0].live),'«Химия»: H + O — кнопка тусклая, подсказка «нет такого вещества»');
+    ok(L.treeOf(8,16).mols.length>=3&&L.treeOf(8,16).up.length===0,'«Химия»: вверх в дереве — молекулы с кислородом');
+    L.toggleMode(E,Ch);run(5);
+    ok(Ch.vs[0].ready===true&&Ch.vs[0].plan.kind==='fusion'&&press(0)&&Ch.last.to[0].z===9&&Ch.last.to[0].a===17,'«Ядра»: H + O → F-17 (ядерная реакция)');
+    {const f=zb()[0];ok(zb().length===1&&f.data.zn===9&&f.data.a===17,'на столе ровно одно тело F-17');
+      f.p=[L.DV[0],.95,L.DV[1]];f.v=[0,0,0];f.data.fresh=false;delete f.data.fresh;run(60);
+      ok(Ch.vs[1].ready===true&&press(2)&&zb().length===1&&zb()[0].data.zn===8&&zb()[0].data.a===17&&Ch.last.kind==='beta','F-17 → O-17 + e⁺: на столе ровно одно тело O-17');}
+    clr();run(3);
+    mk(84,210,L.DV[0],.95,L.DV[1]);run(60);
+    ok(press(2)&&zb().map(b=>b.data.zn+'-'+b.data.a).sort().join()==='2-4,82-206','Po-210 → Pb-206 + He-4: на столе ровно эти два тела');
+    clr();run(3);mk(6,12,L.DV[0],.95,L.DV[1]);run(60);
+    ok(Ch.vs[1].ready===false&&!press(2)&&zb().length===1,'C-12 стабилен: «Распад» тусклый');
+    clr();run(3);L.toggleMode(E,Ch);run(3);
+    /* сосуд слияния вмещает не больше 6 атомов */
+    for(let i=0;i<7;i++){mk(2,4,L.FV[0],.95,L.FV[1]);run(30);}
+    ok(Ch.vs[0].items.length===6,'в сосуд слияния помещается 6 атомов, седьмой отскакивает');
+    clr();run(3);
+    /* дерево элемента */
+    {const tc=L.treeOf(6,12,true),sy=a=>a.map(u=>N.el(u.to.z).sym);
+      ok(sy(tc.up).includes('O')&&sy(tc.up).includes('N'),'дерево C: +He → O, +H → N');
+      const cn=tc.up.find(u=>u.to.z===7);ok(cn&&cn.r.exact&&near(cn.q,1.943,.01)&&tc.up.every(u=>u.r.exact||u.to.a>40),'дерево C: +H → N-13, Q = +1,94 МэВ (точные данные AME2020)');
+      ok(tc.down===null&&L.treeOf(6,12).why==='stable','дерево C: вниз «не распадается (стабильно)», принудительного деления нет');
+      const tu=L.treeOf(92,238,true);ok(tu.down&&tu.down.kind==='alpha'&&tu.up.length>0,'дерево U-238: альфа-распад и ветки слияния');
+      ok(L.treeOf(1,1,true).down===null,'дерево H: распада нет');}
+    Ch.nuclear=true;Ch.cur=null;L.setCur(Ch,92,238);run(3);E.paintPanel(Ch.tree);
+    ok(Ch.tree.btns.length>=4&&Ch.tree.btns.some(b=>b.z===92)&&Ch.tree.btns.length===6,'дерево Fe нарисовано: области наведения есть (3 слияния, центр, 2 осколка); рамки за краем проверяет e2e_chem');
+    {const i=Ch.tree.btns.findIndex(b=>b.z===93);Ch.tree.hover=i;L.update(E,Ch,.016);ok(Ch.tip.show&&Ch.tip.data.z===93,'наведение на узел дерева показывает справку');Ch.tree.hover=-1;L.update(E,Ch,.016);ok(!Ch.tip.show,'справка скрывается');}
+    Ch.nuclear=false;
+    /* карточка: X / I */
+    {const was=Ch.cardOff;VR.ROOMS.chem.onX(E,Ch);ok(Ch.cardOff===!was,'X/I переключает карточку');VR.ROOMS.chem.onX(E,Ch);ok(Ch.cardOff===was,'повторное нажатие возвращает');}
     clr();
+    /* склад: гнёзда не заходят друг на друга */
+    {let mn=9;const pos=[];for(let i=0;i<20;i++)pos.push([L.SLOTX[i%5],L.SLOTZ[(i/5)|0]]);
+      for(let i=0;i<20;i++)for(let j=i+1;j<20;j++)mn=Math.min(mn,Math.hypot(pos[i][0]-pos[j][0],pos[i][1]-pos[j][1]));
+      ok(mn>=2*L.SLOTR+.025,'склад: расстояние между центрами гнёзд '+mn.toFixed(3)+' ≥ 2r + зазор');
+      const vr=.3+.02;ok(pos.every(q=>[L.FV,L.DV].every(v=>Math.hypot(q[0]-v[0],q[1]-v[1])>vr+L.SLOTR)),'склад: гнёзда не заходят на сосуды');
+      ok(pos.every(q=>q[1]-L.SLOTR>L.STAND.z-L.STAND.hz&&q[1]+L.SLOTR<-2.05),'склад: гнёзда в пределах стола и не под табличками');}
     /* склад */
     for(let i=0;i<20;i++)mk(6,12,L.SLOTX[i%5]+(i%2?.03:-.03),.95,L.SLOTZ[(i/5)|0]);
     run(10);ok(Ch.slots.filter(Boolean).length===20,'склад: занято 20 гнёзд');
@@ -291,11 +369,12 @@ function makeCtx(xr){
       ok(ov===0,'геометрия: столы не пересекаются');
       const seg=p=>{const c=Math.cos(p.yaw),s=Math.sin(p.yaw);return[[p.pos[0]-c*p.w/2,p.pos[2]+s*p.w/2],[p.pos[0]+c*p.w/2,p.pos[2]-s*p.w/2]];};
       const hits=(a,b,t)=>{let any=false;for(let k=0;k<=20;k++){const x=a[0]+(b[0]-a[0])*k/20,z=a[1]+(b[1]-a[1])*k/20;if(Math.abs(x-t.x)<t.hx&&Math.abs(z-t.z)<t.hz)any=true;}return any;};
-      const bad=E.panels.filter(p=>!(p.data&&p.data.reset)&&p.pos[1]-p.h/2<2.5&&tb.some(t=>{const sg=seg(p);return hits(sg[0],sg[1],t);}));
+      const bad=E.panels.filter(p=>!(p.data&&p.data.reset)&&!p.tilt&&p.pos[1]-p.h/2<2.5&&tb.some(t=>{const sg=seg(p);return hits(sg[0],sg[1],t);}));
       ok(bad.length===0,'геометрия: панели не пересекают столы ('+bad.length+')');
-      const ax=p=>Math.abs(Math.sin(2*p.yaw))<1e-9,own=[Ch.pt,Ch.board].concat(Ch.tabs);
-      ok(own.every(ax),'геометрия: таблица, таблички и доска стоят по осям (yaw кратен 90°)');
+      const ax=p=>Math.abs(Math.sin(2*p.yaw))<1e-9,own=[Ch.pt,Ch.board,Ch.tree,Ch.modeTab].concat(Ch.tabs);
+      ok(own.every(ax),'геометрия: таблица, таблички и доски стоят по осям (yaw кратен 90°)');
       ok(own.every(p=>{const n=[Math.sin(p.yaw),Math.cos(p.yaw)],d=[sp.x-p.pos[0],sp.z-p.pos[2]],l=Math.hypot(d[0],d[1]);return(n[0]*d[0]+n[1]*d[1])/l>.7;}),'геометрия: передняя сторона панелей стенда смотрит в сторону точки появления');
+      {const row=Ch.tabs.concat([Ch.modeTab]).sort((u,v)=>u.pos[0]-v.pos[0]);let gap=9;for(let i=1;i<row.length;i++)gap=Math.min(gap,(row[i].pos[0]-row[i].w/2)-(row[i-1].pos[0]+row[i-1].w/2));ok(gap>=.03&&Math.abs(Ch.modeTab.tilt-Math.PI/4)<1e-9,'геометрия: таблички на кромке не перекрываются (зазор '+gap.toFixed(2)+' м), режим наклонён на 45°');}
       ok(!tb.some(t=>Math.abs(sp.x-t.x)<t.hx+.4&&Math.abs(sp.z-t.z)<t.hz+.4),'геометрия: точка появления вне столов (+0,4 м)');
       const rb=E.panels.filter(p=>p.data&&p.data.reset);
       ok(rb.length>=1&&rb.every(p=>Math.abs(Math.sin(2*p.yaw))<1e-9)&&rb.some(p=>Math.abs(p.pos[0]-1.38)<.01),'геометрия: кнопка сброса на столе стенда по оси стола');

@@ -300,7 +300,7 @@ const RX=-3.9,RTOP=.85,PLATE=[-3.9,1.3];
 const DISP=[['H',-1.25],['O',-.6],['C',.05],['N',.7]];
 ROOMS.chem={
   title:'Химия',env:{floor:[.05,.14,.09],wall:[.1,.26,.17],trim:[.35,1,.6],grid:[.3,.9,.5]},spawn:{x:0,z:-.9},
-  hint:'Химия: наведи на элемент таблицы и нажми хват (ПКМ/E) — он прилетит в руку. Сосуд слева — слияние, справа — распад, посередине — склад. Атомы молекул — на столе слева.',
+  hint:'Химия: наведи на элемент таблицы и нажми хват (ПКМ/E) — он прилетит в руку. Сосуд слева — слияние (до 6 атомов), справа — распад, посередине — склад; реакция идёт по нажатию на светящуюся табличку на краю стола. Слева от стола — дерево элемента; X (левая рука) или I — карточка. Атомы молекул — на столе слева.',
   build(E,S){
     backDoor(E);
     S.lab=null;if(VR.chemLab&&VR.flags.on('chemLab')){try{VR.chemLab.build(E,S);S.lab=true;}catch(e){S.lab=null;E.toast('Лаборатория временно недоступна','#fca5a5');}}
@@ -358,6 +358,7 @@ ROOMS.chem={
   targets(E,S){return DISP.map(([el,z])=>({c:[RX,RTOP+.28,z],r:.2,id:'disp'+el,sel:()=>spawnAtom(E,el,z)}));},
   pick(E,S,h,hit){return S.lab?VR.chemLab.pick(E,S,h,hit):null;},
   onGrab(E,S,b){if(S.lab)VR.chemLab.onGrab(E,S,b);},
+  hasX(E,S){return !!(S&&S.lab);},onX(E,S){if(S&&S.lab)VR.chemLab.toggleCard(E,S);},
   update(E,S,dt){
     if(S.lab)try{VR.chemLab.update(E,S,dt);}catch(e){}
     S.chk-=dt;if(S.chk>0)return;S.chk=.25;

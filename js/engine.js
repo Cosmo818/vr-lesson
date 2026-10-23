@@ -212,7 +212,7 @@ void main(){
     const cv=document.createElement('canvas');cv.width=W;cv.height=H;
     const p={w:o.w,h:o.h,pos:(o.pos||[0,1.5,-2]).slice(),yaw:o.yaw||0,W,H,cv,ctx:cv.getContext('2d'),tex:gl.createTexture(),
       draw:o.draw||(()=>{}),show:o.show!==false,btns:[],hover:-1,dirty:true,accent:o.accent||'#3b82f6',bg:o.bg||'#0f1830',
-      over:[],keepTex:!!o.keepTex,noBg:!!o.noBg,noHit:!!o.noHit,attach:o.attach||null,model:null,data:o.data||{}};
+      over:[],keepTex:!!o.keepTex,noBg:!!o.noBg,noHit:!!o.noHit,attach:o.attach||null,model:null,tilt:o.tilt||0,data:o.data||{}};
     p.text=(str,x,y,t)=>{
       t=t||{};const c=p.ctx,size=t.size||40;c.font=(t.bold?'bold ':'')+size+'px sans-serif';c.fillStyle=t.color||'#e8efff';
       c.textAlign=t.align||'left';c.textBaseline='top';const lh=t.lh||Math.round(size*1.25);
@@ -338,13 +338,14 @@ void main(){
   E.addPanel=o=>{const p=makePanel(o);E.panels.push(p);return p;};
   E.paintPanel=paint;/* для проверки рендером: p.over — строки и кнопки за краем текстуры */
   E.addUi=o=>{const p=makePanel(o);E.ui.push(p);return p;};
-  const panelModel=p=>p.model||(p.model=TRS(p.pos[0],p.pos[1],p.pos[2],p.w,p.h,1,p.yaw));
+  const panelModel=p=>p.model||(p.model=p.tilt?M.mul(M.trans(p.pos[0],p.pos[1],p.pos[2]),M.mul(M.rotY(p.yaw),M.mul(M.rotX(-p.tilt),M.scale(p.w,p.h,1)))):TRS(p.pos[0],p.pos[1],p.pos[2],p.w,p.h,1,p.yaw));/* tilt — наклон назад (пюпитр), рад */
   function rayPanel(p,o,d){
     const c=Math.cos(p.yaw),s=Math.sin(p.yaw);
     const rx=o[0]-p.pos[0],ry=o[1]-p.pos[1],rz=o[2]-p.pos[2];
-    const lox=c*rx-s*rz,loz=s*rx+c*rz,ldx=c*d[0]-s*d[2],ldz=s*d[0]+c*d[2];
+    let lox=c*rx-s*rz,loz=s*rx+c*rz,ldx=c*d[0]-s*d[2],ldz=s*d[0]+c*d[2],ly=ry,ldy=d[1];
+    if(p.tilt){const tc=Math.cos(p.tilt),ts=Math.sin(p.tilt),y0=ly,z0=loz,y1=ldy,z1=ldz;ly=y0*tc-z0*ts;loz=y0*ts+z0*tc;ldy=y1*tc-z1*ts;ldz=y1*ts+z1*tc;}
     if(ldz>-1e-4||loz<=0)return null;
-    const t=-loz/ldz,x=lox+ldx*t,y=ry+d[1]*t;
+    const t=-loz/ldz,x=lox+ldx*t,y=ly+ldy*t;
     if(Math.abs(x)>p.w/2||Math.abs(y)>p.h/2)return null;
     return{t,px:(x/p.w+.5)*p.W,py:(.5-y/p.h)*p.H};
   }
@@ -618,7 +619,11 @@ void main(){
       const h=H[hi];
       if(!h.has){if(h.held)release(h);h.aim=false;h.tp=null;h.arc=null;h.hov=null;h.hit=null;continue;}
       const gp=h.gp,ok=gp&&gp.axes&&gp.axes.length>=4,ax=ok?gp.axes[2]:0,ay=ok?gp.axes[3]:0;
-      const trig=pressed(gp,0),sq=pressed(gp,1),mb=pressed(gp,4)||pressed(gp,5);
+      /* левый X (кнопка 4) комната может забрать себе (E.room.onX); меню остаётся на A (правая 4) и Y (5) */
+      const xr=hi===0&&E.session&&E.room&&E.room.onX&&E.room.hasX&&E.room.hasX(E,E.S),xb=xr&&pressed(gp,4);
+      if(xb&&!h.xPrev)try{E.room.onX(E,E.S);}catch(e){}
+      h.xPrev=xb;
+      const trig=pressed(gp,0),sq=pressed(gp,1),mb=(!xr&&pressed(gp,4))||pressed(gp,5);
       const trigDown=trig&&!h.trigPrev,sqDown=sq&&!h.sqPrev,mbDown=mb&&!h.mbPrev;
       h.trigPrev=trig;h.sqPrev=sq;h.mbPrev=mb;
       if(mbDown)E.toggleMenu();
@@ -889,6 +894,7 @@ void main(){
     keys[e.code]=true;if(!E.deskInput)return;
     if(e.code==='KeyE')deskGrab=true;
     if(e.code==='KeyM'||e.code==='Tab'){deskMenu=true;e.preventDefault();}
+    if(e.code==='KeyI'&&!e.repeat&&E.room&&E.room.onX&&E.room.hasX&&E.room.hasX(E,E.S)){try{E.room.onX(E,E.S);}catch(_){}}
     if(e.code==='Space'||e.code==='ControlLeft'||e.code==='ControlRight')e.preventDefault();
     if(e.code==='Enter'&&!e.repeat){deskClick=true;e.preventDefault();}
     if(e.code==='KeyF'&&!e.repeat){E.toggleFullscreen();e.preventDefault();}
