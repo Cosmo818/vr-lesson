@@ -6,7 +6,7 @@
   device  — для шлемов: ученики, результаты, открытия.
 Эндпоинты: GET /api/health, POST /api/sync, GET /api/export (только учитель).
 """
-import base64, getpass, struct, hashlib, ipaddress, json, os, re, secrets, sqlite3, sys, threading, time, hmac
+import base64, calendar, getpass, shutil, struct, hashlib, ipaddress, json, os, re, secrets, sqlite3, sys, threading, time, hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DATA = os.environ.get('DATA_DIR', '/data')
@@ -19,6 +19,8 @@ VERSION = '3'
 SCHEMA = 4
 DB_VERSION = 6  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
 DEFAULT_SCHOOL = 'school-default'
+PURGE_HOLD_DEFAULT = 30  # дней в архиве до окончательного стирания (config purgeHoldDays, 0-3650)
+PURGE_KEEP_YEARS = 5  # копии bak-purge-* хранятся 5 лет; сервер их не удаляет, только показывает, какие устарели
 NEW_FIELDS = ('school', 'year', 'status')
 AUDIT_DETAIL_MAX = 2048
 PW_ITER = 600000  # число итераций PBKDF2; хранится в строке хэша, поднять можно без миграции (перехэш при входе)
@@ -192,6 +194,10 @@ def fill_test(doc, old=None, uid=None):
 def backup_db(tag):
     """Копия базы средствами SQLite рядом с базой; существующие копии не трогаем."""
     path = '%s.bak-%s-%s' % (DB_PATH, tag, time.strftime('%Y%m%d-%H%M%S', time.gmtime()))
+    n = 1
+    while os.path.exists(path):  # две копии в одну секунду: вторая не затирает первую
+        n += 1
+        path = '%s.bak-%s-%s-%d' % (DB_PATH, tag, time.strftime('%Y%m%d-%H%M%S', time.gmtime()), n)
     src = sqlite3.connect(DB_PATH, timeout=10)
     try:
         dst = sqlite3.connect(path)
@@ -444,6 +450,8 @@ def migrate_b74(c):
         c.execute('''CREATE TABLE IF NOT EXISTS trash(kind TEXT NOT NULL, id TEXT NOT NULL, school TEXT, doc TEXT NOT NULL, ts INTEGER NOT NULL, actor_kind TEXT, actor_id TEXT,
             PRIMARY KEY(kind, id))''')
         c.execute('CREATE INDEX IF NOT EXISTS trash_school ON trash(school, ts)')
+        c.execute('CREATE TABLE IF NOT EXISTS purge_marks(kind TEXT NOT NULL, id TEXT NOT NULL, school TEXT, "by" TEXT, ts INTEGER NOT NULL, why TEXT, PRIMARY KEY(kind, id))')
+        c.execute('CREATE INDEX IF NOT EXISTS purge_marks_school ON purge_marks(school, ts)')
         cols = {r[1] for r in c.execute('PRAGMA table_info(uploads)')}
         if 'archived_at' not in cols:
             c.execute('ALTER TABLE uploads ADD COLUMN archived_at INTEGER')
@@ -790,7 +798,7 @@ def ai_module():
 def load_config():
     """/data/config.json: accounts (по умолчанию false — новые эндпоинты отвечают 404), legacyTeacher (true), sessionMinutes (15). Читается на каждый запрос: выключатель действует без перезапуска.
     Это НЕ settings.flags: те синхронизируются и меняются ключом teacher, а флаг безопасности старым ключом включаться не должен."""
-    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False, 'ai': False, 'aiDaily': 30}
+    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False, 'ai': False, 'aiDaily': 30, 'purge': False, 'purgeHoldDays': PURGE_HOLD_DEFAULT}
     try:
         with open(CONFIG_PATH, encoding='utf-8') as f:
             raw = json.load(f)
@@ -799,6 +807,11 @@ def load_config():
                 cfg['accounts'] = raw['accounts']
             if isinstance(raw.get('openRooms'), bool):
                 cfg['openRooms'] = raw['openRooms']
+            if isinstance(raw.get('purge'), bool):
+                cfg['purge'] = raw['purge']
+            h = raw.get('purgeHoldDays')
+            if isinstance(h, int) and not isinstance(h, bool) and 0 <= h <= 3650:
+                cfg['purgeHoldDays'] = h
             if isinstance(raw.get('ai'), bool):
                 cfg['ai'] = raw['ai']
             if isinstance(raw.get('aiDaily'), int) and not isinstance(raw.get('aiDaily'), bool) and 1 <= raw['aiDaily'] <= 500:
@@ -1289,7 +1302,7 @@ def admin_action(c, p, act, b, ip):
     rank = my_rank(p)
     sc = scope(c, p)
     S = lambda k, n=80: str(b.get(k) or '')[:n]  # noqa: E731
-    need_dir = act not in ('student.archive', 'student.restore', 'class.archive', 'class.restore', 'trash.list', 'trash.restore', 'student.pin', 'student.move', 'upload.list', 'upload.delete', 'upload.restore', 'room.publish', 'room.list', 'room.unpublish')
+    need_dir = act not in ('student.archive', 'student.restore', 'class.archive', 'class.restore', 'trash.list', 'trash.restore', 'student.pin', 'student.move', 'upload.list', 'upload.delete', 'upload.restore', 'room.publish', 'room.list', 'room.unpublish', 'purge.mark', 'purge.unmark', 'purge.marks')
     if rank < (3 if need_dir else 2) and not (act == 'closed.list' and rank >= 1):
         audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
         raise AdminError(403, 'Недостаточно прав.')
@@ -1744,6 +1757,8 @@ def admin_action(c, p, act, b, ip):
         c.execute('UPDATE trash SET restored_at = ? WHERE kind = ? AND id = ?', (now, kind, rid))
         audit(c, who, 'trash.restore', kind, nid, row[0], {'from': rid})
         return {'ok': True, 'id': nid}
+    if act in ('purge.preview', 'backup.list', 'purge.mark', 'purge.unmark', 'purge.marks'):
+        return purge_misc(c, p, sc, rank, act, b, now, who)
     raise AdminError(404, 'Нет такого действия.')
 
 
@@ -1768,6 +1783,378 @@ def trash_item(kind, rid, school, raw, ts, actor_kind, actor_id, restored_at=Non
 
 # ---------- поиск и фильтры (шаг 8 PLAN.md): только доступное принципалу, страницы, без хэшей ----------
 PAGE_MAX = 100
+
+
+# ---- Б74 шаг 25: окончательное стирание (только суперадмин), пометки на стирание, список копий ----
+PURGE_KINDS = ('student', 'class', 'school', 'upload', 'trash', 'reset')  # вида user нет: стирание учёток владелец ещё не решил (Б74.8)
+MARK_KINDS = ('student', 'class', 'school', 'upload', 'trash')
+PURGE_MAX_IDS = 50
+PURGE_LEFT = {'classes': 'классов', 'students': 'учеников', 'roles': 'ролей', 'devices': 'шлемов', 'uploads': 'файлов', 'open_rooms': 'комнат'}
+DAY_MS = 86400000
+BAK_RE = re.compile(r'^' + re.escape(os.path.basename(DB_PATH)) + r'\.bak-purge-(\d{8})-(\d{6})(?:-\d+)?$')
+
+
+def purge_info(c, kind, oid):
+    """Что за объект: {'school', 'name', 'archived', 'since' (мс, когда ушёл в архив/корзину), ...} или None, если такого нет. Для проверки прав, пометок и стирания."""
+    if kind == 'student':
+        r = c.execute('SELECT status, updated, school, name, doc FROM students WHERE id = ?', (oid,)).fetchone()
+        if not r:
+            return None
+        return {'archived': r[0] == 'archived', 'since': num(r[1]), 'school': r[2], 'name': r[3] or '', 'doc': load_doc(r[4]) or {}}
+    if kind == 'class':
+        r = c.execute('SELECT status, updated, school, teacherId, doc FROM classes WHERE id = ?', (oid,)).fetchone()
+        if not r:
+            return None
+        d = load_doc(r[4]) or {}
+        return {'archived': r[0] == 'archived', 'since': num(r[1]), 'school': r[2], 'teacher': r[3], 'name': '%s%s' % (d.get('grade', ''), d.get('letter', ''))}
+    if kind == 'school':
+        r = c.execute('SELECT status, updated, name FROM schools WHERE id = ?', (oid,)).fetchone()
+        if not r:
+            return None
+        since = None
+        if r[0] == 'archived':
+            a = c.execute("SELECT MAX(ts) FROM audit_log WHERE action = 'school.update' AND target_kind = 'school' AND target_id = ? AND json_extract(detail, '$.status') = 'archived'", (oid,)).fetchone()[0]
+            since = num(a) if a else num(r[1])
+        return {'archived': r[0] == 'archived', 'since': since, 'school': oid, 'name': r[2] or ''}
+    if kind == 'upload':
+        r = c.execute('SELECT school, name, archived_at, owner, ext, size FROM uploads WHERE id = ?', (oid,)).fetchone()
+        if not r:
+            return None
+        return {'archived': r[2] is not None, 'since': r[2], 'school': r[0], 'name': r[1] or '', 'owner': r[3], 'ext': r[4], 'size': num(r[5])}
+    if kind == 'trash':
+        tk, _, tid = oid.partition(':')
+        r = c.execute('SELECT school, doc, ts FROM trash WHERE kind = ? AND id = ?', (tk, tid)).fetchone() if tk in TRASH_KINDS and tid else None
+        if not r:
+            return None
+        d = load_doc(r[1]) or {}
+        return {'archived': True, 'since': num(r[2]), 'school': r[0], 'name': str(d.get('title') or tk)[:60], 'tkind': tk, 'tid': tid, 'author': d.get('author')}
+    return None
+
+
+def purge_student_counts(c, sid):
+    return {'results': c.execute('SELECT COUNT(*) FROM results WHERE sid = ?', (sid,)).fetchone()[0], 'disc': c.execute('SELECT COUNT(*) FROM disc WHERE sid = ?', (sid,)).fetchone()[0],
+            'feedback_anonymized': c.execute("SELECT COUNT(*) FROM feedback WHERE json_extract(doc, '$.sid') = ?", (sid,)).fetchone()[0]}
+
+
+def purge_plan(c, b, now, hold_days):
+    """Разбор запроса стирания без записи в базу (общий для preview и purge: счётчики совпадают). Пакет — один вид, до 50 id.
+    Возвращает {'kind', 'items', 'total', 'hold_days'}; у каждого item: err (код, текст) или None, from (мс: с этой даты можно стирать), counts."""
+    kind = str(b.get('kind') or '')[:12]
+    if kind == 'user':
+        raise AdminError(400, 'Стирание учёток пока не предусмотрено.')
+    if kind not in PURGE_KINDS:
+        raise AdminError(400, 'Вид: ' + ', '.join(PURGE_KINDS) + '.')
+    ids = [None] if kind == 'reset' else b.get('ids')
+    if not isinstance(ids, list) or not 1 <= len(ids) <= PURGE_MAX_IDS or (kind != 'reset' and not all(isinstance(i, str) and 0 < len(i) <= 80 for i in ids)):
+        raise AdminError(400, 'ids: от 1 до %d строк.' % PURGE_MAX_IDS)
+    ids = list(dict.fromkeys(ids))
+    hold = hold_days * DAY_MS
+    items = []
+    for oid in ids:
+        it = {'id': oid, 'kind': kind, 'counts': {}, 'err': None, 'from': None}
+        if kind == 'reset':
+            reset = num(get_settings(c).get('resetAt'))
+            it['reset'] = reset
+            it['counts'] = {'results': c.execute('SELECT COUNT(*) FROM results WHERE ts < ?', (reset,)).fetchone()[0], 'disc': c.execute('SELECT COUNT(*) FROM disc WHERE ts < ?', (reset,)).fetchone()[0]}
+            if reset <= 0:
+                it['err'] = (400, 'Очистки результатов не было.')
+            elif not any(it['counts'].values()):
+                it['err'] = (400, 'Стирать нечего.')
+            else:
+                it['from'] = reset + hold
+        else:
+            info = purge_info(c, kind, oid)
+            if not info:
+                it['err'] = (404, 'Объекта нет.')
+            elif kind == 'school' and oid == DEFAULT_SCHOOL:
+                it['err'] = (400, 'Школу по умолчанию стирать нельзя.')
+            elif not info['archived']:
+                it['err'] = (400, 'Стирать можно только то, что уже в архиве или в корзине.')
+            else:
+                it['school'], it['from'] = info['school'], num(info['since']) + hold
+                if kind == 'student':
+                    it['counts'] = purge_student_counts(c, oid)
+                elif kind == 'class':
+                    it['name'] = info['name']
+                    sts = c.execute("SELECT id, status, updated FROM students WHERE json_extract(doc, '$.classId') = ?", (oid,)).fetchall()
+                    live = sum(1 for s_ in sts if s_[1] != 'archived')
+                    if live:
+                        it['err'] = (400, 'В классе есть действующие ученики: %d.' % live)
+                    it['students'] = [s_[0] for s_ in sts]
+                    it['counts'] = {'students': len(sts), 'results': 0, 'disc': 0, 'feedback_anonymized': 0}
+                    for s_ in sts:
+                        for k_, v_ in purge_student_counts(c, s_[0]).items():
+                            it['counts'][k_] += v_
+                        it['from'] = max(it['from'], num(s_[2]) + hold)
+                elif kind == 'school':
+                    it['name'] = info['name']
+                    cnt = {'classes': c.execute('SELECT COUNT(*) FROM classes WHERE school = ?', (oid,)).fetchone()[0],
+                           'students': c.execute('SELECT COUNT(*) FROM students WHERE school = ?', (oid,)).fetchone()[0],
+                           'roles': c.execute("SELECT COUNT(*) FROM user_roles WHERE school = ? AND status = 'active'", (oid,)).fetchone()[0],
+                           'devices': c.execute("SELECT COUNT(*) FROM devices WHERE school = ? AND status = 'active'", (oid,)).fetchone()[0],
+                           'uploads': c.execute('SELECT COUNT(*) FROM uploads WHERE school = ?', (oid,)).fetchone()[0],
+                           'open_rooms': c.execute('SELECT COUNT(*) FROM open_rooms WHERE school = ?', (oid,)).fetchone()[0]}
+                    left = {k_: v_ for k_, v_ in cnt.items() if v_}
+                    if left:
+                        it['err'] = (400, 'Школа не пуста: ' + ', '.join('%s %d' % (PURGE_LEFT[k_], v_) for k_, v_ in left.items()) + '.')
+                        it['left'] = left
+                elif kind == 'upload':
+                    it['counts'] = {'bytes': info['size']}
+                    ext = str(info['ext'] or '')
+                    if re.match(r'^[a-z0-9]{1,6}$', ext) and re.match(r'^[a-z0-9]{1,40}$', oid):
+                        it['file'] = os.path.join(UPLOAD_DIR, '%s.%s' % (oid, ext))
+                else:
+                    it['tkind'], it['tid'] = info['tkind'], info['tid']
+        if not it['err'] and it['from'] is not None and it['from'] > now:
+            it['err'] = (400, 'Выдержка в архиве: осталось %d дн.' % (-(-(it['from'] - now) // DAY_MS)))
+        items.append(it)
+    total = {}
+    for it in items:
+        for k_, v_ in it['counts'].items():
+            total[k_] = total.get(k_, 0) + v_
+    return {'kind': kind, 'items': items, 'total': total, 'hold_days': hold_days}
+
+
+def purge_item_public(it):
+    out = {'id': it['id'], 'ok': it['err'] is None, 'from': it['from'], 'counts': it['counts']}
+    if it['err']:
+        out['error'] = it['err'][1]
+    if it.get('name') and it['kind'] in ('class', 'school'):
+        out['name'] = it['name']
+    if it.get('left'):
+        out['left'] = it['left']
+    return out
+
+
+def purge_hard(c, oid, kind, now):
+    c.execute('INSERT OR IGNORE INTO purged(id, ts, kind) VALUES(?, ?, ?)', (oid, now, kind))
+    c.execute('INSERT OR REPLACE INTO deleted(id, ts) VALUES(?, ?)', (oid, now))
+
+
+def purge_erase_student(c, sid, now):
+    """Стирает ученика и всё его: результаты, открытия, корзину результатов; в отзывах (и в корзине отзывов) убирает sid. Возвращает фактические счётчики."""
+    out = {'results': c.execute('DELETE FROM results WHERE sid = ?', (sid,)).rowcount, 'disc': c.execute('DELETE FROM disc WHERE sid = ?', (sid,)).rowcount, 'feedback_anonymized': 0}
+    c.execute("DELETE FROM trash WHERE kind = 'result' AND json_extract(doc, '$.sid') = ?", (sid,))
+    for fid, raw in c.execute("SELECT id, doc FROM feedback WHERE json_extract(doc, '$.sid') = ?", (sid,)).fetchall():
+        d = load_doc(raw) or {}
+        d.pop('sid', None)
+        c.execute('UPDATE feedback SET doc = ? WHERE id = ?', (json.dumps(d, ensure_ascii=False), fid))
+        out['feedback_anonymized'] += 1
+    for tk, tid, raw in c.execute("SELECT kind, id, doc FROM trash WHERE json_extract(doc, '$.sid') = ?", (sid,)).fetchall():
+        d = load_doc(raw) or {}
+        d.pop('sid', None)
+        c.execute('UPDATE trash SET doc = ? WHERE kind = ? AND id = ?', (json.dumps(d, ensure_ascii=False), tk, tid))
+    c.execute('DELETE FROM students WHERE id = ?', (sid,))
+    purge_hard(c, sid, 'student', now)
+    c.execute("DELETE FROM purge_marks WHERE kind = 'student' AND id = ?", (sid,))
+    return out
+
+
+def purge_run(c, who, plan, backup, now):
+    """Само стирание: вызывать под lock в одной транзакции (исключение -> откат). Аудит — по строке на объект, без ФИО. Возвращает фактические суммарные счётчики."""
+    total = {}
+    kind = plan['kind']
+    for it in plan['items']:
+        oid, sch = it['id'], it.get('school')
+        det = {'backup': backup}
+        if kind == 'student':
+            det.update(purge_erase_student(c, oid, now))
+        elif kind == 'class':
+            det.update({'students': 0, 'results': 0, 'disc': 0, 'feedback_anonymized': 0, 'name': it['name']})
+            for sid in it['students']:
+                r = purge_erase_student(c, sid, now)
+                det['students'] += 1
+                for k_, v_ in r.items():
+                    det[k_] += v_
+                audit(c, who, 'purge', 'student', sid, sch, dict(r, via='class', backup=backup))
+            c.execute('DELETE FROM classes WHERE id = ?', (oid,))
+            purge_hard(c, oid, 'class', now)
+            c.execute("DELETE FROM purge_marks WHERE kind = 'class' AND id = ?", (oid,))
+        elif kind == 'school':
+            det['name'] = it['name']
+            c.execute("DELETE FROM devices WHERE school = ? AND status = 'revoked'", (oid,))
+            c.execute('DELETE FROM pair_codes WHERE school = ?', (oid,))
+            c.execute('DELETE FROM schools WHERE id = ?', (oid,))
+            c.execute("DELETE FROM purge_marks WHERE kind = 'school' AND id = ?", (oid,))
+        elif kind == 'upload':
+            det['bytes'] = it['counts']['bytes']
+            if not it.get('file') or not os.path.exists(it['file']):
+                det['file'] = 'missing'
+            c.execute('DELETE FROM uploads WHERE id = ?', (oid,))
+            c.execute("DELETE FROM purge_marks WHERE kind = 'upload' AND id = ?", (oid,))
+        elif kind == 'trash':
+            c.execute('DELETE FROM trash WHERE kind = ? AND id = ?', (it['tkind'], it['tid']))
+            if it['tkind'] in ('test', 'feedback', 'result'):
+                purge_hard(c, it['tid'], it['tkind'], now)
+            c.execute("DELETE FROM purge_marks WHERE kind = 'trash' AND id = ?", (oid,))
+        else:  # reset
+            det['results'] = c.execute('DELETE FROM results WHERE ts < ?', (it['reset'],)).rowcount
+            det['disc'] = c.execute('DELETE FROM disc WHERE ts < ?', (it['reset'],)).rowcount
+        audit(c, who, 'purge', kind, oid if kind != 'reset' else 'reset', sch, det)
+        for k_, v_ in det.items():
+            if isinstance(v_, int):
+                total[k_] = total.get(k_, 0) + v_
+    return total
+
+
+def purge_exec(p, body, ip, now):
+    """POST /api/admin/purge после проверки прав и пароля. Под lock: разбор -> проверка места -> копия базы -> одна транзакция стирания -> файлы. Возвращает (код, ответ)."""
+    who = ('user', p['id'], ip)
+    cfg = load_config()
+
+    def failed(code, msg, why):
+        try:
+            with db() as c:
+                audit(c, who, 'purge.failed', 'purge', str(body.get('kind') or '')[:12], None, {'why': why})
+        except sqlite3.Error:
+            pass
+        return code, {'error': msg}
+    with lock:
+        try:
+            with db() as c:
+                c.execute('DELETE FROM login_fail WHERE k = ?', ('u:adm:' + p['login'],))
+                plan = purge_plan(c, body, now, cfg['purgeHoldDays'])
+        except AdminError as e:
+            return e.code, {'error': e.msg}
+        except sqlite3.Error:
+            return 500, {'error': 'database error'}
+        for it in plan['items']:
+            if it['err']:
+                return it['err'][0], {'error': it['err'][1]}
+        try:
+            if shutil.disk_usage(DATA).free <= 2 * os.path.getsize(DB_PATH):
+                return failed(507, 'Мало места для копии, стирание отменено.', 'space')
+        except OSError:
+            return failed(500, 'Не удалось проверить место для копии, стирание отменено.', 'space')
+        try:
+            name = os.path.basename(backup_db('purge'))
+        except Exception:
+            return failed(500, 'Не удалось сделать копию базы, стирание отменено.', 'backup')
+        try:
+            with db() as c:
+                total = purge_run(c, who, plan, name, now)
+        except Exception:
+            return failed(500, 'Стирание не выполнено: база не изменена. Копия: ' + name, 'run')
+        lost = []
+        for it in plan['items']:
+            if it.get('file'):
+                try:
+                    os.remove(it['file'])
+                except OSError:
+                    lost.append(it['id'])
+        if lost:
+            try:
+                with db() as c:
+                    for oid in lost:
+                        audit(c, who, 'purge.file_failed', 'upload', oid, None, {'file': 'missing'})
+            except sqlite3.Error:
+                pass
+    return 200, {'ok': True, 'purged': len(plan['items']), 'backup': name, 'total': total}
+
+
+def purge_mark_ok(c, p, sc, rank, kind, info):
+    """Права на пометку = права на сам объект (как у его архивации): учитель — свои классы/ученики и свои тесты, директор — школа, выше — по scope."""
+    if rank >= SUPER:
+        return True
+    sch = info['school']
+    if kind == 'student':
+        return student_in_scope(c, sc, info['doc']) or sch in dir_schools(p)
+    if kind == 'class':
+        return class_in_scope(sc, sch, info['teacher']) or sch in dir_schools(p)
+    if kind == 'school':
+        return sch in sc['dir']
+    if kind == 'upload':
+        return info['owner'] == p['id'] or sch in sc['dir']
+    return (info['tkind'] == 'test' and info['author'] == p['id']) or (rank >= 3 and (info['tkind'] in ('test', 'feedback', 'room') or sch in sc['dir']))
+
+
+def purge_misc(c, p, sc, rank, act, b, now, who):
+    S = lambda k, n=80: str(b.get(k) or '')[:n]  # noqa: E731
+    if act in ('purge.preview', 'backup.list'):
+        if rank < SUPER or p['kind'] != 'user':
+            audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
+            raise AdminError(403, 'Только суперадмин.')
+        if act == 'purge.preview':
+            cfg = load_config()
+            if not cfg['purge']:
+                raise AdminError(404, 'not found')
+            plan = purge_plan(c, b, now, cfg['purgeHoldDays'])
+            return {'ok': True, 'kind': plan['kind'], 'items': [purge_item_public(it) for it in plan['items']], 'total': plan['total'], 'hold_days': plan['hold_days'],
+                    'can': all(it['err'] is None for it in plan['items'])}
+        items, old = [], now - int(PURGE_KEEP_YEARS * 365.25 * DAY_MS)
+        for fn in os.listdir(DATA):
+            m = BAK_RE.match(fn)
+            if not m:
+                continue
+            ts = calendar.timegm(time.strptime(m.group(1) + m.group(2), '%Y%m%d%H%M%S')) * 1000
+            try:
+                size = os.path.getsize(os.path.join(DATA, fn))
+            except OSError:
+                size = 0
+            items.append({'name': fn, 'ts': ts, 'size': size, 'expired': ts < old})
+        items.sort(key=lambda x: (-x['ts'], x['name']))
+        return {'ok': True, 'items': items, 'expired': sum(1 for i in items if i['expired'])}
+    if act in ('purge.mark', 'purge.unmark'):
+        kind, oid = S('kind', 12), S('id')
+        if kind not in MARK_KINDS or not oid:
+            raise AdminError(400, 'Вид: ' + ', '.join(MARK_KINDS) + '; нужен id.')
+        row = c.execute('SELECT school, "by" FROM purge_marks WHERE kind = ? AND id = ?', (kind, oid)).fetchone()
+        if act == 'purge.unmark':
+            if not row:
+                raise AdminError(404, 'Пометки нет.')
+            sch = row[0]
+            if not (row[1] == p['id'] or rank >= SUPER or (rank >= 3 and sch in sc['dir'])):
+                audit(c, who, 'admin.denied', kind, oid, sch, {'why': 'scope', 'action': act})
+                raise AdminError(403, 'Снять пометку может тот, кто её поставил, или старший.')
+            c.execute('DELETE FROM purge_marks WHERE kind = ? AND id = ?', (kind, oid))
+            audit(c, who, 'purge.unmark', kind, oid, sch, {})
+            return {'ok': True}
+        info = purge_info(c, kind, oid)
+        if not info:
+            raise AdminError(404, 'Объекта нет.')
+        if kind == 'school' and oid == DEFAULT_SCHOOL:
+            raise AdminError(400, 'Школу по умолчанию стирать нельзя.')
+        if not purge_mark_ok(c, p, sc, rank, kind, info):
+            audit(c, who, 'admin.denied', kind, oid, info['school'], {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это не ваш объект.')
+        if row:
+            return {'ok': True, 'already': True}
+        why = S('why', 200).strip()
+        c.execute('INSERT INTO purge_marks(kind, id, school, "by", ts, why) VALUES(?, ?, ?, ?, ?, ?)', (kind, oid, info['school'], p['id'], now, why))
+        audit(c, who, 'purge.mark', kind, oid, info['school'], {'why': why, 'status': 'archived' if info['archived'] else 'active'})
+        return {'ok': True}
+    # purge.marks: суперадмин — все, остальные — свои школы; учитель — только свои пометки
+    try:
+        page = max(1, int(b.get('page', 1)))
+        size = min(PAGE_MAX, max(1, int(b.get('size', 50))))
+    except (TypeError, ValueError):
+        raise AdminError(400, 'page и size — числа.')
+    where, args = [], []
+    sch = S('school', 40)
+    if rank < SUPER:
+        allowed = scope_schools(c, sc)
+        if sch and sch not in allowed:
+            audit(c, who, 'admin.denied', 'school', sch, None, {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Это чужая школа.')
+        use = [sch] if sch else sorted(allowed)
+        where.append('school IN (%s)' % ','.join('?' * len(use)))
+        args += use
+        if rank < 3:
+            where.append('"by" = ?')
+            args.append(p['id'])
+    elif sch:
+        where.append('school = ?')
+        args.append(sch)
+    rows = c.execute('SELECT kind, id, school, "by", ts, why FROM purge_marks' + (' WHERE ' + ' AND '.join(where) if where else '') + ' ORDER BY ts DESC, id LIMIT ? OFFSET ?',
+                     args + [size + 1, (page - 1) * size]).fetchall()
+    hold = load_config()['purgeHoldDays'] * DAY_MS
+    out = []
+    for k, i, s_, by, ts, why in rows[:size]:
+        info = purge_info(c, k, i)
+        u = c.execute("SELECT COALESCE(NULLIF(name, ''), login) FROM users WHERE id = ?", (by,)).fetchone()
+        out.append({'kind': k, 'id': i, 'school': s_, 'by': u[0] if u else '', 'by_id': by, 'ts': ts, 'why': why or '', 'name': info['name'] if info else '',
+                    'state': 'gone' if not info else 'archived' if info['archived'] else 'active', 'from': num(info['since']) + hold if info and info['archived'] and info['since'] is not None else None})
+    return {'items': out, 'page': page, 'size': size, 'more': len(rows) > size}
 
 
 def like_esc(q):
@@ -2091,6 +2478,31 @@ def cli(argv):
             audit(c, who, 'config.openRooms', 'config', 'openRooms', None, {'from': old, 'to': cfg['openRooms']})
         print('Открытые комнаты %s.' % ('включены' if cfg['openRooms'] else 'выключены'))
         return 0
+    if cmd == 'purge' and len(argv) == 2 and argv[1] in ('on', 'off'):
+        cfg = load_config()
+        old = cfg['purge']
+        cfg['purge'] = argv[1] == 'on'
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.purge', 'config', 'purge', None, {'from': old, 'to': cfg['purge']})
+        print('Окончательное стирание %s.' % ('включено' if cfg['purge'] else 'выключено'))
+        return 0
+    if cmd == 'set-purge-hold' and len(argv) == 2:
+        try:
+            m = int(argv[1])
+        except ValueError:
+            m = -1
+        if not 0 <= m <= 3650:
+            print('Выдержка в архиве — от 0 до 3650 дней.', file=sys.stderr)
+            return 1
+        cfg = load_config()
+        old = cfg['purgeHoldDays']
+        cfg['purgeHoldDays'] = m
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.purge_hold', 'config', 'purgeHoldDays', None, {'from': old, 'to': m})
+        print('Выдержка в архиве перед стиранием: %d дн.' % m)
+        return 0
     if cmd == 'ai' and len(argv) in (2, 3) and argv[1] in ('on', 'off', 'status', 'limit'):
         cfg = load_config()
         if argv[1] == 'limit':
@@ -2154,7 +2566,7 @@ def cli(argv):
             out.close()
         print('Целостность %s, учеников %d' % (res, n))
         return 0 if res == 'ok' else 1
-    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | backup <файл> | check <файл> | ai on|off|status|limit <N>', file=sys.stderr)
+    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | purge on|off | set-purge-hold <0..3650> | backup <файл> | check <файл> | ai on|off|status|limit <N>', file=sys.stderr)
     return 2
 
 
@@ -2519,8 +2931,10 @@ class H(BaseHTTPRequestHandler):
         if not cfg['accounts']:
             return self.reply(404, {'error': 'not found'})
         ip = client_ip(self)
+        if self.path.split('?')[0] in ('/api/admin/purge', '/api/admin/purge.preview') and not cfg['purge']:
+            return self.reply(404, {'error': 'not found'})
         n = num(self.headers.get('Content-Length'))
-        if n <= 0 or n > (70000 if self.path.endswith('/room.publish') else 4096):
+        if n <= 0 or n > (70000 if self.path.endswith('/room.publish') else 8192 if self.path.split('?')[0].endswith('/purge') else 4096):
             return self.reply(413, {'error': 'body size'})
         try:
             body = json.loads(self.rfile.read(n).decode('utf-8'))
@@ -2536,15 +2950,22 @@ class H(BaseHTTPRequestHandler):
         stored = None
         need_pw = False
         wait = 0
+        denied = False
+        is_purge = act == 'purge'
         with lock, db() as c:
             u = session_user(c, tok)
             if u:
                 roles = principal_roles(c, u['id'])
                 stored = c.execute('SELECT pw FROM users WHERE id = ?', (u['id'],)).fetchone()[0]
-                need_pw = act in ('role.assign', 'role.remove', 'invite.create') and body.get('role') in ('director', 'region_admin', 'district_admin')
-                wait = throttle(c, 'adm:' + u['login'], ip, now) if need_pw else 0
+                if is_purge and my_rank({'roles': roles}) < SUPER:  # не суперадмин: отказ до пароля, с записью в журнал
+                    audit(c, ('user', u['id'], ip), 'admin.denied', 'admin', act, None, {'why': 'rank'})
+                    denied = True
+                need_pw = is_purge or (act in ('role.assign', 'role.remove', 'invite.create') and body.get('role') in ('director', 'region_admin', 'district_admin'))
+                wait = throttle(c, 'adm:' + u['login'], ip, now) if need_pw and not denied else 0
         if not u:
             return self.reply(401, {'error': 'no session'})
+        if denied:
+            return self.reply(403, {'error': 'Недостаточно прав.'})
         p = {'kind': 'user', 'id': u['id'], 'login': u['login'], 'roles': roles, 'ip': ip}
         if need_pw:  # смена директора — «четыре глаза»: повторный ввод пароля (PLAN 5.1)
             if wait:
@@ -2554,6 +2975,8 @@ class H(BaseHTTPRequestHandler):
                     register_fail(c, 'adm:' + u['login'], ip, now)
                 return self.reply(403, {'error': 'Подтвердите действие своим паролем.'})
         body.pop('password', None)
+        if is_purge:
+            return self.reply(*purge_exec(p, body, ip, now))
         try:
             with lock, db() as c:
                 if need_pw:
