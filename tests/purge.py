@@ -140,6 +140,18 @@ try:
     ok(sql("select count(*) from purge_marks where kind = 'student' and id = 'sA4'")[0][0] == 0, 'пометка снята из таблицы')
     ok(sql("select count(*) from audit_log where action = 'purge.mark'")[0][0] >= 6, 'каждая пометка — строка аудита')
 
+    ok(adm('dirA', 'purge.mark', {'kind': 'class', 'id': 'cA2', 'why': 'строка\nвторая   ' + 'я' * 500})[0] == 200, 'пометка с длинным why')
+    w = sql("select why from purge_marks where id = 'cA2'")[0][0]
+    ok('\n' not in w and len(w) <= 200 and w.startswith('строка вторая я'), 'why: без переводов строк, до 200 знаков')
+    sql("delete from purge_marks where id = 'cA2'")
+    # объект ушёл в чужую школу: директор старой школы имени не видит, суперадмин видит текущую школу
+    ok(adm('dirA', 'purge.mark', {'kind': 'student', 'id': 'sA4'})[0] == 200, 'пометка sA4 до переноса')
+    sql("update students set school = 's-b', doc = json_set(doc, '$.school', 's-b', '$.classId', 'cB1') where id = 'sA4'")
+    it = [i for i in adm('dirA', 'purge.marks')[1]['items'] if i['id'] == 'sA4']
+    ok(len(it) == 1 and it[0]['name'] == '' and it[0]['state'] == 'moved' and it[0]['from'] is None, 'purge.marks: объект ушёл в чужую школу -> без имени, state moved')
+    it = [i for i in adm('sup', 'purge.marks')[1]['items'] if i['id'] == 'sA4']
+    ok(it and it[0]['school'] == 's-b' and it[0]['name'].startswith('Ученик'), 'purge.marks: суперадмин видит имя и текущую школу')
+    sql("delete from purge_marks where id = 'sA4'")
     # --- права, пароль, троттлинг
     d0 = len(audits("action = 'admin.denied'"))
     for k in ('dirA', 'tA1', 'regN'):
@@ -272,6 +284,12 @@ try:
     ok(json.loads(audits("action = 'purge' and target_id = 'u3'")[0][3]).get('file') == 'missing' and 'file' not in json.loads(audits("action = 'purge' and target_id = 'u2'")[0][3]), 'нет файла на диске -> detail file=missing, не молча')
     ok(sql("select count(*) from purge_marks where id = 'u2'")[0][0] == 0, 'пометка файла снята')
 
+    # --- не удалось удалить файл / путь не строился
+    sql("insert into uploads(id, school, owner, kind, name, size, ext, sha, status, created, archived_at) values('u5', 's-a', ?, 'sound', 'f', 10, 'ogg', 'x', 'approved', ?, ?), ('u6', 's-a', ?, 'sound', 'f', 10, 'o/g', 'x', 'approved', ?, ?)", UID['tA1'], NOW, NOW - 40 * DAY, UID['tA1'], NOW, NOW - 40 * DAY)
+    os.makedirs(os.path.join(tmp, 'uploads', 'u5.ogg'))  # remove() на каталоге не удастся
+    st, b = pg({'kind': 'upload', 'ids': ['u5', 'u6']})
+    ok(st == 200 and b.get('lost') == ['u5'], 'файл не удалился -> в ответе lost [u5] (%s)' % b)
+    ok(json.loads(audits("action = 'purge' and target_id = 'u6'")[0][3]).get('file') == 'skipped' and len(audits("action = 'purge.file_failed' and target_id = 'u5'")) == 1, 'ext не прошёл проверку -> file=skipped; сбой удаления — purge.file_failed')
     # --- корзина
     sql("insert into trash(kind, id, school, doc, ts) values('test', 't-1', 'school-default', '{\"title\":\"Тест\"}', ?), ('test', 't-2', 'school-default', '{\"title\":\"Старый\"}', ?)", NOW, NOW - 40 * DAY)
     ok(pg({'kind': 'trash', 'ids': ['test:t-1']})[1].get('error', '').startswith('Выдержка'), 'корзина: свежая запись — выдержка')

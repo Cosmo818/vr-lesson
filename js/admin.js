@@ -58,13 +58,13 @@ async function loadPeople(){
       const tr=el('tr');
       if(tab==='students'){
         tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.className||'—'));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.hasPin?'есть':'нет'));
-        const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreStudent(it)]]:[['Перенести',()=>moveStudent(it)],['Сбросить код',()=>resetPin(it)],['В архив',()=>archiveStudent(it),'red']]);tr.appendChild(td);
+        const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreStudent(it)]]:[['Перенести',()=>moveStudent(it)],['Сбросить код',()=>resetPin(it)],['В архив',()=>archiveStudent(it),'red']]);actions(td,[['Пометить на стирание',()=>markDialog('student',it.id,'ученик «'+it.name+'»')]]);if(view==='archived'&&isSuper())actions(td,[['Стереть навсегда',()=>purgeDialog('student',it.id,'ученик «'+it.name+'»'),'red']]);tr.appendChild(td);
       }else if(tab==='teachers'||tab==='admins'){
         tr.appendChild(el('td',it.name||it.login));tr.appendChild(el('td',it.login));tr.appendChild(el('td',it.roles.map(roleText).join(', ')));
         const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreUser(it)]]:[['Сбросить пароль',()=>resetPw(it)],['В архив',()=>archive(it),'red']]);tr.appendChild(td);
       }else{
         tr.appendChild(el('td',it.name));tr.appendChild(el('td',schoolName(it.school)));tr.appendChild(el('td',it.teacherName||'— не назначен —'));tr.appendChild(el('td',it.students));
-        const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreClass(it)]]:[['Передать / перенести',()=>assignClass(it)],['В архив',()=>archiveClass(it),'red']]);tr.appendChild(td);
+        const td=el('td');actions(td,view==='archived'?[['Вернуть',()=>restoreClass(it)]]:[['Передать / перенести',()=>assignClass(it)],['В архив',()=>archiveClass(it),'red']]);actions(td,[['Пометить на стирание',()=>markDialog('class',it.id,'класс '+it.name)]]);if(view==='archived'&&isSuper())actions(td,[['Стереть навсегда',()=>purgeDialog('class',it.id,'класс '+it.name),'red']]);tr.appendChild(td);
       }
       t.appendChild(tr);
     }
@@ -188,7 +188,7 @@ async function loadSchools(){
     const shown=o.data.items.filter(x=>shView==='archived'?x.status==='archived':x.status!=='archived');
     for(const it of shown){const tr=el('tr');tr.appendChild(el('td',it.name));tr.appendChild(el('td',it.region||'—'));tr.appendChild(el('td',it.district||'—'));tr.appendChild(el('td',it.id));
       const td=el('td');if(isSuper()){
-        if(shView==='archived')actions(td,[['Вернуть',()=>setSchoolStatus(it,'active')]]);
+        if(shView==='archived')actions(td,[['Вернуть',()=>setSchoolStatus(it,'active')],['Стереть навсегда',()=>purgeDialog('school',it.id,'школа «'+it.name+'»'),'red']]);
         else{actions(td,[['Изменить',()=>editSchool(it)]]);if(it.id!=='school-default')actions(td,[['В архив',()=>setSchoolStatus(it,'archived'),'red']]);}
       }tr.appendChild(td);t.appendChild(tr);}
     if(!shown.length){const tr=el('tr'),td=el('td',shView==='archived'?'В архиве пусто.':'Школ нет.',{colspan:'5',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
@@ -260,6 +260,8 @@ async function loadTrash(more){
       const td=el('td');
       if(it.restored_at)td.appendChild(el('span','возвращено '+fmt(it.restored_at),{class:'muted small'}));
       else if(TRASH_BACK.includes(it.kind))actions(td,[['Вернуть копию',()=>restoreTrash(it)]]);
+      actions(td,[['Пометить на стирание',()=>markDialog('trash',it.kind+':'+it.id,(TRASH_RU[it.kind]||it.kind)+' «'+(it.title||'—')+'»')]]);
+      if(isSuper())actions(td,[['Стереть навсегда',()=>purgeDialog('trash',it.kind+':'+it.id,(TRASH_RU[it.kind]||it.kind)+' «'+(it.title||'—')+'»'),'red']]);
       tr.appendChild(td);t.appendChild(tr);
     }
     if(!more&&!r.data.items.length){const tr=el('tr'),td=el('td','Корзина пуста.',{colspan:'6',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
@@ -271,6 +273,79 @@ async function restoreTrash(it){
   const r=await S.admin('trash.restore',{kind:it.kind,id:it.id});if(bad(r,'trErr'))return;
   say('Копия возвращена.');loadTrash();
 }
+
+/* ---------- окончательное стирание и пометки (Б74.2, Б74.8): стирает только суперадмин, пароль вводится заново; остальные помечают ---------- */
+const PURGE_UNITS=[['students','учеников'],['results','результатов'],['disc','открытий'],['feedback_anonymized','отзывов станут анонимными'],['bytes','байт файла']];
+const MARK_RU={student:'Ученик',class:'Класс',school:'Школа',upload:'Файл',trash:'Корзина'};
+const fmtDay=ts=>ts?new Date(ts).toLocaleDateString('ru-RU'):'—';
+function refreshLists(){for(const f of[loadPeople,loadSchools,()=>loadTrash(),()=>loadMarks()])try{Promise.resolve(f()).catch(()=>{});}catch(_){}}
+async function purgeDialog(kind,id,label){
+  const pv=await S.admin('purge.preview',{kind,ids:[id]});
+  if(bad(pv,null))return;
+  const d=pv.data,it=d.items[0]||{},b=el('div');
+  b.appendChild(el('p','Будет стёрто навсегда: '+label+'.'));
+  const parts=PURGE_UNITS.filter(u=>(d.total||{})[u[0]]>0).map(u=>d.total[u[0]]+' '+u[1]);
+  if(parts.length)b.appendChild(el('p','Вместе с ним: '+parts.join(', ')+'.'));
+  if(d.can)b.appendChild(el('p','Выдержка в архиве прошла (с '+fmtDay(it.from)+').',{class:'muted small'}));
+  else b.appendChild(el('p',(it.error||'Сейчас стереть нельзя.')+(it.from?' Стирать можно с '+fmtDay(it.from)+'.':''),{class:'note err'}));
+  b.appendChild(el('p','Это нельзя отменить. Перед стиранием сервер сделает копию базы. Файлы есть только в ночной копии (14 дней). Стёртые данные остаются в копиях базы, пока их не удалит владелец.',{class:'muted small'}));
+  const pw=el('input',null,{type:'password',inputmode:'text',autocomplete:'current-password',maxlength:'200',id:'prgPw'});
+  b.appendChild(labelled('Ваш пароль для подтверждения',pw));
+  const pr=dialog('Стереть навсегда',b,'Стереть навсегда');
+  const okb=document.querySelector('.shade .row .btn:not(.ghost)');okb.disabled=true;
+  pw.oninput=()=>{okb.disabled=!(pw.value&&d.can);};
+  const yes=await pr;const pass=pw.value;pw.value='';
+  if(!yes)return;
+  const r=await S.admin('purge',{kind,ids:[id],password:pass});
+  if(r.status===429){say('Слишком часто, подождите минуту.',true);return;}
+  if(r.status===403){say('Пароль не подошёл или нет прав.',true);return;}
+  if(bad(r,null))return;
+  say('Стёрто навсегда. Копия базы перед стиранием: '+r.data.backup+(r.data.lost&&r.data.lost.length?'. Файл удалить не удалось: '+r.data.lost.join(', '):'')+'.');
+  refreshLists();
+}
+async function markDialog(kind,id,label){
+  const b=el('div'),why=el('input',null,{maxlength:'200',placeholder:'например, ушёл из школы',id:'mkWhy'});
+  b.appendChild(el('p',label+' будет помечен на стирание. Сам объект не меняется; решение примет суперадмин.'));
+  b.appendChild(labelled('Почему',why));
+  b.appendChild(el('p','Не пишите ФИО и другие личные данные: причина видна в списке пометок и в журнале.',{class:'muted small'}));
+  if(!await dialog('Пометить на стирание',b,'Пометить'))return;
+  const r=await S.admin('purge.mark',{kind,id,why:why.value});
+  if(bad(r,null))return;
+  say(r.data.already?'Уже помечено.':'Помечено на стирание.');loadMarks().catch(()=>{});
+}
+let mkPage=1;
+async function archiveMark(it){
+  if(!ask('Убрать в архив: '+(it.name||it.id)+'?'))return;
+  const m={student:['student.archive',{student_id:it.id}],class:['class.archive',{class_id:it.id}],school:['school.update',{id:it.id,status:'archived'}],upload:['upload.delete',{id:it.id}]}[it.kind];
+  if(m&&await act(m[0],m[1],'Убрано в архив.',null))refreshLists();
+}
+async function loadMarks(more){
+  await safe('Пометки','mkErr',async()=>{
+    secErr('mkErr','');if(!more)mkPage=1;else mkPage++;
+    const t=$('mkTbl');
+    if(isSuper()&&!more){const bk=await S.admin('backup.list',{}),n=$('bkNote');n.textContent='';n.hidden=true;
+      if(bk.status===200&&bk.data.expired>0){n.hidden=false;n.appendChild(el('div','Копии стирания старше 5 лет: '+bk.data.expired+'. Решает владелец, сервер их сам не удаляет.'));
+        for(const f of bk.data.items.filter(x=>x.expired))n.appendChild(el('div',f.name+' · '+fmtDay(f.ts),{class:'small muted'}));}}
+    const r=await S.admin('purge.marks',{page:mkPage,size:50});
+    if(r.data&&r.data.expired){lock('Сессия закончилась. Войдите снова.');return;}
+    if(r.status!==200){if(!more)t.textContent='';$('mkMore').hidden=true;secErr('mkErr','Раздел «Помечено на стирание» временно недоступен.');return;}
+    if(!more){t.textContent='';const h=el('tr');for(const c of['Вид','Объект','Школа','Кто пометил','Когда','Почему','Состояние',''])h.appendChild(el('th',c));t.appendChild(h);}
+    for(const it of r.data.items){
+      const tr=el('tr'),st=it.state==='archived'?'в архиве'+(it.from?', стирать можно с '+fmtDay(it.from):''):it.state==='active'?'действует':it.state==='moved'?'перенесён в другую школу':'уже стёрт';
+      tr.appendChild(el('td',MARK_RU[it.kind]||it.kind));tr.appendChild(el('td',it.name||'—'));tr.appendChild(el('td',it.school?schoolName(it.school):'—'));tr.appendChild(el('td',it.by||'—'));tr.appendChild(el('td',fmt(it.ts)));tr.appendChild(el('td',it.why||'—'));tr.appendChild(el('td',st));
+      const td=el('td'),lab=(MARK_RU[it.kind]||'')+' «'+(it.name||it.id)+'»',list=[];
+      if(isSuper()){
+        if(it.state==='active'&&it.kind!=='trash')list.push(['В архив',()=>archiveMark(it)]);
+        if(it.state==='archived')list.push(['Стереть навсегда',()=>purgeDialog(it.kind,it.id,lab),'red']);
+        list.push(['Снять пометку',()=>unmark(it)]);
+      }else list.push(['Снять',()=>unmark(it)]);
+      actions(td,list);tr.appendChild(td);t.appendChild(tr);
+    }
+    if(!more&&!r.data.items.length){const tr=el('tr'),td=el('td','Пометок нет.',{colspan:'8',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
+    $('mkMore').hidden=!r.data.more;
+  });
+}
+async function unmark(it){const r=await S.admin('purge.unmark',{kind:it.kind,id:it.id});if(bad(r,null))return;say('Пометка снята.');loadMarks().catch(()=>{});}
 
 /* ---------- история школы (Б74.2, Б74.8): сервер сам режет выдачу по роли; ip приходит только суперадмину ---------- */
 const ACT_RU={'auth.login':'вход в систему','student.create':'добавлен ученик','student.archive':'ученик отправлен в архив','student.restore':'ученик возвращён из архива','student.move':'ученик перенесён','student.pin_reset':'сброшен код входа ученика','student.pin_change':'ученик сменил код входа',
@@ -324,11 +399,11 @@ async function loadHistory(more){
 }
 
 /* ---------- разделы ---------- */
-const SECS=['people','invites','devices','closed','schools','trash','history'];
+const SECS=['people','invites','devices','closed','schools','trash','marks','history'];
 function openTab(name){
   for(const b of $('tabs').children)b.classList.toggle('on',b.dataset.t===name);
   for(const x of SECS)$('s-'+x).hidden=x!==name;
-  if(name==='trash')loadTrash();else if(name==='history')loadHistory();
+  if(name==='trash')loadTrash();else if(name==='marks')loadMarks();else if(name==='history')loadHistory();
 }
 function switchBar(id,get,set){
   $(id).onclick=e=>{const b=e.target.closest('[data-s]');if(!b||b.dataset.s===get())return;set(b.dataset.s);for(const x of $(id).children)x.classList.toggle('on',x===b);};
@@ -342,7 +417,7 @@ function show(){
   const onlyExp=!isSuper()&&!isDir();
   $('who').textContent=(S.account.who()||'')+' · '+(isSuper()?'администратор':S.account.roles().some(r=>r.role==='region_admin')?'региональный администратор':isReg()?'администратор района':isDir()?'директор':'специалист');
   $('tabAdm').hidden=!(isSuper()||isReg());
-  const tabOk={people:!onlyExp,invites:!onlyExp,devices:!onlyExp,closed:isSuper()||isExp(),schools:isSuper(),trash:!onlyExp&&(isSuper()||isDir()),history:!onlyExp&&(isSuper()||isDir())};
+  const tabOk={people:!onlyExp,invites:!onlyExp,devices:!onlyExp,closed:isSuper()||isExp(),schools:isSuper(),trash:!onlyExp&&(isSuper()||isDir()),marks:!onlyExp&&(isSuper()||isDir()),history:!onlyExp&&(isSuper()||isDir())};
   for(const b of $('tabs').children)b.hidden=!tabOk[b.dataset.t];
   openTab(onlyExp?'closed':'people');
   const roleSel=$('invRole');roleSel.textContent='';for(const [v,t] of isSuper()?[['teacher','Учитель'],['director','Директор'],['expert','Специалист'],['region_admin','Региональный администратор'],['district_admin','Администратор района']]:[['teacher','Учитель'],['expert','Специалист']])roleSel.appendChild(el('option',t,{value:v}));
@@ -358,7 +433,7 @@ function bind(){
   let tm=null;$('fQ').oninput=()=>{clearTimeout(tm);tm=setTimeout(()=>{page=1;loadPeople();},300);};
   $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(b)openTab(b.dataset.t);};
   switchBar('stSw',()=>view,v=>{view=v;page=1;loadPeople();});switchBar('shSw',()=>shView,v=>{shView=v;loadSchools();});
-  $('trKind').onchange=$('trSchool').onchange=()=>loadTrash();$('trMore').onclick=()=>loadTrash(true);
+  $('mkMore').onclick=()=>loadMarks(true);$('trKind').onchange=$('trSchool').onchange=()=>loadTrash();$('trMore').onclick=()=>loadTrash(true);
   $('hiSchool').onchange=$('hiKind').onchange=$('hiPeriod').onchange=()=>loadHistory();$('hiMore').onclick=()=>loadHistory(true);
   $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
   $('devLimGo').onclick=async()=>{const r=await S.admin('school.update',{id:$('devSchool').value,device_limit:$('devLim').value});if(!bad(r,'devErr')){say('Лимит сохранён.');loadDevices();}};

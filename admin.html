@@ -54,7 +54,7 @@ th{color:var(--muted);font-weight:600;font-size:13px}
   <div id="app" hidden>
     <header><h1>VR-урок: администрирование</h1><span style="display:flex;gap:16px;align-items:center"><span id="who" class="muted small"></span><a href="teacher.html">Кабинет учителя</a><a href="#" id="out">Выйти</a></span></header>
     <div id="msg" class="note" hidden></div>
-    <div class="tabs" id="tabs"><button class="tab on" data-t="people">Люди и классы</button><button class="tab" data-t="invites">Приглашения</button><button class="tab" data-t="devices">Шлемы</button><button class="tab" data-t="closed" id="tabClosed" hidden>Закрытые результаты</button><button class="tab" data-t="schools" id="tabSchools" hidden>Школы</button><button class="tab" data-t="trash" id="tabTrash" hidden>Корзина</button><button class="tab" data-t="history" id="tabHistory" hidden>История</button></div>
+    <div class="tabs" id="tabs"><button class="tab on" data-t="people">Люди и классы</button><button class="tab" data-t="invites">Приглашения</button><button class="tab" data-t="devices">Шлемы</button><button class="tab" data-t="closed" id="tabClosed" hidden>Закрытые результаты</button><button class="tab" data-t="schools" id="tabSchools" hidden>Школы</button><button class="tab" data-t="trash" id="tabTrash" hidden>Корзина</button><button class="tab" data-t="marks" id="tabMarks" hidden>Помечено на стирание</button><button class="tab" data-t="history" id="tabHistory" hidden>История</button></div>
 
     <section id="s-people">
       <h2>Люди и классы</h2>
@@ -127,6 +127,17 @@ th{color:var(--muted);font-weight:600;font-size:13px}
         <div id="trErr" class="note err" hidden></div>
         <div class="scroll"><table id="trTbl"></table></div>
         <div class="row"><button class="btn ghost" id="trMore" hidden>Показать ещё</button></div>
+      </div>
+    </section>
+
+    <section id="s-marks" hidden>
+      <h2>Помечено на стирание</h2>
+      <div class="card">
+        <p class="muted small">Здесь собраны объекты, которые сотрудники предложили стереть. Пометка ничего не стирает: окончательно стирает только суперадмин, после выдержки в архиве и с повторным вводом пароля.</p>
+        <div id="bkNote" class="note" hidden></div>
+        <div id="mkErr" class="note err" hidden></div>
+        <div class="scroll"><table id="mkTbl"></table></div>
+        <div class="row"><button class="btn ghost" id="mkMore" hidden>Показать ещё</button></div>
       </div>
     </section>
 

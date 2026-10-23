@@ -193,21 +193,30 @@ def fill_test(doc, old=None, uid=None):
 
 def backup_db(tag):
     """Копия базы средствами SQLite рядом с базой; существующие копии не трогаем."""
-    path = '%s.bak-%s-%s' % (DB_PATH, tag, time.strftime('%Y%m%d-%H%M%S', time.gmtime()))
     n = 1
-    while os.path.exists(path):  # две копии в одну секунду: вторая не затирает первую
-        n += 1
-        path = '%s.bak-%s-%s-%d' % (DB_PATH, tag, time.strftime('%Y%m%d-%H%M%S', time.gmtime()), n)
-    src = sqlite3.connect(DB_PATH, timeout=10)
-    try:
-        dst = sqlite3.connect(path)
+    while True:  # O_EXCL: две копии в одну секунду не затирают друг друга; права 0o600 с самого создания
+        path = '%s.bak-%s-%s%s' % (DB_PATH, tag, time.strftime('%Y%m%d-%H%M%S', time.gmtime()), '' if n == 1 else '-%d' % n)
         try:
-            src.backup(dst)
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            break
+        except FileExistsError:
+            n += 1
+    try:
+        src = sqlite3.connect(DB_PATH, timeout=10)
+        try:
+            dst = sqlite3.connect(path)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
         finally:
-            dst.close()
-    finally:
-        src.close()
-    os.chmod(path, 0o600)
+            src.close()
+    except BaseException:
+        try:
+            os.remove(path)  # неполная копия — наш собственный временный файл
+        except OSError:
+            pass
+        raise
     return path
 
 
@@ -1978,7 +1987,9 @@ def purge_run(c, who, plan, backup, now):
             c.execute("DELETE FROM purge_marks WHERE kind = 'school' AND id = ?", (oid,))
         elif kind == 'upload':
             det['bytes'] = it['counts']['bytes']
-            if not it.get('file') or not os.path.exists(it['file']):
+            if not it.get('file'):
+                det['file'] = 'skipped'  # id или расширение не прошли проверку: путь не строился, файл не трогаем
+            elif not os.path.exists(it['file']):
                 det['file'] = 'missing'
             c.execute('DELETE FROM uploads WHERE id = ?', (oid,))
             c.execute("DELETE FROM purge_marks WHERE kind = 'upload' AND id = ?", (oid,))
@@ -2049,7 +2060,10 @@ def purge_exec(p, body, ip, now):
                         audit(c, who, 'purge.file_failed', 'upload', oid, None, {'file': 'missing'})
             except sqlite3.Error:
                 pass
-    return 200, {'ok': True, 'purged': len(plan['items']), 'backup': name, 'total': total}
+    out = {'ok': True, 'purged': len(plan['items']), 'backup': name, 'total': total}
+    if lost:
+        out['lost'] = lost  # строки стёрты, а файл удалить не удалось
+    return 200, out
 
 
 def purge_mark_ok(c, p, sc, rank, kind, info):
@@ -2119,7 +2133,7 @@ def purge_misc(c, p, sc, rank, act, b, now, who):
             raise AdminError(403, 'Это не ваш объект.')
         if row:
             return {'ok': True, 'already': True}
-        why = S('why', 200).strip()
+        why = ' '.join(S('why', 400).split())[:200]  # без переводов строк
         c.execute('INSERT INTO purge_marks(kind, id, school, "by", ts, why) VALUES(?, ?, ?, ?, ?, ?)', (kind, oid, info['school'], p['id'], now, why))
         audit(c, who, 'purge.mark', kind, oid, info['school'], {'why': why, 'status': 'archived' if info['archived'] else 'active'})
         return {'ok': True}
@@ -2149,8 +2163,14 @@ def purge_misc(c, p, sc, rank, act, b, now, who):
                      args + [size + 1, (page - 1) * size]).fetchall()
     hold = load_config()['purgeHoldDays'] * DAY_MS
     out = []
+    seen = None if rank >= SUPER else scope_schools(c, sc)
     for k, i, s_, by, ts, why in rows[:size]:
         info = purge_info(c, k, i)
+        if info and seen is not None and info['school'] not in seen:  # объект ушёл в чужую школу: имя, состояние и дату не показываем
+            out.append({'kind': k, 'id': i, 'school': s_, 'by': '', 'by_id': by, 'ts': ts, 'why': why or '', 'name': '', 'state': 'moved', 'from': None})
+            continue
+        if info:
+            s_ = info['school']  # школа — текущая у объекта, не из пометки
         u = c.execute("SELECT COALESCE(NULLIF(name, ''), login) FROM users WHERE id = ?", (by,)).fetchone()
         out.append({'kind': k, 'id': i, 'school': s_, 'by': u[0] if u else '', 'by_id': by, 'ts': ts, 'why': why or '', 'name': info['name'] if info else '',
                     'state': 'gone' if not info else 'archived' if info['archived'] else 'active', 'from': num(info['since']) + hold if info and info['archived'] and info['since'] is not None else None})
