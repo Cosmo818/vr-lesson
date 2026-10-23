@@ -140,7 +140,7 @@ function hooks(){
     const bw=(W-90)/2;
     VR.openRooms(st.grade||5).forEach((k,i)=>{
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';
-      p.button(36+(i%2)*(bw+18),252+((i/2)|0)*100,bw,86,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(k);},{bg:E.roomId===k?'#f8fafc':sub.color,fg:'#0b1020',size:36});
+      p.button(36+(i%2)*(bw+18),252+((i/2)|0)*100,bw,86,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(VR.entryOf(k));},{bg:E.roomId===k||(E.roomId||'').indexOf(k+'-')===0?'#f8fafc':sub.color,fg:'#0b1020',size:36});
     });
     p.button(36,780,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
     p.button(54+bw,780,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});

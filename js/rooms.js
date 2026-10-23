@@ -11,7 +11,10 @@ const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;
 const YL=Math.PI/2,YR=-Math.PI/2;
 const faceTo=(pos,tx,tz)=>Math.atan2(tx-pos[0],tz-pos[2]);
 const backDoor=(E,z)=>E.door(0,z||5.88,Math.PI,'hall','← Холл','#94a3b8');
-VR.ORDER=ORDER;VR.openRooms=openRooms;VR.RU={shuffle,fmt,faceTo,backDoor,YL,YR};
+const hubDoor=E=>E.door(0,5.88,Math.PI,'chem-hub','← Химия','#4ade80');
+/* куда ведёт дверь/кнопка предмета: у «Химии» — узел разделов (флаг chemTree), у остальных — сама комната */
+const entryOf=k=>{const s=D.subjects[k];return s&&s.entry&&(!s.flag||VR.flags.on(s.flag))?s.entry:k;};
+VR.ORDER=ORDER;VR.openRooms=openRooms;VR.entryOf=entryOf;VR.RU={shuffle,fmt,faceTo,backDoor,hubDoor,YL,YR};
 
 /* ======================= ТЕСТ ======================= */
 function makeQuiz(E,subj,pos,yaw,opt){
@@ -99,12 +102,12 @@ ROOMS.hall={
       openRooms(st&&st.grade?st.grade:5).forEach((k,i)=>{
         const sub=D.subjects[k],x=50+(i%2)*474,y=170+((i/2)|0)*104;
         const b=best&&best[k].best!==null?'  ✓ '+best[k].best+'/'+best[k].total:'';
-        p.button(x,y,450,92,sub.title+b,()=>E.goRoom(k),{bg:sub.color,fg:'#0b1020',size:40});
+        p.button(x,y,450,92,sub.title+b,()=>E.goRoom(entryOf(k)),{bg:sub.color,fg:'#0b1020',size:40});
       });
       p.text('Стик вперёд и отпустить — телепорт  ·  Стик вбок — поворот  ·  Кнопка A или X — меню\nТесты учителя — на стене у тебя за спиной',50,700,{size:28,color:'#cbd5e1',lh:38});
     }});
     const gr=E.student&&E.student.grade?E.student.grade:5;
-    for(const [k,x,z,yaw] of DOORS)if(VR.Store.roomOn(k,gr))E.door(x,z,yaw,k,D.subjects[k].title,D.subjects[k].color);
+    for(const [k,x,z,yaw] of DOORS)if(VR.Store.roomOn(k,gr))E.door(x,z,yaw,entryOf(k),D.subjects[k].title,D.subjects[k].color);
     makeQuiz(E,'gen',[0,1.6,5.86],Math.PI,{teacherOnly:true});
     if(VR.custom)VR.custom.hallPanel(E,gr);
     if(VR.learn)VR.learn.hallPanel(E);
@@ -300,7 +303,7 @@ ROOMS.chem={
   title:'Химия',env:{floor:[.05,.14,.09],wall:[.1,.26,.17],trim:[.35,1,.6],grid:[.3,.9,.5]},spawn:{x:0,z:-.9},
   hint:'Химия: наведи на элемент таблицы и нажми хват (ПКМ/E) — он прилетит в руку. Сосуд слева — слияние (до 6 атомов), справа — разложение молекул (режим «Химия») или распад (режим «Ядра»), посередине — склад, куда ложатся результаты; реакция идёт по нажатию на светящуюся табличку на краю стола. Слева от стола — дерево элемента; X (левая рука) или I — карточка. Атомы молекул — на столе слева.',
   build(E,S){
-    backDoor(E);
+    if(VR.flags.on('chemTree'))hubDoor(E);else backDoor(E);
     S.lab=null;try{VR.chemLab.build(E,S);S.lab=true;}catch(e){S.lab=null;E.toast('Лаборатория временно недоступна','#fca5a5');}
     S.found=new Set();
     if(E.student&&E.student.id)for(const k of VR.Store.discoveries(E.student.id))if(k.indexOf('chem:mol_')===0)S.found.add(k.slice(9));
