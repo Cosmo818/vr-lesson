@@ -31,7 +31,7 @@ try:
                 f.write(base64.b64decode(r['url'].split(',')[1]))
             ok(not r['over'], '%s: ничего не за краем (%s)' % (name, r['over'][:3]))
 
-        ev("VR.app.E.goRoom('play')"); pg.wait_for_timeout(800)
+        ev("VR.app.E.loadRoom('hall')"); pg.wait_for_timeout(500); pg.screenshot(path=os.path.join(shots, 'play_hall_front.png')); ev("VR.app.E.goRoom('play')"); pg.wait_for_timeout(800)
         pg.screenshot(path=os.path.join(shots, 'play_room_white.png'))
         ev("()=>{const E=VR.app.E;E.targets.find(t=>t.id==='c12').sel({});}")
         pg.wait_for_timeout(300)
@@ -50,6 +50,12 @@ try:
         ev("()=>{const E=VR.app.E,S=E.S;S.me=-1;S.flip=true;}")
         pg.wait_for_timeout(300)
         pg.screenshot(path=os.path.join(shots, 'play_room_black.png'))
+        ev("VR.app.E.goRoom('ein')"); pg.wait_for_timeout(900)
+        pg.screenshot(path=os.path.join(shots, 'ein_room.png'))
+        save('S.field', 'ein_field.png'); save('S.hints', 'ein_hints.png'); save('S.ctl', 'ein_ctl.png')
+        ev("()=>{const S=VR.app.E.S;S.mode='pick';const g=S.g,sol=g.pz.sol;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r)&&(r+c)%3)VR.einstein.click(g,c,r,sol[r][c],1);S.field.dirty=true;S.ctl.dirty=true}")
+        pg.wait_for_timeout(300)
+        save('S.field', 'ein_field_half.png')
         ok(not errs, 'ошибок страницы нет: %s' % errs[:2])
         b.close()
 finally:

@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/einroom.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -519,6 +519,37 @@ function makeCtx(xr){
     run(5);Pl.cpanel.dirty=true;run(3);cb(5).fn();run(150);
     Pl.panel.dirty=true;run(3);Pl.panel.btns[Pl.panel.btns.length-1].fn();ok(Pl.cpanel.show===false,'игровая: та же кнопка скрывает панель настроек');
     ok(Pl.me===-1&&Pl.flip&&Pl.hist.length===1&&Pl.pos.t===-1,'игровая: за чёрных доска повёрнута, белые (компьютер) ходят первыми');
+  }
+  { /* Эйнштейн: логика и комната */
+    const X=VR.einstein;let bad=0,rules=0;
+    for(let s=1;s<=25;s++){const pz=X.generate(s),g=X.newGame(pz);
+      for(let ch=true;ch;){ch=false;for(const r of pz.rules)if(X.applyRule(r,g.P))ch=true;}
+      if(!g.P.solved()||!g.P.valid(pz.sol))bad++;rules+=pz.rules.length;}
+    ok(bad===0&&rules>25*12,'эйнштейн: 25 головоломок решаются одними подсказками, решение верное (подсказок в среднем '+(rules/25).toFixed(1)+')');
+    const a=X.generate(7),b=X.generate(7);
+    ok(JSON.stringify(a.sol)===JSON.stringify(b.sol)&&JSON.stringify(a.rules)===JSON.stringify(b.rules),'эйнштейн: один и тот же сид — одна и та же головоломка (для соревнований)');
+    const sol=a.sol.map(r=>r.slice());ok(sol.every(r=>r.slice().sort().join('')==='123456'),'эйнштейн: в каждой строке по 6 разных фишек');
+    const g=X.newGame(a);let c0=-1,r0=-1;for(let r=0;r<6&&c0<0;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r)){c0=c;r0=r;break;}
+    const wrong=[1,2,3,4,5,6].find(e=>e!==a.sol[r0][c0]&&g.P.can(c0,r0,e));
+    ok(X.click(g,c0,r0,wrong,1)==='fail'&&g.status==='lose','эйнштейн: выбор неверной фишки — проигрыш');
+    const g2=X.newGame(a);ok(X.click(g2,c0,r0,a.sol[r0][c0],3)==='fail','эйнштейн: исключение верной фишки — проигрыш');
+    const g3=X.newGame(a);let last='';for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g3.P.defined(c,r)&&g3.status==='play')last=X.click(g3,c,r,a.sol[r][c],1);
+    ok(g3.status==='win'&&last==='win','эйнштейн: верные ходы ведут к победе');
+  }
+  E.goRoom('ein');run(25);
+  { const Z=E.S,X=VR.einstein;
+    ok(Z.g&&Z.g.status==='play'&&Z.field&&Z.hints&&Z.ctl,'эйнштейн-комната: три панели и партия');
+    Z.field.dirty=true;Z.hints.dirty=true;Z.ctl.dirty=true;run(4);
+    ok(Z.field.btns.length>=100&&Z.hints.btns.length>=15,'эйнштейн-комната: у поля и подсказок есть области нажатия ('+Z.field.btns.length+' / '+Z.hints.btns.length+')');
+    ok(!Z.field.over.length&&!Z.hints.over.length&&!Z.ctl.over.length,'эйнштейн-комната: ничего не за краем панели');
+    const g=Z.g,sol=g.pz.sol;let done=false;
+    Z.mode='pick';let tries=0;
+    while(g.status==='play'&&tries++<40){let hit=false;for(let r=0;r<6&&!hit;r++)for(let c=0;c<6&&!hit;c++)if(!g.P.defined(c,r)){Z.field.dirty=true;run(3);
+      /* найти область нужной фишки: перебор областей клетки (c,r) */
+      const x0=100+c*316,y0=24+r*232,e=sol[r][c],k=e-1,want=[x0+8+(k%3)*100,y0+16+((k/3)|0)*104];
+      const bi=Z.field.btns.findIndex(b=>b.x===want[0]&&b.y===want[1]);if(bi>=0){Z.field.btns[bi].fn({});hit=true;}}
+      if(!hit)break;}
+    ok(g.status==='win'&&Z.ctl.dirty!==undefined,'эйнштейн-комната: клики по областям фишек решают головоломку ('+g.status+')');
   }
   E.goRoom('logic');run(25);
   B=E.S;
