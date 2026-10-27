@@ -442,6 +442,7 @@ void main(){
     for(const p of E.panels)try{gl.deleteTexture(p.tex);}catch(e){}
     for(const m of E.roomMeshes)delMesh(m);
     E.stopSounds();
+    E.noTp=[];if(E.hud)E.hud.attachOff=null;
     E.tables=[];E.panels=[];E.bodies=[];E.boxes=[];E.targets=[];E.staticTargets=[];E.statics=[];E.envStatics=[];E.roomMeshes=[];E.conf=[];
     E.gravity=9.8;for(const h of E.H){h.held=null;h.hit=null;}
     E.room=R;E.roomId=id;E.S={};
@@ -488,11 +489,19 @@ void main(){
   const headWorld=()=>{const vp=curFrame&&refSpace&&curFrame.getViewerPose(refSpace);return vp?vp.transform.position:{x:P.tx,z:P.tz};};
   function teleportTo(x,z){const h=headBase(),r=R2(P.yaw,h.x,h.z);P.tx=x-r[0];P.tz=z-r[1];applyPlayer();moved=true;}
   function turnBy(d){const hw=headWorld(),h=headBase();P.yaw+=d;const r=R2(P.yaw,h.x,h.z);P.tx=hw.x-r[0];P.tz=hw.z-r[1];applyPlayer();moved=true;}
-  /* стик назад — шаг назад на полметра (против взгляда), не выходя за стены и мебель */
+  /* цвета маркера и пунктира дуги телепорта: [нельзя, можно]; точка и пунктир всегда разные */
+  E.tpCol={disc:[[1,.25,.3],[.15,.85,1]],arc:[[1,.85,.3],[1,1,1]]};
+  /* запретные зоны телепорта и шага: комната задаёт их прямоугольниками (E.addNoTp), чтобы нельзя было зайти за стол стенда */
+  E.noTp=[];
+  E.addNoTp=(x0,z0,x1,z1)=>{E.noTp.push({x0:Math.min(x0,x1),x1:Math.max(x0,x1),z0:Math.min(z0,z1),z1:Math.max(z0,z1)});};
+  E.tpOk=(x,z,m)=>{
+    const inside=E.open?Math.hypot(x,z)<5.3:(Math.abs(x)<E.bound&&Math.abs(z)<E.bound);
+    return inside&&!E.boxes.some(b=>Math.abs(x-b.x)<b.hx+m&&Math.abs(z-b.z)<b.hz+m)&&!E.noTp.some(q=>x>=q.x0&&x<=q.x1&&z>=q.z0&&z<=q.z1);
+  };
+  /* стик назад — шаг назад на полметра (против взгляда), не выходя за стены, мебель и запретные зоны */
   function stepBack(){
     const hw=headWorld(),f=E.headPose().f,x=hw.x-f[0]*.5,z=hw.z-f[1]*.5;
-    const inside=E.open?Math.hypot(x,z)<5.3:(Math.abs(x)<E.bound&&Math.abs(z)<E.bound);
-    if(inside&&!E.boxes.some(b=>Math.abs(x-b.x)<b.hx+.3&&Math.abs(z-b.z)<b.hz+.3)){teleportTo(x,z);E.beep(420,.05,'sine',.03);}
+    if(E.tpOk(x,z,.3)){teleportTo(x,z);E.beep(420,.05,'sine',.03);}
   }
   function respawn(){
     D.x=E.spawn.x;D.z=E.spawn.z;D.yaw=0;D.pitch=-.08;D.h=1.6;D.jy=0;D.jv=0;
@@ -511,6 +520,8 @@ void main(){
 
   /* ---------- руки и ввод ---------- */
   const H=E.H;
+  /* система отсчёта предмета в руке: в шлеме — указка (targetRay), чтобы «дальше/ближе» шло вдоль луча, а не вдоль оси ручки; за столом — как раньше */
+  const hf=h=>E.session?h.r:h.g;
   const pressed=(gp,i)=>!!(gp&&gp.buttons&&gp.buttons[i]&&gp.buttons[i].pressed);
   function setHand(h,g,r,src,gp,dt,withVel){
     h.has=true;h.src=src;h.gp=gp;h.g=g;h.r=r;
@@ -604,8 +615,7 @@ void main(){
     if(!L){st.tp=null;return;}
     if(!st.tp)st.tp=[L.x,L.z];else{const k=1-Math.exp(-dt/TP_TAU);st.tp[0]+=(L.x-st.tp[0])*k;st.tp[1]+=(L.z-st.tp[1])*k;}
     const x=st.tp[0],z=st.tp[1];
-    const inside=E.open?Math.hypot(x,z)<5.3:(Math.abs(x)<E.bound&&Math.abs(z)<E.bound);
-    h.tp={x,z,valid:inside&&!E.boxes.some(b=>Math.abs(x-b.x)<b.hx+.4&&Math.abs(z-b.z)<b.hz+.4)};
+    h.tp={x,z,valid:E.tpOk(x,z,.4)};
     /* точки дуги: парабола + поправка, чтобы конец совпал со сглаженным кольцом, + прогиб от скорости поворота (затухает к концам) */
     const pts=st.pts||(st.pts=[]),vs=Math.hypot(st.v[0],st.v[1],st.v[2]);pts.length=0;
     const vy=st.d[1]*ARC_SPEED,ex=x-(o[0]+st.d[0]*ARC_SPEED*L.t),ez=z-(o[2]+st.d[2]*ARC_SPEED*L.t),bend=Math.min(.35,vs*.02*Math.hypot(L.x-o[0],L.z-o[2])*.25);
@@ -634,8 +644,8 @@ void main(){
         /* хват издалека: луч на предмет + «держать» (боковая кнопка, ПКМ или E) — предмет прилетает в руку */
         if(!b&&sqDown){b=bodyOnRay(h,10);if(!b&&E.room&&E.room.pick){const r=rayHit(h);if(r&&r.kind==='panel'&&r.t<10){try{b=E.room.pick(E,E.S,h,r)||null;}catch(e){b=null;}}}pull=!!b;}
         if(b){b.held=hi;b.by=sqDown?'sq':'trig';
-          if(pull){const o=M.mul(M.inv(h.g),b.m);o[12]=0;o[13]=0;o[14]=E.session?0:-.3;b.off=o;b.pull=0;b.pullFrom=b.p.slice();}
-          else{b.off=M.mul(M.inv(h.g),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),b.m));b.pull=null;}
+          if(pull){const o=M.mul(M.inv(hf(h)),b.m);o[12]=0;o[13]=0;o[14]=E.session?0:-.3;b.off=o;b.pull=0;b.pullFrom=b.p.slice();}
+          else{b.off=M.mul(M.inv(hf(h)),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),b.m));b.pull=null;}
           h.held=b;used=true;E.buzz(h,.4,30);E.beep(pull?620:520,.06);
           if(E.room&&E.room.onGrab)try{E.room.onGrab(E,E.S,b);}catch(e){}}
       }
@@ -651,23 +661,34 @@ void main(){
         else{try{h.hit.tg.sel(h);}catch(e){try{console.log('target error',e);}catch(_){}}}
       }
       if(!E.session)continue;
-      if(h.held&&h.held.off&&Math.abs(ay)>.25){const o=h.held.off;o[14]=Math.max(-6,Math.min(0,o[14]+ay*dt*1.5));}
-      if(!h.held){
+      /* стик при удержании: вперёд/назад — предмет дальше/ближе вдоль указки, влево/вправо — вращение вокруг оси указки.
+         Пока предмет в руке и после его отпускания, пока стик не вернулся в центр, шаги, повороты и телепорт этой руки заперты:
+         иначе отклонённый стик после броска сам включал дугу и телепортировал, а ax поворачивал игрока */
+      const held=h.held&&h.held.off;
+      if(held&&Math.abs(ay)>.25){const o=h.held.off;o[14]=Math.max(-6,Math.min(0,o[14]+ay*dt*1.5));}
+      if(held&&Math.abs(ax)>.25){
+        const o=h.held.off,n=M.mul(M.rotZ(-ax*dt*2.4),[o[0],o[1],o[2],0,o[4],o[5],o[6],0,o[8],o[9],o[10],0,0,0,0,1]);
+        n[12]=o[12];n[13]=o[13];n[14]=o[14];h.held.off=n;
+      }
+      if(h.held)h.stickLock=true;else if(Math.abs(ax)<.3&&Math.abs(ay)<.3)h.stickLock=false;
+      if(h.held||h.stickLock){h.aim=false;h.tp=null;h.arc=null;}
+      else{
         if(ay<-.6){h.aim=true;aimTeleport(h,E.dt||.016);}
         else if(h.aim&&ay>-.25){if(h.tp&&h.tp.valid){teleportTo(h.tp.x,h.tp.z);E.beep(660,.08);E.buzz(h,.3,30);}h.aim=false;h.tp=null;h.arc=null;}
-      }else{h.aim=false;h.tp=null;h.arc=null;}
-      if(ay>.7&&!h.held&&!h.stepLock){h.stepLock=true;stepBack();}else if(ay<.3)h.stepLock=false;
-      if(Math.abs(ax)>.7&&!h.turnLock){h.turnLock=true;turnBy(ax>0?-Math.PI/6:Math.PI/6);}
+      }
+      if(ay>.7&&!h.held&&!h.stickLock&&!h.stepLock){h.stepLock=true;stepBack();}else if(ay<.3)h.stepLock=false;
+      if(Math.abs(ax)>.7&&!h.turnLock){h.turnLock=true;if(!h.held&&!h.stickLock)turnBy(ax>0?-Math.PI/6:Math.PI/6);}
       else if(Math.abs(ax)<.3)h.turnLock=false;
     }
   }
 
+  E._input=handleInput;/* вход для тестов: прогон логики рук (стик, хват, телепорт) с поддельным состоянием E.H */
   /* ---------- физика ---------- */
   function stepBody(b,dt){
     if(b.fixed)return;
     if(b.held!==null){
       const h=H[b.held];
-      if(h&&h.has){const m=M.mul(h.g,b.off);b.p=[m[12],m[13],m[14]];m[12]=m[13]=m[14]=0;b.m=m;b.v=[0,0,0];
+      if(h&&h.has){const m=M.mul(hf(h),b.off);b.p=[m[12],m[13],m[14]];m[12]=m[13]=m[14]=0;b.m=m;b.v=[0,0,0];
         if(b.pull!=null&&b.pull<1){b.pull=Math.min(1,b.pull+dt/.25);const k=1-Math.pow(1-b.pull,3),f=b.pullFrom;b.p=[f[0]+(b.p[0]-f[0])*k,f[1]+(b.p[1]-f[1])*k,f[2]+(b.p[2]-f[2])*k];}}
       return;
     }
@@ -739,8 +760,9 @@ void main(){
         if(VR.controllers)VR.controllers.draw(add,mesh,h,hi,E.ctlOpt);
         else add(mesh.cube,M.mul(h.g,M.mul(M.trans(0,0,.04),M.scale(.045,.035,.13))),hi?[.95,.55,.2]:[.3,.55,1],.2);
         let len=2.5,col=[.6,.8,1];
-        if(h.aim){col=h.tp&&h.tp.valid?[.72,.6,1]:[1,.5,.6];len=h.tp?0:1.5;if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),col,1);
-          if(h.arc&&h.arc.pts)for(const q of h.arc.pts)add(mesh.sphere,TRS(q[0],q[1],q[2],.014,.014,.014),col,1);}
+        /* точка и пунктир дуги разных цветов, чтобы пунктир не сливался с точкой: точка — голубая (можно) / красная (нельзя), пунктир — белый / жёлтый */
+        if(h.aim){const ok=h.tp&&h.tp.valid;col=ok?[.72,.6,1]:[1,.5,.6];len=h.tp?0:1.5;if(h.tp)add(mesh.disc,TRS(h.tp.x,.02,h.tp.z,.35,1,.35),E.tpCol.disc[ok?1:0],1);
+          if(h.arc&&h.arc.pts)for(const q of h.arc.pts)add(mesh.sphere,TRS(q[0],q[1],q[2],.016,.016,.016),E.tpCol.arc[ok?1:0],1);}
         else if(h.hit){len=h.hit.t;col=h.hit.kind==='panel'&&h.hit.bi<0?[.7,.75,.9]:[1,.9,.3];}
         if(!h.held&&len>0)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-len/2),M.scale(.004,.004,len))),col,1);
       }
@@ -751,7 +773,8 @@ void main(){
       if(!p.show)continue;
       if(p.attach){
         if(!E.session)continue;const h=H[p.attach==='left'?0:1];if(!h.has)continue;
-        add(mesh.quad,M.mul(h.g,M.mul(M.trans(0,.045,.06),M.mul(M.rotX(-Math.PI/4),M.scale(p.w,p.h,1)))),[1,1,1],0,1,p.tex);
+        const ao=p.attachOff||[0,.045,.06];
+        add(mesh.quad,M.mul(h.g,M.mul(M.trans(ao[0],ao[1],ao[2]),M.mul(M.rotX(-Math.PI/4),M.scale(p.w,p.h,1)))),[1,1,1],0,1,p.tex);
       }else add(mesh.quad,panelModel(p),[1,1,1],0,1,p.tex);
     }
   }

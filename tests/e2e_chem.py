@@ -34,9 +34,16 @@ try:
             ok(not r['over'], '%s: ничего не за краем (%s)' % (name, r['over'][:3]))
             return r
 
+        def board_tabs(tag):
+            """доска справа — все четыре вкладки в картинки (Реакция, График, История, Справка), на каждой ничего не за краем"""
+            for i, nm in enumerate(['react', 'graph', 'hist', 'help']):
+                ev("i=>{const S=VR.app.E.S;S.btab=i;S.board.dirty=true}", i)
+                save('S.board', 'chem_board_%s_%s.png' % (tag, nm))
+            ev("()=>{const S=VR.app.E.S;S.btab=0;S.board.dirty=true;}")
+
         r = save('S.pt', 'chem_table.png'); ok(r['W'] == 2048 and r['H'] == 1152, 'текстура таблицы 2048x1152')
         ok(ev('VR.app.E.S.pt.btns.length') == 118, 'после рисования по-прежнему 118 областей')
-        save('S.board', 'chem_board_empty.png')
+        save('S.board', 'chem_board_empty.png'); board_tabs('empty')
         for i in range(3):
             save('S.tabs[%d]' % i, 'chem_tab%d.png' % i)
         for z in (6, 26, 92, 118, 34):
@@ -67,7 +74,7 @@ try:
         ok(press(0), 'кнопка «Слияние» активна')
         pg.wait_for_timeout(300)
         ok(ev("VR.app.E.S.last.kind") == 'molecule' and ev("VR.app.E.S.last.mol.key") == 'H2O', 'по кнопке H + H + O → H2O')
-        save('S.board', 'chem_board_water.png')
+        save('S.board', 'chem_board_water.png'); board_tabs('water')
         clear()
         save('S.modeTab', 'chem_mode_chem.png')
         ev("(()=>{const E=VR.app.E,L=VR.chemLab;for(const [z,a,dx] of[[6,12,-.06],[2,4,.06]]){const b=L.makeBody(E,z,a,[L.FV[0]+dx,.95,L.FV[1]]);b.v=[0,0,0];}})()")
@@ -82,7 +89,7 @@ try:
         ok(press(0), 'нажатие на табличку слияния')
         pg.wait_for_function("VR.app.E.S.last&&VR.app.E.S.last.kind==='fusion'", timeout=30000)
         pg.wait_for_timeout(300)
-        save('S.board', 'chem_board_fusion.png')
+        save('S.board', 'chem_board_fusion.png'); board_tabs('fusion')
         ok(ev("VR.app.E.bodies.some(b=>b.data.zn===8&&b.data.a===16&&VR.app.E.S.slots.includes(b))"), 'после слияния кислород-16 лежит в гнезде склада')
         clear()
         put(92, 238, 1)
@@ -90,7 +97,7 @@ try:
         ok(press(2), 'нажатие на табличку распада')
         pg.wait_for_function("VR.app.E.S.last&&VR.app.E.S.last.kind==='alpha'", timeout=30000)
         pg.wait_for_timeout(300)
-        save('S.board', 'chem_board_alpha.png')
+        save('S.board', 'chem_board_alpha.png'); board_tabs('alpha')
         clear()
         put(1, 1, 1); pg.wait_for_timeout(600)
         ok(not ev("VR.app.E.S.vs[1].ready") and not press(2), 'распад водорода: табличка тусклая, не нажимается')
@@ -109,7 +116,7 @@ try:
         ok(press(2), 'кнопка «Разложение»')
         pg.wait_for_timeout(1200)
         ok(ev("VR.app.E.bodies.filter(b=>b.data.zn&&VR.app.E.S.slots.includes(b)).map(b=>b.data.zn).sort().join()") == '1,1,8', 'H2O → H, H, O в складе')
-        save('S.board', 'chem_board_decomp.png')
+        save('S.board', 'chem_board_decomp.png'); board_tabs('decomp')
         clear()
         # ---- дерево элемента и справка
         ev("()=>{VR.app.E.S.nuclear=true;}")
@@ -120,11 +127,12 @@ try:
         save('S.tree', 'chem_tree_C_chemmode.png')
         ev("()=>{VR.app.E.S.nuclear=true;}")
         ok(ev("()=>{const t=VR.chemLab.treeOf(6,12,true),s=t.up.map(u=>VR.nuc.el(u.to.z).sym);return s.includes('O')&&s.includes('N')}"), 'дерево C содержит O и N')
-        ev("()=>{const E=VR.app.E,S=E.S;E.paintPanel(S.tree);S.tree.hover=S.tree.btns.findIndex(b=>b.z===8);VR.chemLab.update(E,S,.016);E.paintPanel(S.tip);}")
+        ev("()=>{const E=VR.app.E,S=E.S;E.paintPanel(S.tree);S.cardZ=0;S.tree.hover=S.tree.btns.findIndex(b=>b.z===8);VR.chemLab.update(E,S,.016);}")
+        ok(ev('VR.app.E.S.tip===undefined') and ev('VR.app.E.S.cardZ') == 0, 'наведение на O в дереве C ничего не выбирает, отдельной справочной панели слева нет')
+        ev("()=>{const E=VR.app.E,S=E.S;S.tree.btns.find(b=>b.z===8).fn(E.H[1]);VR.chemLab.update(E,S,.016);}")
         pg.wait_for_timeout(100)
-        ok(ev('VR.app.E.S.tip.show') and ev('VR.app.E.S.tip.data.z') == 8, 'наведение на O в дереве C показывает справку')
-        pg.wait_for_timeout(300)
-        save('S.tip', 'chem_tip_O.png')
+        ok(ev('VR.app.E.S.cur.z') == 8 and ev('VR.app.E.S.cardZ') == 8 and ev('VR.app.E.S.card.show'), 'курок на O в дереве C: элемент выбран, справка — на планшете')
+        save('S.card', 'chem_card_from_tree_O.png')
         ev("()=>{VR.app.E.S.tree.hover=-1;}")
         ev("()=>{VR.app.E.S.nuclear=false;}")
         # ---- карточка: клавиша I

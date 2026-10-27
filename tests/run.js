@@ -333,7 +333,7 @@ function makeCtx(xr){
       ok(L.treeOf(1,1,true).down===null,'дерево H: распада нет');}
     Ch.nuclear=true;Ch.cur=null;L.setCur(Ch,92,238);run(3);E.paintPanel(Ch.tree);
     ok(Ch.tree.btns.length>=4&&Ch.tree.btns.some(b=>b.z===92)&&Ch.tree.btns.length===6,'дерево Fe нарисовано: области наведения есть (3 слияния, центр, 2 осколка); рамки за краем проверяет e2e_chem');
-    {const i=Ch.tree.btns.findIndex(b=>b.z===93);Ch.tree.hover=i;L.update(E,Ch,.016);ok(Ch.tip.show&&Ch.tip.data.z===93,'наведение на узел дерева показывает справку');Ch.tree.hover=-1;L.update(E,Ch,.016);ok(!Ch.tip.show,'справка скрывается');}
+    {const i=Ch.tree.btns.findIndex(b=>b.z===93),hb=Ch.tree.btns[i];Ch.cardZ=0;Ch.tree.hover=i;L.update(E,Ch,.016);ok(Ch.tip===undefined&&Ch.cur.z===92&&Ch.cardZ===0,'наведение на узел дерева только подсвечивает: справочной панели слева нет, выбор не меняется');hb.fn(E.H[1]);L.update(E,Ch,.016);ok(Ch.cur.z===93&&Ch.cardZ===93&&Ch.el===92&&Ch.card.show,'курок на узле дерева выбирает элемент: центр дерева, ячейка в таблице и планшет (справка только там)');Ch.tree.hover=-1;L.update(E,Ch,.016);}
     Ch.nuclear=false;
     /* карточка в VR: на тыльной стороне левой руки, параллельно плоскости запястья */
     {const M=VR.M,g=M.mul(M.trans(1,1.2,-1),M.mul(M.rotY(.7),M.rotX(.3))),m=L.cardModel(g),nrm=(a,b,c)=>{const l=Math.hypot(a,b,c);return[a/l,b/l,c/l];},dot=(u,v)=>u[0]*v[0]+u[1]*v[1]+u[2]*v[2];
@@ -616,6 +616,54 @@ function makeCtx(xr){
   frames(30);
   const qz=XE.panels.find(p=>p.quiz);qz.quizApi.start();
   ok(qz.quiz.qs.every(q=>q.q.band==='d'),'вопросы гостя — для 9–11 класса');
+  /* ---------- рука в шлеме: предмет вдоль указки, вращение стиком, запреты (очередь Айрата 27.10, п. 2–6) ---------- */
+  {
+    const M=XV.M,Hn=XE.H[1],ray=(th)=>{const c=Math.cos(th),s=Math.sin(th),m=X.mat(0,1.3,0);m[5]=c;m[6]=s;m[9]=-s;m[10]=c;return m;};
+    const dot3=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>{const l=Math.hypot(a[0],a[1],a[2])||1;return[a[0]/l,a[1]/l,a[2]/l];};
+    XE.loadRoom('chem');frames(3);
+    /* запретные зоны телепорта: за столом и под ним нельзя, перед столом можно; в другой комнате зоны сбрасываются */
+    ok(!XE.tpOk(0,-4,.4)&&!XE.tpOk(3.5,-3.6,.4)&&!XE.tpOk(0,-2.4,.4)&&!XE.tpOk(1.5,-2.2,.4)&&XE.tpOk(0,-1,.4)&&XE.tpOk(3,0,.4),'телепорт: за столом и под столом нельзя, перед столом и сбоку можно');
+    /* таймер и планшет на левой руке не перекрываются; без смещения перекрывались бы */
+    {const quad=(m)=>{const out=[];for(let i=0;i<=8;i++)for(let j=0;j<=8;j++){const u=i/8-.5,v=j/8-.5;out.push([m[0]*u+m[4]*v+m[12],m[1]*u+m[5]*v+m[13],m[2]*u+m[6]*v+m[14]]);}return out;};
+      const hudM=ao=>M.mul(M.trans(ao[0],ao[1],ao[2]),M.mul(M.rotX(-Math.PI/4),M.scale(XE.hud.w,XE.hud.h,1))),card=quad(XV.chemLab.cardModel(M.id()));
+      const gap=ao=>{let d=1e9;for(const a of quad(hudM(ao)))for(const b of card)d=Math.min(d,Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]));return d;};
+      ok(Array.isArray(XE.hud.attachOff)&&gap(XE.hud.attachOff)>.03&&gap([0,.045,.06])<.01,'таймер и планшет элементов на левой руке не перекрываются (зазор '+gap(XE.hud.attachOff).toFixed(3)+' м; со старым положением — пересечение)');}
+    /* цвета маркера и пунктира дуги различаются (и для «можно», и для «нельзя») */
+    {const dd=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);ok(dd(XE.tpCol.disc[0],XE.tpCol.arc[0])>.5&&dd(XE.tpCol.disc[1],XE.tpCol.arc[1])>.5,'дуга телепорта: цвет точки и пунктира разные');}
+    /* предмет в руке: «дальше/ближе» вдоль указки (она наклонена на 35° от оси ручки), а не вдоль ручки */
+    const th=.61,R=X.hands.right;R.g=X.mat(0,1.3,0);R.r=ray(th);R.gp.axes[2]=0;R.gp.axes[3]=0;frames(2);
+    const fwd=norm([-R.r[8],-R.r[9],-R.r[10]]),gz=norm([-R.g[8],-R.g[9],-R.g[10]]);
+    XE.gravity=0;const b=XV.chemLab.makeBody(XE,26,56,[0,1.3,-.05]);b.v=[0,0,0];
+    for(const o of XE.bodies)if(o!==b)o.fixed=true;
+    R.gp.buttons[1].pressed=true;frames(2);
+    ok(b.held===1&&Hn.held===b,'хват рядом с рукой берёт предмет');
+    const yaw0=XE.player.yaw,p0=b.p.slice();R.gp.axes[3]=-1;frames(25);R.gp.axes[3]=0;frames(1);
+    const mv=norm([b.p[0]-p0[0],b.p[1]-p0[1],b.p[2]-p0[2]]),moved=Math.hypot(b.p[0]-p0[0],b.p[1]-p0[1],b.p[2]-p0[2]);
+    ok(moved>.2&&dot3(mv,fwd)>.995&&dot3(mv,gz)<.9,'стик вперёд двигает предмет вдоль указки (cos к указке '+dot3(mv,fwd).toFixed(4)+', к ручке '+dot3(mv,gz).toFixed(3)+')');
+    /* вращение вокруг оси указки стиком влево/вправо; игрок не поворачивается, дуга не включается */
+    const c0=[b.m[0],b.m[1],b.m[2]],ax0=dot3(c0,fwd);R.gp.axes[2]=1;frames(25);R.gp.axes[2]=0;frames(1);
+    const c1=norm([b.m[0],b.m[1],b.m[2]]),turned=Math.hypot(c1[0]-c0[0],c1[1]-c0[1],c1[2]-c0[2]);
+    ok(turned>.3&&Math.abs(dot3(c1,fwd)-ax0)<.01,'стик вправо вращает предмет вокруг оси указки (поворот '+turned.toFixed(2)+', ось не уходит)');
+    ok(XE.player.yaw===yaw0&&!Hn.aim,'пока предмет в руке, стик не поворачивает игрока и не включает телепорт');
+    /* стик отклонён и предмет отпущен: телепорт и поворот не срабатывают, пока стик не вернулся в центр */
+    R.gp.axes[3]=-1;frames(2);R.gp.buttons[1].pressed=false;frames(3);
+    const tx=XE.player.tx,tz=XE.player.tz;
+    ok(b.held===null&&!Hn.aim,'отпустил хват при отклонённом стике — дуга телепорта не включилась');
+    R.gp.axes[3]=0;frames(3);
+    ok(XE.player.tx===tx&&XE.player.tz===tz&&XE.player.yaw===yaw0,'вернул стик в центр — игрока не телепортировало и не повернуло');
+    R.r=ray(.2);frames(1);R.gp.axes[3]=-1;frames(3);
+    ok(Hn.aim===true,'после центра стика дуга телепорта включается снова');
+    R.gp.axes[3]=0;frames(2);
+    /* одна рука держит предмет, другой можно перемещаться (поворот правым стиком) */
+    const Lh=X.hands.left;Lh.g=X.mat(-.3,1.3,0);Lh.r=ray(th);const b2=XV.chemLab.makeBody(XE,8,16,[-.3,1.3,-.05]);b2.v=[0,0,0];
+    Lh.gp.buttons[1].pressed=true;frames(2);
+    ok(XE.H[0].held===b2,'левая рука держит предмет');
+    const y1=XE.player.yaw;R.gp.axes[2]=1;frames(2);R.gp.axes[2]=0;frames(2);
+    ok(Math.abs(XE.player.yaw-y1)>.4&&XE.H[0].held===b2,'пока левая рука держит предмет, правым стиком можно поворачиваться');
+    Lh.gp.buttons[1].pressed=false;frames(2);XE.gravity=9.8;
+    XE.loadRoom('hall');frames(2);
+    ok(XE.hud.attachOff===null&&XE.tpOk(0,-4,.4)===true,'в другой комнате смещение таймера и запретные зоны сброшены');
+  }
   // выход из VR → итог
   XE.exitXR();
   ok(!XE.session&&!X.sb.document.getElementById("ov").hidden&&X.sb.document.getElementById("summary").textContent==='Сеанс гостя завершён.','выход из VR возвращает меню');
