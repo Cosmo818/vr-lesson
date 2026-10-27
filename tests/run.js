@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/games.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/games.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -553,6 +553,15 @@ function makeCtx(xr){
       const bi=Z.field.btns.findIndex(b=>b.x===want[0]&&b.y===want[1]);if(bi>=0){Z.field.btns[bi].fn({});hit=true;}}
       if(!hit)break;}
     ok(g.status==='win'&&Z.ctl.dirty!==undefined,'эйнштейн-комната: клики по областям фишек решают головоломку ('+g.status+')');
+  }
+  { /* протокол поз: те же байты, что у server/netproto.py (tests/net_proto.py) */
+    const NP=VR.netproto,fx=JSON.parse(fs.readFileSync(path.join(ROOT,'tests','fixtures','net_frames.json'),'utf8')),hx=b=>Buffer.from(b).toString('hex'),fromHex=h=>{const b=Buffer.from(h,'hex');return b.buffer.slice(b.byteOffset,b.byteOffset+b.length);};
+    ok(fx.poses.every(c=>hx(NP.encodePose(c.input))===c.hex),'протокол: '+fx.poses.length+' эталонных кадров поз кодируются теми же байтами, что на сервере');
+    ok(fx.poses.every(c=>hx(NP.encodePose(NP.decodePose(fromHex(c.hex))))===c.hex),'протокол: разбор и повторная сборка кадров стабильны');
+    ok(hx(NP.encodeBatch(fx.batch.input))===fx.batch.hex&&NP.decodeBatch(fromHex(fx.batch.hex)).items.length===3,'протокол: пачка из 3 записей совпадает с серверной');
+    const d0=NP.decodePose(fromHex(fx.poses[0].hex));ok(Math.abs(d0.head.p[0]-1.234)<6e-4&&d0.seq===7&&d0.t===123456,'протокол: значения позы с точностью до мм');
+    ok(NP.decodePose(fromHex(fx.poses[0].hex.slice(0,100)))===null&&NP.decodeBatch(fromHex(fx.batch.hex.slice(0,-2)))===null&&NP.decodePose(new ArrayBuffer(52))===null,'протокол: плохие кадры (длина, версия, тип) отвергаются');
+    const dn=NP.decodePose(fromHex(fx.poses[3].hex));ok(dn.head.p.every(v=>v===0)&&dn.head.q[3]===1,'протокол: NaN и нулевой кватернион безопасны');
   }
   { /* журнал игр, статистика, турниры, комната «Турниры» */
     const G=VR.games,T=G.tour,prevStu=E.student;G._reset();
