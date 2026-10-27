@@ -369,6 +369,25 @@ void main(){
     E.menuOpen=v===undefined?!E.menuOpen:!!v;menu.show=E.menuOpen;menu.dirty=true;
     if(E.menuOpen){placeFront(menu,1.0,-.12);E.beep(520,.06);}
   };
+  /* лазерная указка учителя: включается кнопкой на контроллере (нажатие стика) или в меню-планшете; красный луч с точкой.
+     Кто учитель — решает E.hooks.isTeacher (app.js); для показа ученикам по сети — E.laserState() (начало и направление луча) и E.hooks.onLaser */
+  E.laser={on:false,hi:1};
+  E.isTeacher=()=>{try{return !!(E.hooks.isTeacher&&E.hooks.isTeacher());}catch(e){return false;}};
+  E.toggleLaser=(v,hi)=>{
+    if(!E.isTeacher()){E.toast('Лазерная указка — для учителя.','#fca5a5');return false;}
+    E.laser.on=v===undefined?!E.laser.on:!!v;if(hi!==undefined)E.laser.hi=hi;
+    E.toast(E.laser.on?'Лазерная указка включена':'Лазерная указка выключена',E.laser.on?'#fca5a5':undefined);E.beep(E.laser.on?880:440,.06);menu.dirty=true;
+    if(E.hooks.onLaser)try{E.hooks.onLaser(E.laser.on);}catch(e){}
+    return true;
+  };
+  E.laserState=()=>{const h=E.H[E.laser.hi]||E.H[0];return E.laser.on&&h&&h.has&&h.ro?{on:true,o:Array.from(h.ro),d:Array.from(h.rd)}:{on:false};};
+  const laserLen=h=>{
+    if(h.hit)return h.hit.t;
+    let t=14;const L=[[0,-1,5.9],[0,1,5.9]];
+    for(const[ax,lim]of[[0,5.9],[2,5.9]])for(const sg of[-1,1]){const d=h.rd[ax];if(d*sg>1e-4){const k=(sg*lim-h.ro[ax])/d;if(k>0&&k<t)t=k;}}
+    if(h.rd[1]<-1e-4){const k=-h.ro[1]/h.rd[1];if(k>0&&k<t)t=k;}
+    return t;
+  };
   const hud=E.addUi({w:.2,h:.1,res:512,attach:'left',noHit:true,accent:'#38bdf8',draw:(c,p)=>{
     const t=E.hooks.hud?E.hooks.hud():{a:'',b:''};
     p.text(t.a||'',24,22,{size:64,bold:true,color:t.alert?'#f87171':'#fff'});
@@ -637,6 +656,8 @@ void main(){
       const trigDown=trig&&!h.trigPrev,sqDown=sq&&!h.sqPrev,mbDown=mb&&!h.mbPrev;
       h.trigPrev=trig;h.sqPrev=sq;h.mbPrev=mb;
       if(mbDown)E.toggleMenu();
+      const sk=pressed(gp,3),skDown=sk&&!h.skPrev;h.skPrev=sk;
+      if(skDown&&E.session&&E.isTeacher())E.toggleLaser(!(E.laser.on&&E.laser.hi===hi),hi);
       const gpos=[h.g[12],h.g[13],h.g[14]];let used=false;
       if(!h.held&&(trigDown||sqDown)){
         let b=nearestBody(gpos,E.session?.22:.42),pull=false;
@@ -765,6 +786,11 @@ void main(){
           if(h.arc&&h.arc.pts)for(const q of h.arc.pts)add(mesh.sphere,TRS(q[0],q[1],q[2],.016,.016,.016),E.tpCol.arc[ok?1:0],1);}
         else if(h.hit){len=h.hit.t;col=h.hit.kind==='panel'&&h.hit.bi<0?[.7,.75,.9]:[1,.9,.3];}
         if(!h.held&&len>0)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-len/2),M.scale(.004,.004,len))),col,1);
+      }
+      if(E.laser.on&&E.laser.hi===hi&&h.ro){
+        const t=laserLen(h),q=[h.ro[0]+h.rd[0]*t,h.ro[1]+h.rd[1]*t,h.ro[2]+h.rd[2]*t];
+        if(E.session&&h.r)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-t/2),M.scale(.012,.012,t))),[1,.08,.08],1);
+        add(mesh.sphere,TRS(q[0],q[1],q[2],.07,.07,.07),[1,.12,.12],1);
       }
       if(h.hit&&!h.aim){const q=[h.ro[0]+h.rd[0]*h.hit.t,h.ro[1]+h.rd[1]*h.hit.t,h.ro[2]+h.rd[2]*h.hit.t],k=(E.session?.025:.012)*(h.hov&&h.hov.tg?1.8:1);add(mesh.sphere,TRS(q[0],q[1],q[2],k,k,k),[1,.9,.3],1);}
     }

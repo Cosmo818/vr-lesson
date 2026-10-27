@@ -80,7 +80,7 @@ function endSession(){
   const st=E.student;let msg='';
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
-  try{sessionStorage.removeItem('vrl.editor');}catch(e){}
+  try{sessionStorage.removeItem('vrl.editor');sessionStorage.removeItem('vrl.laser');}catch(e){}
   lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);$('deskPanel').hidden=true;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
@@ -132,11 +132,15 @@ function hooks(){
   E.hooks.onMouseCfg=()=>{syncPanel();saveCfg();};
   window.addEventListener('keydown',e=>{if(e.code==='KeyH'&&E.deskInput&&!(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))&&!e.repeat){helpToggle();e.preventDefault();}});
   const rated={};  /* оценка комнаты в этом сеансе: звёзды остаются закрашенными */
+  /* учитель: сессия, открытая из кабинета (ключ vrl.laser или vrl.editor с неистёкшим сроком), либо учётная запись роли «учитель» */
+  E.hooks.isTeacher=()=>{try{return +sessionStorage.getItem('vrl.laser')>Date.now()||VR.custom.teacherOk()||(E.student&&E.student.role==='teacher');}catch(e){return false;}};
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
     p.text((st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
-    p.button(36,150,W-72,86,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    const tch=E.isTeacher();
+    p.button(36,150,tch?W-72-330:W-72,86,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    if(tch)p.button(W-36-312,150,312,86,E.laser.on?'Указка: выкл':'Указка: вкл',()=>E.toggleLaser(),{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:34});
     const bw=(W-90)/2;
     VR.openRooms(st.grade||5).forEach((k,i)=>{
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';

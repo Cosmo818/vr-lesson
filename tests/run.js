@@ -734,6 +734,22 @@ function makeCtx(xr){
   ok(XE.menuOpen,'кнопка A открывает меню');
   R.gp.buttons[5].pressed=true;frames(1);R.gp.buttons[5].pressed=false;frames(1);
   ok(!XE.menuOpen,'кнопка B закрывает меню');
+  { /* лазерная указка учителя */
+    const Lk=XE.laser;
+    R.gp.buttons[3].pressed=true;frames(1);R.gp.buttons[3].pressed=false;frames(2);
+    ok(!XE.laser.on&&!XE.laserState().on,'указка: нажатие стика у не-учителя ничего не включает');
+    ok(XE.toggleLaser()===false&&!XE.laser.on,'указка: меню не включает её не-учителю');
+    XE.hooks.isTeacher=()=>true;
+    R.gp.buttons[3].pressed=true;frames(1);R.gp.buttons[3].pressed=false;frames(2);
+    const st=XE.laserState();
+    ok(XE.laser.on&&XE.laser.hi===1&&st.on&&st.o.length===3&&st.d.length===3,'указка: стик правой руки включает луч (начало и направление для сети)');
+    const dr0=X.calls.draw;frames(3);ok(X.calls.draw>dr0,'указка: кадры с лучом рисуются');
+    R.gp.buttons[3].pressed=true;frames(1);R.gp.buttons[3].pressed=false;frames(2);
+    ok(!XE.laser.on,'указка: повторное нажатие выключает');
+    ok(XE.toggleLaser(true)===true&&XE.laser.on&&XE.toggleLaser()===true&&!XE.laser.on,'указка: переключение из меню для учителя');
+    XE.menu.dirty=true;XE.toggleMenu(true);frames(3);ok(!XE.menu.over.length,'указка: меню с кнопкой «Указка» влезает');XE.toggleMenu(false);frames(1);
+    XE.hooks.isTeacher=()=>false;
+  }
   // дверь в космос лучом
   const door=XE.targets.find(x=>x.id==='door-space');
   R.r=X.mat(0,1.5,0);const d=[door.c[0],door.c[1]-1.5,door.c[2]];const L=Math.hypot(...d);
