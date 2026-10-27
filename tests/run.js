@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/einroom.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/games.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -550,6 +550,58 @@ function makeCtx(xr){
       const bi=Z.field.btns.findIndex(b=>b.x===want[0]&&b.y===want[1]);if(bi>=0){Z.field.btns[bi].fn({});hit=true;}}
       if(!hit)break;}
     ok(g.status==='win'&&Z.ctl.dirty!==undefined,'эйнштейн-комната: клики по областям фишек решают головоломку ('+g.status+')');
+  }
+  { /* журнал игр, статистика, турниры, комната «Турниры» */
+    const G=VR.games,T=G.tour,prevStu=E.student;G._reset();
+    const bad=G.clean({games:[{id:'x',game:'chess',res:'win',sid:'a',name:'Ы'.repeat(99),t:-5},{id:'y',game:'nope',res:'win'},null,{game:'chess'}],tours:[{id:'t',game:'einstein',rounds:'xx'},{game:'x'}]});
+    ok(bad.games.length===1&&bad.games[0].name.length===40&&bad.games[0].t===0&&bad.tours.length===1,'игры: проверка данных отбрасывает мусор и режет длину');
+    const A={student:{id:'s1',name:'Аня',grade:6}},B={student:{id:'s2',name:'Боря',grade:6}},Gst={student:{id:null,name:'Гость',grade:5}};
+    ok(G.finish(Gst,'einstein',{time:50})===null&&G.load().games.length===0,'игры: гостю результат не пишется');
+    G.finish(A,'einstein',{time:300,seed:1,moves:40});G.finish(A,'einstein',{time:200,seed:2,moves:30});G.finish(A,'einstein',{time:100,helped:true,seed:3});G.finish(B,'einstein',{time:250,seed:4});G.finish(B,'einstein',{res:'lose',seed:5});
+    G.finish(A,'chess',{res:'win',lvl:2,moves:30});G.finish(B,'chess',{res:'draw',lvl:1});G.finish(B,'chess',{res:'lose',lvl:3});
+    const st=G.stats('s1');
+    ok(st.einstein.best===200&&st.einstein.wins===3&&st.einstein.played===3&&st.einstein.avg===250&&st.chess.byLvl[2]===1,'игры: статистика ученика (лучшее без помощи 200, помощь не в зачёт)');
+    const te=G.top('einstein',5);ok(te.length===2&&te[0].sid==='s1'&&te[0].best===200&&te[1].best===250,'игры: лучшие по «Эйнштейну» по времени');
+    ok(G.top('chess',5)[0].sid==='s1'&&G.history(3).length===3&&G.history(3)[0].game==='chess','игры: лучшие в шахматах и история (новые сверху)');
+    const m1=G.merge(G.load(),G.load());ok(m1.games.length===G.load().games.length,'игры: слияние с самим собой ничего не дублирует');
+    /* турнир на 5 игроков: размер 8, три «пропуска» */
+    const t=T.create('einstein','Тест','s1');['p1','p2','p3','p4','p5'].forEach((id,i)=>T.signup(t.id,id,'И'+i));
+    ok(T.start(t.id)&&T.get(t.id).rounds.length===3&&T.get(t.id).rounds[0].filter(m=>m.bye).length===3&&T.progress(T.get(t.id)).all===4,'турнир: 5 игроков → сетка на 8, три пропуска, 4 игровых матча');
+    ok(!T.signup(t.id,'p9','Z'),'турнир: после старта запись закрыта');
+    const tm=id=>({p1:60,p2:70,p3:80,p4:90,p5:100}[id]);
+    for(let guard=0;guard<30&&T.get(t.id).state==='run';guard++)for(const id of['p1','p2','p3','p4','p5']){const nx=T.next(t.id,id);if(nx)T.reportEinstein(t.id,nx.r,nx.i,id,{t:tm(id),moves:20});}
+    const done=T.get(t.id);ok(done.state==='done'&&done.champ==='p1','турнир: побеждает самый быстрый (p1), сетка доиграна');
+    /* ничья по времени — переигровка; ошибка у обоих — переигровка; ошибка у одного — проигрыш */
+    const t2=T.create('einstein','','s1');T.signup(t2.id,'a','A');T.signup(t2.id,'b','B');T.start(t2.id);
+    let nx=T.next(t2.id,'a');T.reportEinstein(t2.id,nx.r,nx.i,'a',{t:50,moves:10});T.reportEinstein(t2.id,nx.r,nx.i,'b',{t:50,moves:10});
+    ok(T.get(t2.id).state==='run'&&T.get(t2.id).rounds[0][0].rep===1&&T.next(t2.id,'a'),'турнир: ровная ничья по времени — переигровка (новый сид)');
+    nx=T.next(t2.id,'a');T.reportEinstein(t2.id,nx.r,nx.i,'a',{t:null});T.reportEinstein(t2.id,nx.r,nx.i,'b',{t:300,moves:5});
+    ok(T.get(t2.id).champ==='b','турнир: ошибка у одного — победа соперника');
+    const t3=T.create('chess','','s1');T.signup(t3.id,'x','X');T.signup(t3.id,'y','Y');T.start(t3.id);
+    T.reportDuel(t3.id,0,0,'draw');const mm=T.get(t3.id).rounds[0][0];ok(mm.sw===true&&!mm.w,'турнир: ничья в шахматах — переигровка с обменом цветов');
+    T.reportDuel(t3.id,0,0,'a');ok(T.get(t3.id).champ===mm.a,'турнир: победа в шахматах двигает сетку');
+    ok(G.top('tours',3)[0].won>=1,'игры: лучшие по турнирам');
+    ok(T.cancel(t3.id)&&!T.get(t3.id),'турнир: отмена удаляет турнир');
+    /* комната «Турниры» */
+    const t4=T.create('einstein','Класс','s1');T.signup(t4.id,'s1','Аня');T.signup(t4.id,'s2','Боря');
+    E.student={id:'s1',name:'Аня',grade:6};
+    E.goRoom('arena');run(25);const Ar=E.S;Ar.tid=t4.id;
+    for(const p of[Ar.dash,Ar.brk,Ar.ctl]){p.dirty=true;}run(4);
+    ok(!Ar.dash.over.length&&!Ar.brk.over.length&&!Ar.ctl.over.length,'арена: ничего не за краем панелей (запись)');
+    ok(Ar.dash.btns.length===5,'арена: пять вкладок доски лучших');
+    for(let i=0;i<5;i++){Ar.dash.btns[i].fn();run(3);}
+    ok(!Ar.dash.over.length,'арена: все вкладки доски влезают');
+    T.start(t4.id);Ar.brk.dirty=Ar.ctl.dirty=true;run(4);
+    ok(!Ar.brk.over.length&&!Ar.ctl.over.length,'арена: сетка и управление в ходе турнира');
+    const play=Ar.ctl.btns.find(b=>!b.disabled&&b.w>1000&&b.y<Ar.ctl.H-260);
+    ok(!!play,'арена: у участника есть кнопка «Играть»');
+    play.fn();run(20);
+    ok(E.S.tid===t4.id&&E.S.mid==='0.0'&&E.S.g&&E.S.g.pz.seed===G.matchSeed(T.get(t4.id),0,0),'арена: «Играть» открывает турнирную головоломку с сидом матча');
+    const sol=E.S.g.pz.sol;E.S.mode='pick';
+    for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!E.S.g.P.defined(c,r)&&E.S.g.status==='play'){E.S.field.dirty=true;run(3);const x0=100+c*316,y0=24+r*232,k=sol[r][c]-1;const bi=E.S.field.btns.findIndex(b=>b.x===x0+8+(k%3)*100&&b.y===y0+16+((k/3)|0)*104);if(bi>=0)E.S.field.btns[bi].fn({});}
+    const rm=T.get(t4.id).rounds[0][0];
+    ok(E.S.g.status==='win'&&(rm.ra||rm.rb),'арена: победа в турнирной партии записана в матч');
+    E.student=prevStu;G._reset();
   }
   E.goRoom('logic');run(25);
   B=E.S;

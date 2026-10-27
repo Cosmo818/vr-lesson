@@ -21,13 +21,17 @@ function applyClick(E,S,h,c,r,e){
   const res=E1.click(g,c,r,e,btn);
   if(res==='noop')return;
   S.field.dirty=S.ctl.dirty=true;
-  if(res==='fail'){E.beep(180,.3,'sawtooth',.06);E.buzz(h,.8,150);S.msg='Ошибка: так не может быть. Начни сначала или возьми новую.';}
+  if(res==='fail'){E.beep(180,.3,'sawtooth',.06);E.buzz(h,.8,150);S.msg=S.tid?'Ошибка — в турнире это поражение в матче.':'Ошибка: так не может быть. Начни сначала или возьми новую.';lost(E,S);}
   else if(res==='win')won(E,S);
   else E.beep(btn===1?700:520,.04,'sine',.04);
 }
+function lost(E,S){
+  if(S.sent)return;S.sent=true;
+  try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{res:'lose',seed:S.g.pz.seed,helped:S.helped,moves:S.g.moves,tid:S.tid||null,mid:S.mid||null});}catch(e){}
+}
 function won(E,S){
   E.fanfare();S.msg='Готово! Все фишки открыты за '+fmtT(S.t)+(S.helped?' (с помощью — в зачёт не идёт)':'');
-  if(!S.sent){S.sent=true;try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{time:Math.round(S.t),seed:S.g.pz.seed,helped:S.helped,moves:S.g.moves,tid:S.tid||null});}catch(e){}}
+  if(!S.sent){S.sent=true;try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{time:Math.round(S.t),seed:S.g.pz.seed,helped:S.helped,moves:S.g.moves,tid:S.tid||null,mid:S.mid||null});}catch(e){}}
   S.ctl.dirty=S.hints.dirty=true;
 }
 function fieldDraw(E,S,c,p){
@@ -90,20 +94,22 @@ function ctlDraw(E,S,c,p){
   p.text(st,X,80,{size:28,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#cbd5e1',maxW:W,maxY:200});
   const bw=(W-14)/2;
   p.button(X,206,W,64,'Курок: '+(S.mode==='pick'?'выбирать фишку':'исключать фишку'),()=>{S.mode=S.mode==='pick'?'excl':'pick';S.ctl.dirty=true;},{size:30,bg:'#334155'});
-  p.button(X,284,bw,64,'Сначала',()=>start(E,S,0,true),{size:30,bg:'#475569'});
-  p.button(X+bw+14,284,bw,64,'Новая',()=>start(E,S),{size:30,bg:'#b45309'});
-  p.button(X,362,W,64,'Открыть одну клетку (без зачёта)',()=>{if(g.status!=='play')return;S.helped=true;E1.hint(g);S.field.dirty=true;if(g.status==='win')won(E,S);S.ctl.dirty=true;},{size:26,bg:'#1e293b',disabled:g.status!=='play'});
-  p.text('Хват во время курка — наоборот. Головоломка № '+g.pz.seed,X,444,{size:22,color:'#64748b',maxW:W});
+  p.button(X,284,bw,64,'Сначала',()=>start(E,S,0,true),{size:30,bg:'#475569',disabled:!!S.tid});
+  p.button(X+bw+14,284,bw,64,'Новая',()=>start(E,S),{size:30,bg:'#b45309',disabled:!!S.tid});
+  p.button(X,362,W,64,'Открыть одну клетку (без зачёта)',()=>{if(g.status!=='play'||S.tid)return;S.helped=true;E1.hint(g);S.field.dirty=true;if(g.status==='win')won(E,S);S.ctl.dirty=true;},{size:26,bg:'#1e293b',disabled:g.status!=='play'||!!S.tid});
+  if(VR.ROOMS.arena)p.button(X,440,W,64,'В зал турниров',()=>E.goRoom('arena'),{size:28,bg:'#475569'});
+  p.text((S.tid?'Турнирная партия. ':'')+'Хват во время курка — наоборот. Головоломка № '+g.pz.seed,X,520,{size:22,color:'#64748b',maxW:W});
 }
 ROOMS.ein={
-  title:'Эйнштейн',env:{floor:[.06,.07,.14],wall:[.12,.14,.3],trim:[.55,.5,1],grid:[.35,.3,.8]},spawn:{x:0,z:.6},
+  title:'Эйнштейн',env:{floor:[.06,.07,.14],wall:[.12,.14,.3],trim:[.55,.5,1],grid:[.35,.3,.8]},spawn:{x:0,z:-.4},
   hint:'Эйнштейн: открой все фишки 6×6 по подсказкам. Курок на фишку — исключить (режим переключается).',
   build(E,S){
     VR.RU.backDoor(E);
-    S.mode='excl';S.tid=null;
+    S.mode='excl';S.tid=null;S.mid=null;
+    const pd=VR.games&&VR.games.pending;if(pd&&pd.game==='einstein'){S.tid=pd.tid;S.mid=pd.r+'.'+pd.i;S.nextSeed=pd.seed;VR.games.pending=null;}
     S.field=E.addPanel({w:3.4,h:2.4,res:2048,pos:[-1.2,1.55,-4.2],yaw:0,accent:'#818cf8',draw:(c,p)=>fieldDraw(E,S,c,p)});
     S.hints=E.addPanel({w:2.2,h:2.4,res:1536,pos:[2.0,1.55,-4.2],yaw:0,accent:'#a78bfa',draw:(c,p)=>hintDraw(E,S,c,p)});
-    S.ctl=E.addPanel({w:1.4,h:.9,res:768,pos:[-4.15,1.35,-4.2],yaw:0,accent:'#f59e0b',draw:(c,p)=>ctlDraw(E,S,c,p)});
+    S.ctl=E.addPanel({w:1.4,h:1.1,res:768,pos:[-4.15,1.35,-4.2],yaw:0,accent:'#f59e0b',draw:(c,p)=>ctlDraw(E,S,c,p)});
     start(E,S,S.nextSeed);S.nextSeed=undefined;
   },
   targets(){return[];},

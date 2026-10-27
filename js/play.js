@@ -28,9 +28,23 @@ function result(S){
   return st;
 }
 function fresh(E,S){
+  S.reported=false;
   S.pos=C.start();S.moves=C.legal(S.pos);S.hist=[];S.keys={};pushPos(S,S.pos);
   S.sel=-1;S.dests=[];S.promo=null;S.last=null;S.wait=0;S.thinking=false;S.over=null;
   S.flip=S.me===-1;
+}
+const duelNames=S=>{const t=VR.games&&S.duel&&VR.games.tour.get(S.duel.tid);if(!t)return null;const m=t.rounds[S.duel.r][S.duel.i],w=m.sw?m.b:m.a,b=m.sw?m.a:m.b;return{t,m,w,b,wn:t.names[w]||'?',bn:t.names[b]||'?'};};
+function report(E,S){
+  if(S.reported||!S.over)return;S.reported=true;const G=VR.games;if(!G)return;
+  const mate=S.over==='mate',winner=mate?-S.pos.t:0;
+  try{
+    if(S.duel){
+      const d=duelNames(S);if(!d)return;
+      const side=winner===0?'draw':(winner===1?(d.m.sw?'b':'a'):(d.m.sw?'a':'b'));
+      for(const[sid,col]of[[d.w,1],[d.b,-1]])G.record({sid,name:d.t.names[sid]||'Ученик',game:'chess',res:winner===0?'draw':winner===col?'win':'lose',moves:S.hist.length,vs:'duel',opp:col===1?d.bn:d.wn,tid:d.t.id,mid:S.duel.r+'.'+S.duel.i});
+      G.tour.reportDuel(S.duel.tid,S.duel.r,S.duel.i,side);
+    }else G.finish(E,'chess',{res:winner===0?'draw':winner===S.me?'win':'lose',lvl:S.level,moves:S.hist.length,vs:'comp'});
+  }catch(e){}
 }
 function after(E,S,m,mine){
   const san=C.san(S.pos,m,S.moves),prev=S.pos;
@@ -43,15 +57,16 @@ function after(E,S,m,mine){
     const mine2=r==='mate'&&S.pos.t!==S.me;
     if(mine2){E.fanfare();E.discover('hall','chess_win','Победа над компьютером');}else E.chime();
   }else E.beep(mine?520:420,.07,'triangle',.05);
+  report(E,S);
   S.panel.dirty=true;
 }
 function userMove(E,S,from,to,promo){
   const m=C.find(S.pos,from,to,promo);if(!m)return;after(E,S,m,true);
 }
 function cellSel(E,S,h,sq){
-  if(S.over||S.thinking||S.pos.t!==S.me||S.promo)return;
+  if(S.over||S.thinking||(!S.duel&&S.pos.t!==S.me)||S.promo)return;
   const v=S.pos.b[sq];
-  if(v&&Math.sign(v)===S.me){
+  if(v&&Math.sign(v)===(S.duel?S.pos.t:S.me)){
     S.sel=sq;S.dests=S.moves.filter(m=>m.f===sq).map(m=>m.t);E.beep(700,.05,'sine',.04);E.buzz(h,.3,20);return;
   }
   if(S.sel>=0&&S.dests.indexOf(sq)>=0){
@@ -66,7 +81,7 @@ function compMove(E,S){
   if(r&&r.m)after(E,S,r.m,false);else S.panel.dirty=true;
 }
 function undo(E,S){
-  if(S.thinking||!S.hist.length)return;
+  if(S.thinking||!S.hist.length||S.duel||S.over)return;
   do{const h=S.hist.pop();S.pos=h.pos;}while(S.hist.length&&S.pos.t!==S.me);
   S.moves=C.legal(S.pos);S.keys={};S.hist.forEach(h=>pushPos(S,h.pos));pushPos(S,S.pos);
   S.last=S.hist.length?S.hist[S.hist.length-1].m:null;S.sel=-1;S.dests=[];S.promo=null;S.over=null;S.check=C.inCheck(S.pos);S.wait=0;
@@ -74,9 +89,12 @@ function undo(E,S){
 }
 function statusText(S){
   if(S.over){
+    if(S.duel&&S.over==='mate'){const d=duelNames(S);return 'Мат! Выиграл '+(d?(S.pos.t===1?d.bn:d.wn):'соперник')+'. Результат записан в турнир.';}
+    if(S.duel)return OVER[S.over]+' — переигровка с обменом цветов.';
     if(S.over==='mate')return S.pos.t===S.me?'Мат. Компьютер выиграл. Попробуй уровень ниже!':'Мат! Ты выиграл!';
     return OVER[S.over];
   }
+  if(S.duel){const d=duelNames(S);return (S.pos.t===1?'Ход белых':'Ход чёрных')+(d?' — '+(S.pos.t===1?d.wn:d.bn):'')+(S.check?' — шах!':'');}
   if(S.thinking)return 'Компьютер думает…';
   const mine=S.pos.t===S.me;
   return (mine?'Твой ход':'Ход компьютера')+(S.check?' — шах!':'');
@@ -90,7 +108,8 @@ function panelDraw(E,S,c,p){
     [5,4,3,2].forEach((t,i)=>p.button(X+i*(W/4),170,W/4-14,100,NAMES[t],()=>{const pr=S.promo;S.promo=null;userMove(E,S,pr.f,pr.t,t);},{size:40,bg:'#7c3aed'}));
     return;
   }
-  p.button(p.W-X-300,110,300,72,S.cfg?'Скрыть ⚙':'Настройки ⚙',()=>{S.cfg=!S.cfg;S.cpanel.show=S.cfg;S.cpanel.dirty=true;S.panel.dirty=true;E.beep(S.cfg?660:440,.06);},{size:32,bg:'#b45309'});
+  if(VR.ROOMS.arena)p.button(X+330,110,p.W-X*2-330-(S.duel?0:320),72,'В зал турниров',()=>E.goRoom('arena'),{size:28,bg:'#475569'});
+  if(!S.duel)p.button(p.W-X-300,110,300,72,S.cfg?'Скрыть ⚙':'Настройки ⚙',()=>{S.cfg=!S.cfg;S.cpanel.show=S.cfg;S.cpanel.dirty=true;S.panel.dirty=true;E.beep(S.cfg?660:440,.06);},{size:32,bg:'#b45309'});
   /* записи ходов: последние 8 */
   const h=S.hist,from=Math.max(0,h.length-8-(h.length%2?1:0)),lines=[];
   for(let i=from;i<h.length;i+=2)lines.push(((i>>1)+1)+'. '+h[i].san+(h[i+1]?'   '+h[i+1].san:''));
@@ -113,7 +132,8 @@ ROOMS.play={
   hint:'Игровая: шахматы против компьютера. Курок на свою фигуру, потом на клетку.',
   build(E,S){
     VR.RU.backDoor(E);
-    S.level=S.level===undefined?1:S.level;S.me=1;
+    S.level=S.level===undefined?1:S.level;S.me=1;S.duel=null;
+    const pd=VR.games&&VR.games.pending;if(pd&&pd.game==='chess'){S.duel={tid:pd.tid,r:pd.r,i:pd.i};VR.games.pending=null;}
     E.addTable(CX,CZ,.6,.6,TOP,[.42,.27,.16]);
     E.addBox({x:CX,z:CZ,hx:.6,hz:.6,top:TOP});
     for(let r=0;r<8;r++)for(let f=0;f<8;f++){
@@ -131,7 +151,7 @@ ROOMS.play={
     return t;
   },
   update(E,S,dt){
-    if(S.over||S.promo||!S.pos||S.pos.t===S.me)return;
+    if(S.duel||S.over||S.promo||!S.pos||S.pos.t===S.me)return;
     S.wait+=dt;
     if(S.thinking){compMove(E,S);return;}
     if(S.wait>.7){S.thinking=true;S.panel.dirty=true;}
