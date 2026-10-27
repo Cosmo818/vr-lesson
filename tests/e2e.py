@@ -118,7 +118,7 @@ try:
         ok(not pg.is_visible('#psheet'), 'печать: на экране лист скрыт')
         pg.evaluate("VR.Store.archiveClass('" + kid + "')"); pg.evaluate('document.getElementById("cSel").dispatchEvent(new Event("change"))'); pg.wait_for_timeout(200)
         pg.click('[data-t=rooms]'); pg.wait_for_timeout(200)
-        ok(pg.is_visible('#t-rooms') and pg.locator('#rmCard input[data-kind=pack]').count()==24, 'комнаты: вкладка показывает 6 заданий информатики')
+        ok(pg.is_visible('#t-rooms') and pg.locator('#rmCard input[data-kind=pack]').count()==48, 'комнаты: вкладка показывает 6 заданий информатики и 6 блоков химии (по 4 класса-группы)')
         pg.click('#rmCard input[data-kind=pack][data-id=inf-robot][data-b=d]'); pg.wait_for_timeout(150)
         ok(pg.evaluate("VR.Store.packOn('inf-robot',10)") and pg.evaluate("VR.Store.settings().content.packs['inf-robot']")=='abd', 'комнаты: чекбокс 9–11 включил задание для старших')
         pg.click('#rmCard input[data-kind=room][data-id=inf][data-b=a]'); pg.wait_for_timeout(150)

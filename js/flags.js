@@ -4,7 +4,7 @@
 'use strict';
 const VR=window.VR=window.VR||{};
 const FLAG_RE=/^[a-z][A-Za-z0-9_]{0,39}$/;
-const DEFAULTS=Object.freeze({});
+const DEFAULTS=Object.freeze({chemTree:true});
 function cur(){const f=VR.Store.settings().flags;return f&&typeof f==='object'?f:{};}
 VR.flags={
   DEFAULTS,

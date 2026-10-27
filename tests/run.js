@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/inf.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -397,6 +397,53 @@ function makeCtx(xr){
     let lf=0;const f=()=>{lf++;};const t1=E.labelTex('t-a',f),t2=E.labelTex('t-a',f);
     ok(t1===t2&&lf===1,'движок: labelTex кэширует текстуру');
     pk.show=false;pn.show=false;
+  }
+
+  // ---- химия: дерево комнат (Б65-Д, шаг 33)
+  {
+    const T0=E.student,setG=g=>{E.student=Object.assign({},T0,{grade:g});};
+    const ids=()=>E.staticTargets.map(t=>t.id).filter(i=>/^door-/.test(i));
+    const go=id=>{E.goRoom(id);run(8);};
+    const has=i=>ids().indexOf(i)>=0;
+    setG(6);go('hall');
+    ok(VR.entryOf('chem')==='chem-hub'&&VR.entryOf('math')==='math'&&has('door-chem-hub')&&!has('door-chem'),'дерево: дверь холла «Химия» ведёт в узел');
+    {const w=E.panels.find(p=>p.btns.length===9),i=VR.openRooms(6).indexOf('chem');w.btns[i].fn();run(4);ok(E.roomId==='chem-hub','дерево: кнопка «Химия» на панели холла ведёт в узел');}
+    VR.flags.set('chemTree',false);go('hall');
+    ok(VR.entryOf('chem')==='chem'&&has('door-chem')&&!has('door-chem-hub'),'дерево: флаг chemTree выключен — дверь холла ведёт в химию');
+    go('chem');ok(has('door-hall')&&!has('door-chem-hub'),'дерево: флаг выключен — из химии дверь назад в холл');
+    VR.flags.set('chemTree',true);go('chem');
+    ok(has('door-chem-hub')&&!has('door-hall'),'дерево: универсальный стенд — дверь назад в узел, не в холл');
+    setG(5);go('chem-hub');
+    ok(ids().sort().join()==='door-chem,door-hall'&&E.S.guest===true,'дерево: гость (5 класс) видит в узле только универсальный стенд и холл');
+    setG(9);go('chem-hub');
+    {const want=['door-chem','door-chem-acid','door-chem-inorg','door-chem-ion','door-chem-nuc','door-chem-org','door-hall'];
+      ok(ids().sort().join()===want.join()&&E.S.doors===6,'дерево: 9 класс — шесть дверей разделов и холл');}
+    run(6);
+    {const ov=[];E.panels.forEach(p=>{E.paintPanel(p);if(p.over&&p.over.length)ov.push(p.W+'x'+p.H+':'+p.over.join('|'));});ok(ov.length===0,'дерево: панели узла нарисованы без выхода за край'+(ov.length?' — '+ov.join('; '):''));}
+    {const fr=E.panels.filter(p=>Math.abs(p.yaw)<1e-9&&p.pos[2]<-5.5).sort((a,b)=>a.pos[0]-b.pos[0]);let gap=9;
+      for(let i=1;i<fr.length;i++)gap=Math.min(gap,(fr[i].pos[0]-fr[i].w/2)-(fr[i-1].pos[0]+fr[i-1].w/2));
+      ok(fr.length>=2&&gap>=.03,'дерево: карта и тест на передней стене не перекрываются (зазор '+gap.toFixed(2)+' м)');}
+    {const dz=E.staticTargets.filter(t=>/^door-chem/.test(t.id)&&t.id!=='door-chem-hub').map(t=>[t.c[0]<0?'L':'R',t.c[2]]);
+      let clash=0;for(let i=0;i<dz.length;i++)for(let j=i+1;j<dz.length;j++)if(dz[i][0]===dz[j][0]&&Math.abs(dz[i][1]-dz[j][1])<1.5)clash++;
+      ok(clash===0,'дерево: двери узла не перекрываются');}
+    VR.Store.setBands('pack','chem-org','');go('chem-hub');
+    ok(!has('door-chem-org')&&has('door-chem-ion'),'дерево: учитель выключил блок «Органика» — двери органики нет');
+    VR.Store.setBands('pack','chem-org','d');
+    VR.Store.setBands('room','chem','ab');go('hall');
+    ok(!has('door-chem-hub')&&!has('door-chem'),'дерево: комната «Химия» выключена для 9 класса — двери в холле нет');
+    VR.Store.setBands('room','chem','abcd');
+    go('chem-nuc');
+    ok(E.S.nuclear===true&&has('door-chem-hub')&&!has('door-hall'),'дерево: ядерная физика — стенд в режиме «Ядра» и дверь в узел');
+    for(const id of['chem-ion','chem-acid','chem-inorg','chem-org']){
+      go(id);
+      ok(has('door-chem-hub')&&!has('door-hall')&&E.tables.length===1&&E.S.stand===null&&E.panels.some(p=>p.pos[2]<-5.5)&&E.roomId===id,'дерево: '+id+' — заглушка: стол, табличка и дверь в узел');
+    }
+    VR.STANDS['chem-ion']={build(){throw new Error('сбой');}};go('chem-ion');
+    ok(E.S.stand===null&&E.tables.length===1&&has('door-chem-hub'),'дерево: сбой стенда не ломает комнату (стол и дверь остаются)');
+    VR.STANDS['chem-ion']={build(E2,S2,o){S2.o=o;E2.addTable(o.x,o.z,1.6,.45,.85);},update(E2,S2,dt){S2.t=(S2.t||0)+dt;}};go('chem-ion');run(5);
+    ok(E.S.stand===VR.STANDS['chem-ion']&&E.S.o.x===0&&E.S.o.z===-2.4&&E.S.t>0,'дерево: стенд раздела строится вокруг стола {x:0,z:-2.4} и получает update');
+    delete VR.STANDS['chem-ion'];
+    E.student=T0;go('hall');
   }
 
   // ---- космос

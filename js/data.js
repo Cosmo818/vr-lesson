@@ -7,7 +7,7 @@ const D=VR.DATA={};
 D.subjects={
   math:{title:'Математика',color:'#818cf8'},
   phys:{title:'Физика',color:'#fb923c'},
-  chem:{title:'Химия',color:'#4ade80'},
+  chem:{title:'Химия',color:'#4ade80',entry:'chem-hub',flag:'chemTree'},
   space:{title:'Космос',color:'#38bdf8'},
   bio:{title:'Биология',color:'#f472b6'},
   soc:{title:'Обществознание',color:'#facc15'},
@@ -25,7 +25,14 @@ D.packs=[
   {id:'inf-binary',room:'inf',title:'Двоичные лампочки',text:'Набрать число лампочками: 4 разряда для 5–6 классов, 8 разрядов для старших.',bands:'bcd'},
   {id:'inf-cipher',room:'inf',title:'Шифр Цезаря',text:'Расшифровать слово, подбирая сдвиг алфавита (кодирование и шифрование).',bands:'bc'},
   {id:'inf-gates',room:'inf',title:'Логические вентили',text:'И, ИЛИ, НЕ, исключающее ИЛИ: подобрать входы, чтобы получить нужный выход.',bands:'cd'},
-  {id:'inf-sort',room:'inf',title:'Сортировка пузырьком',text:'Упорядочить столбики обменом соседей и посмотреть, как работает алгоритм.',bands:'cd'}
+  {id:'inf-sort',room:'inf',title:'Сортировка пузырьком',text:'Упорядочить столбики обменом соседей и посмотреть, как работает алгоритм.',bands:'cd'},
+  /* Химия как дерево комнат (Б65-Д): двери узла «Химия» по классам; поведение — js/chemtree.js */
+  {id:'chem-ion',room:'chem',title:'Растворы и ионы',text:'Соль в воде распадается на ионы «+» и «–»; слить два стакана.',bands:'cd'},
+  {id:'chem-acid',room:'chem',title:'Кислоты и основания',text:'Капать кислоту и щёлочь в колбу: индикатор и шкала pH.',bands:'cd'},
+  {id:'chem-inorg',room:'chem',title:'Неорганика',text:'Разложить вещества по классам и провести простые реакции.',bands:'cd'},
+  {id:'chem-org',room:'chem',title:'Органика',text:'Собрать цепочку из углерода и назвать вещество.',bands:'d'},
+  {id:'chem-nuc',room:'chem',title:'Ядерная физика',text:'Слияние и распад ядер (стенд в режиме «Ядра»).',bands:'cd'},
+  {id:'chem-lab',room:'chem',title:'Универсальный стенд',text:'118 элементов, сосуды, склад на 20 мест и доска.',bands:'abcd'}
 ];
 
 D.shapes=[
