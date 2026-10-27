@@ -496,6 +496,9 @@ function makeCtx(xr){
     ok(pf('r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1',3)===97862,'шахматы: perft Kiwipete (рокировка, взятие на проходе, шахи) 97862');
     ok(pf('8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',4)===43238,'шахматы: perft позиции 3 (шпилька) 43238');
     ok(pf('rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8',3)===62379,'шахматы: perft позиции 5 (превращения) 62379');
+    { const fx=JSON.parse(fs.readFileSync(path.join(ROOT,'tests','fixtures','chess_perft.json'),'utf8')); let allOk=true;
+      for(const ps of fx.positions){const q=C.fromFEN(ps.fen);ps.perft.forEach((v,i)=>{if(C.perft(q,i+1)!==v)allOk=false;});}
+      ok(allOk,'шахматы: общий набор perft (tests/fixtures/chess_perft.json — тот же проверяет server/chess.py)'); }
     const mt=C.think(C.fromFEN('6k1/5ppp/8/8/8/8/8/3RK3 w - - 0 1'),2);
     ok(mt&&C.sqName(mt.m.f)+C.sqName(mt.m.t)==='d1d8','шахматы: ИИ находит мат в один ход');
     const hq=C.think(C.fromFEN('4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1'),2);
@@ -747,6 +750,10 @@ function makeCtx(xr){
     R.gp.buttons[3].pressed=true;frames(1);R.gp.buttons[3].pressed=false;frames(2);
     ok(!XE.laser.on,'указка: повторное нажатие выключает');
     ok(XE.toggleLaser(true)===true&&XE.laser.on&&XE.toggleLaser()===true&&!XE.laser.on,'указка: переключение из меню для учителя');
+    const n0=XE.LASER_COLORS.length,c0=XE.laser.ci;XE.nextLaserColor();ok(XE.laser.ci===(c0+1)%n0&&n0===7&&XE.LASER_COLORS[n0-1].rainbow,'указка: цвета переключаются по кругу, последний — радуга');
+    XE.setLaserColor(n0-1);XE.toggleLaser(true,1);const dr1=X.calls.draw;frames(4);ok(X.calls.draw>dr1&&XE.laserState().ci===n0-1,'указка: радужный луч рисуется, цвет уходит в состояние для сети');XE.toggleLaser(false);
+    const hs=XE.hsv(0,1,1),hg=XE.hsv(1/3,1,1);ok(hs[0]===1&&hs[1]===0&&hg[1]===1&&hg[0]===0,'указка: перевод оттенка в цвет (красный и зелёный)');
+    XE.setLaserColor(0);
     XE.menu.dirty=true;XE.toggleMenu(true);frames(3);ok(!XE.menu.over.length,'указка: меню с кнопкой «Указка» влезает');XE.toggleMenu(false);frames(1);
     XE.hooks.isTeacher=()=>false;
   }

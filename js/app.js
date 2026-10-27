@@ -139,8 +139,17 @@ function hooks(){
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
     p.text((st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
     const tch=E.isTeacher();
-    p.button(36,150,tch?W-72-330:W-72,86,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
-    if(tch)p.button(W-36-312,150,312,86,E.laser.on?'Указка: выкл':'Указка: вкл',()=>E.toggleLaser(),{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:34});
+    p.button(36,150,tch?W-72-540:W-72,86,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    if(tch){
+      p.button(W-36-526,150,256,86,E.laser.on?'Указка: выкл':'Указка: вкл',()=>E.toggleLaser(),{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:30});
+      /* цвет указки: плитка нужного цвета; «радуга» — с переливом */
+      const lc=E.LASER_COLORS[E.laser.ci],cx=W-36-256,hov=p.area(cx,150,256,86,()=>E.nextLaserColor());
+      const g=p.ctx,rgb=c=>'rgb('+c.map(v=>Math.round(v*255)).join(',')+')';
+      let fill;if(lc.rainbow){fill=g.createLinearGradient(cx,0,cx+256,0);for(let k=0;k<=6;k++)fill.addColorStop(k/6,rgb(E.hsv(((k/6*.9+E.t*.3)%1),.9,1)));}else fill=rgb(lc.c);
+      g.fillStyle=fill;g.beginPath();g.roundRect?g.roundRect(cx,150,256,86,14):g.rect(cx,150,256,86);g.fill();
+      if(hov){g.strokeStyle='#fff';g.lineWidth=5;g.stroke();}
+      g.font='bold 30px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle=lc.rainbow||lc.c[0]+lc.c[1]+lc.c[2]<1.6?'#0b1020':'#0b1020';g.fillText('Цвет: '+lc.n,cx+128,193);g.textAlign='left';g.textBaseline='top';
+    }
     const bw=(W-90)/2;
     VR.openRooms(st.grade||5).forEach((k,i)=>{
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';

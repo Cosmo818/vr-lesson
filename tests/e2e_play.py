@@ -71,6 +71,10 @@ try:
             save('S.dash', 'arena_dash_%s.png' % nm)
         ev("()=>{const S=VR.app.E.S;S.tid=VR.games.tour.list()[1].id;S.brk.dirty=S.ctl.dirty=true}")
         save('S.brk', 'arena_bracket.png'); save('S.ctl', 'arena_ctl.png')
+        ev("()=>{const E=VR.app.E;E.hooks.isTeacher=()=>true;E.laser.on=true;E.setLaserColor(6);}")
+        save('E.menu', 'menu_teacher_rainbow.png')
+        ev("()=>{const E=VR.app.E;E.setLaserColor(0);}")
+        save('E.menu', 'menu_teacher_red.png')
         ok(not errs, 'ошибок страницы нет: %s' % errs[:2])
         b.close()
 finally:

@@ -140,7 +140,7 @@ function run(root) {
 
   /* L5 */
   const jsAll = listFiles(root, 'js', '.js');
-  const noNet = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /sendBeacon/, /['"`]\/api\//, /vrlesson\.v1/, /vrlesson\.server/];
+  const noNet = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /RTCPeerConnection/, /sendBeacon/, /['"`]\/api\//, /vrlesson\.v1/, /vrlesson\.server/];
   const rules = {
     'js/data.js': [/VR\.(Store|app|ROOMS|createEngine|errors|flags)\b/, /\bdocument\./],
     'js/questions.js': [/VR\.(Store|app|ROOMS|createEngine|errors|flags)\b/, /\bdocument\./],
@@ -151,12 +151,14 @@ function run(root) {
     'js/custom.js': [/VR\.app\b/], 'js/builder.js': [/VR\.(app|ROOMS|createEngine|makeQuiz)\b/, /localStorage/],
     'js/schema.js': [/VR\.(Store|app|ROOMS|createEngine|flags)\b/, /localStorage/],
     'js/errors.js': [/VR\.(Store|app|ROOMS|createEngine|flags)\b/, /localStorage/],
-    'js/flags.js': [/VR\.(app|ROOMS|createEngine)\b/, /localStorage/]
+    'js/flags.js': [/VR\.(app|ROOMS|createEngine)\b/, /localStorage/],
+    /* А2 (28.10.2026): js/net.js — единственный модуль живых соединений; он не ходит по HTTP, не пишет в хранилище и не знает о движке и комнатах */
+    'js/net.js': [/\bfetch\s*\(/, /XMLHttpRequest/, /sendBeacon/, /localStorage/, /sessionStorage/, /VR\.(app|ROOMS|createEngine|makeQuiz|Store)\b/]
   };
   const layerBad = [];
   const units = [];
-  for (const f of jsAll) units.push({name: f, text: rd(root, f), net: f !== 'js/store.js'});
-  for (const h of ['index.html', 'teacher.html']) if (ex(root, h)) inlineScripts(root, h).forEach((t, i) => units.push({name: h + '#script' + (i + 1), text: t, net: true}));
+  for (const f of jsAll) units.push({name: f, text: rd(root, f), net: f !== 'js/store.js' && f !== 'js/net.js'});
+  for (const h of ['index.html', 'teacher.html', 'watch.html']) if (ex(root, h)) inlineScripts(root, h).forEach((t, i) => units.push({name: h + '#script' + (i + 1), text: t, net: true}));
   for (const u of units) {
     const list = (u.net ? noNet : []).concat(rules[u.name] || []);
     for (const re of list) if (re.test(u.text)) layerBad.push(u.name + ' ~ ' + re.source);

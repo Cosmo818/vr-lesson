@@ -371,7 +371,14 @@ void main(){
   };
   /* лазерная указка учителя: включается кнопкой на контроллере (нажатие стика) или в меню-планшете; красный луч с точкой.
      Кто учитель — решает E.hooks.isTeacher (app.js); для показа ученикам по сети — E.laserState() (начало и направление луча) и E.hooks.onLaser */
-  E.laser={on:false,hi:1};
+  /* цвета указки: последний — радуга с переливом (оттенок бежит по лучу и во времени) */
+  E.LASER_COLORS=[{n:'красный',c:[1,.08,.08]},{n:'зелёный',c:[.1,1,.25]},{n:'синий',c:[.25,.45,1]},{n:'жёлтый',c:[1,.9,.1]},{n:'белый',c:[1,1,1]},{n:'розовый',c:[1,.2,.8]},{n:'радуга',rainbow:true}];
+  const hsv=(h,s,v)=>{const i=Math.floor(h*6)%6,f=h*6-Math.floor(h*6),p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);return[[v,t,p],[q,v,p],[p,v,t],[p,q,v],[t,p,v],[v,p,q]][i];};
+  E.hsv=hsv;
+  let lci=0;try{lci=Math.max(0,Math.min(E.LASER_COLORS.length-1,parseInt(localStorage.getItem('vrl.laserColor'),10)||0));}catch(e){}
+  E.laser={on:false,hi:1,ci:lci};
+  E.setLaserColor=i=>{const n=E.LASER_COLORS.length;E.laser.ci=((i%n)+n)%n;try{localStorage.setItem('vrl.laserColor',String(E.laser.ci));}catch(e){}menu.dirty=true;E.beep(660+E.laser.ci*60,.05,'sine',.04);return E.laser.ci;};
+  E.nextLaserColor=()=>E.setLaserColor(E.laser.ci+1);
   E.isTeacher=()=>{try{return !!(E.hooks.isTeacher&&E.hooks.isTeacher());}catch(e){return false;}};
   E.toggleLaser=(v,hi)=>{
     if(!E.isTeacher()){E.toast('Лазерная указка — для учителя.','#fca5a5');return false;}
@@ -380,7 +387,7 @@ void main(){
     if(E.hooks.onLaser)try{E.hooks.onLaser(E.laser.on);}catch(e){}
     return true;
   };
-  E.laserState=()=>{const h=E.H[E.laser.hi]||E.H[0];return E.laser.on&&h&&h.has&&h.ro?{on:true,o:Array.from(h.ro),d:Array.from(h.rd)}:{on:false};};
+  E.laserState=()=>{const h=E.H[E.laser.hi]||E.H[0];return E.laser.on&&h&&h.has&&h.ro?{on:true,o:Array.from(h.ro),d:Array.from(h.rd),ci:E.laser.ci}:{on:false};};
   const laserLen=h=>{
     if(h.hit)return h.hit.t;
     let t=14;const L=[[0,-1,5.9],[0,1,5.9]];
@@ -657,7 +664,7 @@ void main(){
       h.trigPrev=trig;h.sqPrev=sq;h.mbPrev=mb;
       if(mbDown)E.toggleMenu();
       const sk=pressed(gp,3),skDown=sk&&!h.skPrev;h.skPrev=sk;
-      if(skDown&&E.session&&E.isTeacher())E.toggleLaser(!(E.laser.on&&E.laser.hi===hi),hi);
+      if(skDown&&E.session&&E.isTeacher()){if(E.laser.on&&E.laser.hi!==hi)E.nextLaserColor();else E.toggleLaser(!(E.laser.on&&E.laser.hi===hi),hi);}
       const gpos=[h.g[12],h.g[13],h.g[14]];let used=false;
       if(!h.held&&(trigDown||sqDown)){
         let b=nearestBody(gpos,E.session?.22:.42),pull=false;
@@ -739,7 +746,7 @@ void main(){
   }
 
   /* ---------- общий шаг кадра ---------- */
-  let hudT=0;
+  let hudT=0,mT=0;
   function step(dt){
     E.t+=dt;E.dt=dt;
     if(E.deskInput||E.session)handleInput(dt);
@@ -752,6 +759,7 @@ void main(){
     for(const c of E.conf){c.v[1]-=c.g*dt;for(let k=0;k<3;k++)c.p[k]+=c.v[k]*dt;c.life-=dt;}
     for(let i=E.conf.length-1;i>=0;i--)if(E.conf[i].life<=0||E.conf[i].p[1]<0)E.conf.splice(i,1);
     if(toast.show&&E.t>toast.data.until)toast.show=false;
+    if(E.menuOpen&&E.laser.on&&E.LASER_COLORS[E.laser.ci].rainbow&&E.isTeacher()){mT+=dt;if(mT>.12){mT=0;menu.dirty=true;}}
     hudT+=dt;if(hudT>1){hudT=0;hud.dirty=true;if(E.menuOpen)menu.dirty=true;}
     if(E.hooks.onFrame)try{E.hooks.onFrame(dt);}catch(e){}
     listen();
@@ -789,8 +797,12 @@ void main(){
       }
       if(E.laser.on&&E.laser.hi===hi&&h.ro){
         const t=laserLen(h),q=[h.ro[0]+h.rd[0]*t,h.ro[1]+h.rd[1]*t,h.ro[2]+h.rd[2]*t];
-        if(E.session&&h.r)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-t/2),M.scale(.012,.012,t))),[1,.08,.08],1);
-        add(mesh.sphere,TRS(q[0],q[1],q[2],.07,.07,.07),[1,.12,.12],1);
+        const lc=E.LASER_COLORS[E.laser.ci]||E.LASER_COLORS[0];
+        if(E.session&&h.r){
+          if(lc.rainbow){const n=14,sg=t/n;for(let k=0;k<n;k++)add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-(k+.5)*sg),M.scale(.012,.012,sg*1.02))),hsv(((E.t*.45-k/n*.9)%1+1)%1,.9,1),1);}
+          else add(mesh.cube,M.mul(h.r,M.mul(M.trans(0,0,-t/2),M.scale(.012,.012,t))),lc.c,1);
+        }
+        add(mesh.sphere,TRS(q[0],q[1],q[2],.07,.07,.07),lc.rainbow?hsv(((E.t*.45)%1+1)%1,.9,1):lc.c,1);
       }
       if(h.hit&&!h.aim){const q=[h.ro[0]+h.rd[0]*h.hit.t,h.ro[1]+h.rd[1]*h.hit.t,h.ro[2]+h.rd[2]*h.hit.t],k=(E.session?.025:.012)*(h.hov&&h.hov.tg?1.8:1);add(mesh.sphere,TRS(q[0],q[1],q[2],k,k,k),[1,.9,.3],1);}
     }
