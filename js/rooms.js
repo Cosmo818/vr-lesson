@@ -108,6 +108,7 @@ ROOMS.hall={
     }});
     const gr=E.student&&E.student.grade?E.student.grade:5;
     for(const [k,x,z,yaw] of DOORS)if(VR.Store.roomOn(k,gr))E.door(x,z,yaw,entryOf(k),D.subjects[k].title,D.subjects[k].color);
+    E.door(4.2,5.88,Math.PI,'play','Игровая','#fbbf24');
     makeQuiz(E,'gen',[0,1.6,5.86],Math.PI,{teacherOnly:true});
     if(VR.custom)VR.custom.hallPanel(E,gr);
     if(VR.learn)VR.learn.hallPanel(E);

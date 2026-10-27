@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -331,6 +331,23 @@ function makeCtx(xr){
       ok(tc.down===null&&L.treeOf(6,12).why==='stable','дерево C: вниз «не распадается (стабильно)», принудительного деления нет');
       const tu=L.treeOf(92,238,true);ok(tu.down&&tu.down.kind==='alpha'&&tu.up.length>0,'дерево U-238: альфа-распад и ветки слияния');
       ok(L.treeOf(1,1,true).down===null,'дерево H: распада нет');}
+    /* корректность реакций (аудит 27.10.2026): составы молекул, сохранение Z и A, известные Q */
+    {const N=VR.nuc,sub={'₀':0,'₁':1,'₂':2,'₃':3,'₄':4,'₅':5,'₆':6,'₇':7,'₈':8,'₉':9};let badMol=[];
+      for(const m of VR.DATA.molecules){const comp={},re=/([A-Z][a-z]?)([₀-₉]*)/g;let x;while((x=re.exec(m.formula)))comp[x[1]]=(comp[x[1]]||0)+(x[2]?[...x[2]].reduce((u,c)=>u*10+sub[c],0):1);
+        const at={};for(const q of m.atoms)at[q[0]]=(at[q[0]]||0)+1,
+        same=(u,v)=>Object.keys(u).length===Object.keys(v).length&&Object.keys(u).every(k=>u[k]===v[k]);
+        if(!same(comp,m.f)||!same(at,m.f))badMol.push(m.key);}
+      ok(badMol.length===0,'молекулы: формула, состав и число атомов в модели совпадают ('+badMol+')');
+      let bad=[];for(let z=1;z<=118;z++){const e=N.el(z),r=N.decayOf(z,e.a);if(!r.ok)continue;
+        const zs=r.to.reduce((u,x)=>u+x.z,0),as=r.to.reduce((u,x)=>u+x.a,0),zl=r.kind==='beta'?r.lz:0;
+        const A0=e.a+(r.kind==='fission'?1:0);if(zs+zl!==z||as+(r.n||0)!==A0&&!(r.kind==='fission'&&as+(r.n||0)===e.a))bad.push(z+'-'+e.a+' '+r.kind);}
+      ok(bad.length===0,'распады всех 118 элементов сохраняют Z и A ('+bad+')');
+      const q=(z,a)=>N.decayOf(z,a).q,near=(v,w,e)=>Math.abs(v-w)<e;
+      ok(near(q(88,226),4.871,.01)&&near(q(84,210),5.407,.01)&&near(q(92,238),4.27,.01),'альфа-распад: Ra-226 4,87; Po-210 5,41; U-238 4,27 МэВ — по справочникам, не по формуле');
+      const dt=N.fuse({z:1,a:2},{z:1,a:3}),he=N.fuse({z:2,a:3},{z:2,a:3});
+      ok(dt.ok&&dt.n===1&&dt.to[0].z===2&&dt.to[0].a===4&&near(dt.q,17.59,.01),'D + T → He-4 + n, 17,59 МэВ');
+      ok(he.ok&&he.to.length===3&&he.to.reduce((u,x)=>u+x.a,0)===6&&near(he.q,12.86,.01),'He-3 + He-3 → He-4 + 2p, 12,86 МэВ');
+      ok(near(N.fuse({z:6,a:12},{z:2,a:4}).q,7.162,.005),'C-12 + He-4 → O-16, 7,16 МэВ');}
     Ch.nuclear=true;Ch.cur=null;L.setCur(Ch,92,238);run(3);E.paintPanel(Ch.tree);
     ok(Ch.tree.btns.length>=4&&Ch.tree.btns.some(b=>b.z===92)&&Ch.tree.btns.length===6,'дерево Fe нарисовано: области наведения есть (3 слияния, центр, 2 осколка); рамки за краем проверяет e2e_chem');
     {const i=Ch.tree.btns.findIndex(b=>b.z===93),hb=Ch.tree.btns[i];Ch.cardZ=0;Ch.tree.hover=i;L.update(E,Ch,.016);ok(Ch.tip===undefined&&Ch.cur.z===92&&Ch.cardZ===0,'наведение на узел дерева только подсвечивает: справочной панели слева нет, выбор не меняется');hb.fn(E.H[1]);L.update(E,Ch,.016);ok(Ch.cur.z===93&&Ch.cardZ===93&&Ch.el===92&&Ch.card.show,'курок на узле дерева выбирает элемент: центр дерева, ячейка в таблице и планшет (справка только там)');Ch.tree.hover=-1;L.update(E,Ch,.016);}
@@ -473,6 +490,36 @@ function makeCtx(xr){
   ok(B.ok===true,'бюджет сбалансирован: '+B.msg);
   E.targets.find(t=>t.id==='g2').sel();ok(B.gsel===2,'выбрано понятие «Право»');
   // ---- логика
+  { /* шахматы: правила (perft), ИИ, комната «Игровая» */
+    const C=VR.chess,pf=(f,d)=>C.perft(C.fromFEN(f),d);
+    ok(pf(C.START,3)===8902&&pf(C.START,4)===197281,'шахматы: perft старта 8902 / 197281');
+    ok(pf('r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1',3)===97862,'шахматы: perft Kiwipete (рокировка, взятие на проходе, шахи) 97862');
+    ok(pf('8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',4)===43238,'шахматы: perft позиции 3 (шпилька) 43238');
+    ok(pf('rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8',3)===62379,'шахматы: perft позиции 5 (превращения) 62379');
+    const mt=C.think(C.fromFEN('6k1/5ppp/8/8/8/8/8/3RK3 w - - 0 1'),2);
+    ok(mt&&C.sqName(mt.m.f)+C.sqName(mt.m.t)==='d1d8','шахматы: ИИ находит мат в один ход');
+    const hq=C.think(C.fromFEN('4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1'),2);
+    ok(hq&&hq.m.t===35,'шахматы: ИИ берёт зевнутого ферзя');
+  }
+  E.goRoom('play');run(25);
+  { const C=VR.chess,Pl=E.S,tg=id=>E.targets.find(t=>t.id===id),bt=i=>Pl.panel.btns[i],cb=i=>Pl.cpanel.btns[i];
+    ok(Pl.pos&&Pl.pos.t===1&&Pl.moves.length===20&&E.targets.filter(t=>/^c\d+$/.test(t.id)).length===64,'игровая: доска, 64 клетки, 20 ходов');
+    tg('c12').sel({});ok(Pl.sel===12&&Pl.dests.length===2,'игровая: выбор пешки e2 показывает 2 хода');
+    tg('c28').sel({});run(150);
+    ok(Pl.hist.length===2&&Pl.pos.t===1,'игровая: ход e2–e4 и ответ компьютера');
+    ok(Pl.cpanel.show===false,'игровая: панель настроек скрыта по умолчанию');
+    Pl.panel.dirty=true;run(3);Pl.panel.btns[Pl.panel.btns.length-1].fn();ok(Pl.cpanel.show===true,'игровая: кнопка показывает панель настроек');
+    Pl.cpanel.dirty=true;run(3);cb(7).fn();
+    ok(Pl.hist.length===0&&C.toFEN(Pl.pos)===C.START,'игровая: «Отменить ход» возвращает начало');
+    tg('c20').sel({});ok(Pl.sel===-1,'игровая: клик по пустой клетке без выбора ничего не делает');
+    Pl.pos=C.fromFEN('8/P6k/8/8/8/8/8/K7 w - - 0 1');Pl.moves=C.legal(Pl.pos);
+    tg('c48').sel({});tg('c56').sel({});ok(!!Pl.promo,'игровая: ход пешки на последнюю горизонталь спрашивает фигуру');
+    Pl.panel.dirty=true;run(3);bt(0).fn();
+    ok(!Pl.promo&&Pl.pos.b[56]===C.Q&&Pl.hist.length===1,'игровая: превращение в ферзя');
+    run(5);Pl.cpanel.dirty=true;run(3);cb(5).fn();run(150);
+    Pl.panel.dirty=true;run(3);Pl.panel.btns[Pl.panel.btns.length-1].fn();ok(Pl.cpanel.show===false,'игровая: та же кнопка скрывает панель настроек');
+    ok(Pl.me===-1&&Pl.flip&&Pl.hist.length===1&&Pl.pos.t===-1,'игровая: за чёрных доска повёрнута, белые (компьютер) ходят первыми');
+  }
   E.goRoom('logic');run(25);
   B=E.S;
   const solve=(n,a,b,c)=>{if(!n)return;solve(n-1,a,c,b);B.peg(a);B.peg(c);solve(n-1,b,a,c);};
