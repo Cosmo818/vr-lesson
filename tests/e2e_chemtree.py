@@ -60,6 +60,10 @@ try:
         ok(ev('VR.app.E.S.guest') is True, '5 класс: режим «до 8 класса»')
         save(map_, 'chemtree_map5.png')
 
+        # ---- 7 класс: разделы блока «c» открыты — подписи «с 8 класса» быть не должно
+        go('chem-hub', 7)
+        ok(ev('VR.app.E.S.doors') > 1 and ev('VR.app.E.S.guest') is False, '7 класс: разделы открыты, подпись «до 8 класса» не показана (%s)' % ev('VR.app.E.S.doors'))
+
         # ---- заглушки разделов
         for sid in ('chem-ion', 'chem-acid', 'chem-inorg', 'chem-org'):
             go(sid, 9)

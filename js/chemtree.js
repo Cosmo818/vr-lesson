@@ -42,12 +42,12 @@ ROOMS['chem-hub']={
   hint:'Химия: на карте — что изучают в каком классе. Двери ведут в разделы, а тест — справа от карты.',
   build(E,S){
     E.door(0,5.88,Math.PI,'hall','← Холл','#94a3b8');
-    const g=grade(E);let n=0;
+    let n=0;
     for(const s of SECT){
       if(!open(E,s))continue;
       E.door(s.wall<0?-5.88:5.88,s.z,s.wall<0?YL:YR,s.id,s.title,s.color);n++;
     }
-    S.doors=n;S.guest=g<8;
+    S.doors=n;S.guest=n<=1;
     E.addPanel({w:3,h:2,pos:[-1.2,1.6,-5.86],yaw:0,res:1280,keepTex:true,accent:GREEN,draw:(c,p)=>{
       p.text('Карта химии',40,24,{size:62,bold:true,color:GREEN});
       p.text(S.guest?'Разделы откроются с 8 класса — пока работает универсальный стенд.':'Что изучают в каком классе — выбери дверь.',40,104,{size:32,color:'#b8c7ea',maxW:p.W-80});
