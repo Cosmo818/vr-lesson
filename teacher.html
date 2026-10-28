@@ -191,6 +191,7 @@ tr.click{cursor:pointer}tr.click:hover{background:#16213f}
 <script src="js/builder.js"></script>
 <script src="js/netproto.js"></script>
 <script src="js/net.js"></script>
+<script src="js/netsafe.js"></script>
 <script>
 (function(){
 'use strict';
@@ -257,7 +258,7 @@ try{if(localStorage.getItem('vrl.acctMode')==='1'){acctMode=true;showForms();}}c
 $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);if(b.dataset.t!=='lesson')lessonHide();for(const t of['rating','students','lesson','rooms','builder','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
 
 /* ---- урок (сеть, PLAN-network.md Н8, §7.6): открыть/закрыть, настройки, список участников из hub ---- */
-const LS={cls:'',sess:null,code:'',msg:'',off:'',roster:{},wired:false,seq:0,confirm:false,rooms:null};
+const LS={cls:'',sess:null,code:'',msg:'',off:'',roster:{},st:{},ph:{},planT:0,wired:false,seq:0,confirm:false,rooms:null};
 const LS_MODES={seat:'сижу (за партами, до 15 шлемов)',stand:'стою на месте (≥ 2,5 м² на человека)'};   /* «хожу» — после калибровки, шаг Н9 */
 const LS_CHAT={off:'выключен',phrases:'только готовые фразы',text:'текст с фильтром'};
 const LS_ROLE={s:'ученик',t:'учитель',a:'наблюдатель',v:'зритель'};
@@ -274,12 +275,16 @@ function lessonWire(){
   const upd=()=>{if(!$('t-lesson').hidden)lessonRoster();};
   N.on('welcome',w=>{LS.roster={};for(const r of(w&&w.roster)||[])if(r&&typeof r.slot==='number')LS.roster[r.slot]=Object.assign({},r);upd();});
   N.on('roster',m=>{const s=m.slot;if(typeof s!=='number')return;
-    if(m.op==='-')delete LS.roster[s];
+    if(m.op==='-'){delete LS.roster[s];delete LS.st[s];delete LS.ph[s];}
     else if(m.op==='away'){const r=LS.roster[s];if(r)r.away=m.on===undefined?true:!!m.on;}
     else{const o=Object.assign({},LS.roster[s]||{},m);delete o.op;delete o.t;if(m.op==='+'||m.op==='~')o.away=false;LS.roster[s]=o;}
     upd();});
   N.on('needTicket',async()=>{if(!LS.sess)return;const r=await S.sessionTicket(LS.sess.id);if(r.status===200&&r.data&&r.data.ticket)N.useTicket(r.data.ticket,r.data.hubs);});
-  N.on('status',upd);N.on('closed',()=>{LS.roster={};upd();});
+  /* Н9: статус безопасности учеников (ev st) и физические точки из поз (кабинет получает позы всех комнат) */
+  N.on('ev',m=>{if(m&&m.k==='st'&&typeof m.slot==='number'){LS.st[m.slot]=m;upd();}});
+  N.on('poses',ev=>{const t=Date.now();for(const it of(ev&&ev.items)||[])LS.ph[it.slot]={x:it.phys.x,z:it.phys.z,yaw:it.phys.yaw,cal:!!(it.flags&8),vr:!!(it.flags&4),t};
+    if(t-LS.planT>250&&!$('t-lesson').hidden){LS.planT=t;lessonPlan();}});
+  N.on('status',upd);N.on('closed',()=>{LS.roster={};LS.st={};LS.ph={};upd();});
 }
 async function lessonConnect(){
   const my=++LS.seq;lessonWire();
@@ -310,7 +315,8 @@ function lessonForm(){
   const opts=(o,v)=>Object.keys(o).map(x=>`<option value="${x}"${x===v?' selected':''}>${esc(o[x])}</option>`).join('');
   const modeSel=v=>`<select id="lsMode">${opts(LS_MODES,v)}</select>`,chatSel=v=>`<select id="lsChat">${opts(LS_CHAT,v)}</select>`;
   const fields=v=>`<div class="row"><label>Режим движения: ${modeSel(v.mode||'seat')}</label><label>Чат: ${chatSel(v.chat||'off')}</label></div>
-    <div class="row"><label>Площадь, м²: <input id="lsArea" type="number" min="1" max="1000" step="0.5" style="width:90px" value="${v.area_m2||''}"></label><label>Станции (через запятую): <input id="lsSt" maxlength="200" style="width:260px" value="${esc((v.stations||[]).join(', '))}"></label></div>
+    <div class="row"><label>Площадь, м²: <input id="lsArea" type="number" min="1" max="1000" step="0.5" style="width:90px" value="${v.area_m2||''}"></label></div>
+    ${lessonStations(v.stations)}
     <div class="row"><label><input type="checkbox" id="lsPtr"${v.pointers===false?'':' checked'}> Указки учеников видны всем</label></div>`;
   let h=sel+`<div class="muted small" id="lsMsg">${esc(LS.off||LS.msg)}</div>`;
   if(LS.off){box.innerHTML=h;wireLesson();return;}
@@ -325,14 +331,50 @@ function lessonForm(){
       ${LS.code?`<div class="card" style="background:#0e1730"><b>Код урока для входа из дома: <span style="font-size:22px;letter-spacing:3px">${esc(LS.code)}</span></b><div class="muted small">Показывается один раз. Потеряли — закройте урок и откройте заново.</div></div>`:(se.remote?'<div class="muted small">Вход из дома по коду включён (код был показан при открытии).</div>':'')}
       ${fields(st)}<div class="row"><button class="btn" id="lsSave">Сохранить настройки</button><span class="muted small" id="lsSaved"></span></div></div>
       <div class="card"><div class="row" style="justify-content:space-between"><b>Участники</b><span class="muted small" id="lsDens"></span></div><div class="scroll"><table id="lsTab"></table></div>
-      <p class="muted small">Устройство, кадры/с, калибровка и тревоги появятся вместе с калибровкой (Н9) и командами ведущего (Н10). План класса — тоже Н9.</p></div>`;
+      <div class="row" style="align-items:flex-start"><canvas id="lsPlan" width="560" height="380" style="max-width:100%;background:#0b1020;border:1px solid #334155;border-radius:8px"></canvas>
+      <div class="muted small" style="max-width:340px">План класса: точки — откалиброванные ученики (где они стоят на самом деле), круг — 1,5 м. Красный — кто-то ближе 0,8 м, жёлтый — ушёл с места. Полоска A→B — станция калибровки. Не откалиброванных на плане нет — они в списке с жёлтой меткой.</div></div>
+      <p class="muted small">Кнопки ведущего («Все ко мне», «Заморозить», «Калибровка всем», «Убрать из урока») — следующий шаг (Н10).</p></div>`;
   }
   box.innerHTML=h;wireLesson();lessonRoster();
+}
+/* станции калибровки (Н9): до 4 строк «имя, x, z, угол A→B»; старый формат (имена) — в начале координат */
+function lessonStations(list){
+  const has=Array.isArray(list)&&list.length,sts=has&&VR.netsafe?VR.netsafe._pure.normStations(list):[],inp=(id,v,w,ph)=>`<input id="${id}" style="width:${w}px" value="${esc(v)}" placeholder="${ph}">`;
+  let h='<div class="muted small" style="margin-top:6px">Станции калибровки (метки A и B на полу в 1 м друг от друга): имя, положение метки A в метрах (x, z) и угол направления A→B в градусах. Одна станция — можно оставить 0, 0, 0.</div>';
+  for(let i=0;i<4;i++){const v=sts[i]||{id:'',x:'',z:'',yaw:''};h+=`<div class="row">${inp('lsSn'+i,v.id,140,i?'':'Станция 1')} x ${inp('lsSx'+i,v.x,60,'0')} z ${inp('lsSz'+i,v.z,60,'0')} угол ${inp('lsSy'+i,v.yaw,60,'0')}</div>`;}
+  return h;
+}
+/* план класса (Н9, §7.6): физические точки откалиброванных учеников в рамке класса, круги 1,5 м, станции, цвет тревоги */
+function lessonPlan(){
+  const cv=$('lsPlan');if(!cv||!cv.getContext)return;
+  const g=cv.getContext('2d'),W=cv.width,H=cv.height,now=Date.now();
+  const sts=VR.netsafe?VR.netsafe._pure.normStations(LS.sess&&LS.sess.settings&&LS.sess.settings.stations):[];
+  const pts=Object.keys(LS.ph).map(Number).filter(s=>LS.roster[s]&&LS.ph[s].cal&&now-LS.ph[s].t<5000).map(s=>Object.assign({slot:s,r:LS.roster[s],q:LS.st[s]||{}},LS.ph[s]));
+  let x0=Infinity,x1=-Infinity,z0=Infinity,z1=-Infinity;const fit=(x,z)=>{x0=Math.min(x0,x);x1=Math.max(x1,x);z0=Math.min(z0,z);z1=Math.max(z1,z);};
+  for(const s of sts){fit(s.x,s.z);const a=s.yaw*Math.PI/180;fit(s.x+Math.cos(a),s.z+Math.sin(a));}
+  for(const p of pts)fit(p.x,p.z);
+  const cx=(x0+x1)/2,cz=(z0+z1)/2,span=Math.max(6,x1-x0+3,(z1-z0+3)*W/H),k=W/span;
+  const X=x=>W/2+(x-cx)*k,Z=z=>H/2+(z-cz)*k;
+  g.fillStyle='#0b1020';g.fillRect(0,0,W,H);
+  g.strokeStyle='#1e293b';g.lineWidth=1;for(let m=Math.floor(cx-span);m<=cx+span;m++){g.beginPath();g.moveTo(X(m),0);g.lineTo(X(m),H);g.stroke();}
+  for(let m=Math.floor(cz-span);m<=cz+span;m++){g.beginPath();g.moveTo(0,Z(m));g.lineTo(W,Z(m));g.stroke();}
+  g.font='12px sans-serif';g.textBaseline='middle';
+  for(const s of sts){const a=s.yaw*Math.PI/180;g.strokeStyle='#38bdf8';g.lineWidth=3;g.beginPath();g.moveTo(X(s.x),Z(s.z));g.lineTo(X(s.x+Math.cos(a)),Z(s.z+Math.sin(a)));g.stroke();
+    g.fillStyle='#38bdf8';g.fillText('A',X(s.x)-12,Z(s.z));g.fillText('B '+s.id,X(s.x+Math.cos(a))+6,Z(s.z+Math.sin(a)));}
+  for(const p of pts){
+    const col=p.q.near===2?'#f87171':p.q.off||p.q.near===1?'#fbbf24':'#4ade80';
+    g.strokeStyle=col;g.globalAlpha=.5;g.lineWidth=1;g.beginPath();g.arc(X(p.x),Z(p.z),1.5*k,0,Math.PI*2);g.stroke();g.globalAlpha=1;
+    g.fillStyle=col;g.beginPath();g.arc(X(p.x),Z(p.z),6,0,Math.PI*2);g.fill();
+    g.strokeStyle=col;g.lineWidth=2;g.beginPath();g.moveTo(X(p.x),Z(p.z));g.lineTo(X(p.x+Math.cos(p.yaw)*.4),Z(p.z+Math.sin(p.yaw)*.4));g.stroke();
+    g.fillStyle='#e2e8f0';g.fillText(String(p.r.name||'').split(' ').slice(0,2).join(' '),X(p.x)+9,Z(p.z)-9);
+  }
+  g.fillStyle='#64748b';g.fillText('1 клетка = 1 м · откалиброваны: '+pts.length,8,H-10);
 }
 function lessonBody(){
   const o={mode:$('lsMode').value,chat:$('lsChat').value,pointers:$('lsPtr').checked},a=parseFloat($('lsArea').value);
   if(a>0)o.area_m2=a;
-  o.stations=$('lsSt').value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,20);
+  o.stations=[];
+  for(let i=0;i<4;i++){const n=($('lsSn'+i).value||'').trim();if(!n)continue;const f=k=>{const x=parseFloat(String($(k+i).value).replace(',','.'));return isFinite(x)?x:0;};o.stations.push({id:n.slice(0,24),x:f('lsSx'),z:f('lsSz'),yaw:f('lsSy')});}
   return o;
 }
 function wireLesson(){
@@ -361,9 +403,17 @@ function lessonRoster(){
   const tb=$('lsTab');if(!tb)return;
   const st=VR.net.status(),list=Object.values(LS.roster).sort((a,b)=>a.slot-b.slot),kids=list.filter(r=>r.role==='s');
   const rn=c=>(lessonRooms().find(x=>x[0]===c)||[0,c||'—'])[1];
-  tb.innerHTML='<tr><th>Имя</th><th>Роль</th><th>Комната</th><th>Связь</th></tr>'+(list.length?list.map(r=>`<tr><td>${esc(r.name||'—')}</td><td>${esc(LS_ROLE[r.role]||'—')}</td><td>${esc(rn(r.room))}</td><td>${r.away?'<span style="color:#fbbf24">нет связи</span>':'в сети'}</td></tr>`).join(''):`<tr><td colspan="4" class="muted">${st.state==='on'?'Пока никого нет.':st.state==='off'?'Нет связи с hub.':'Подключение…'}</td></tr>`);
+  const Y=t=>'<span style="color:#fbbf24">'+t+'</span>',R=t=>'<span style="color:#f87171">'+t+'</span>';
+  const row=r=>{const q=LS.st[r.slot]||{},ph=LS.ph[r.slot],vr=q.vr!==undefined?!!q.vr:ph?ph.vr:null,cal=q.cal!==undefined?!!q.cal:ph?ph.cal:null,al=[];
+    if(q.near===2)al.push(R('ближе 0,8 м к соседу'));else if(q.near===1)al.push(Y('рядом сосед'));
+    if(q.off)al.push(Y('ушёл с места'));if(vr&&cal===false&&r.role==='s')al.push(Y('не откалиброван'));
+    return `<tr><td>${esc(r.name||'—')}</td><td>${esc(LS_ROLE[r.role]||'—')}</td><td>${esc(rn(r.room))}</td><td>${r.away?Y('нет связи'):'в сети'}</td><td>${vr===null?'—':vr?'шлем':'экран'}</td><td>${q.fps?q.fps:'—'}</td><td>${!vr?'—':cal?'да':Y('нет')}</td><td>${al.join(', ')||'—'}</td></tr>`;};
+  tb.innerHTML='<tr><th>Имя</th><th>Роль</th><th>Комната</th><th>Связь</th><th>Устройство</th><th>Кадр/с</th><th>Калибровка</th><th>Тревоги</th></tr>'+(list.length?list.map(row).join(''):`<tr><td colspan="8" class="muted">${st.state==='on'?'Пока никого нет.':st.state==='off'?'Нет связи с hub.':'Подключение…'}</td></tr>`);
   const ar=LS.sess&&LS.sess.settings&&LS.sess.settings.area_m2,md=LS.sess&&LS.sess.settings&&LS.sess.settings.mode;
-  const d=$('lsDens');if(d)d.textContent='учеников: '+kids.length+(ar&&kids.length?` · ${(ar/kids.length).toFixed(1)} м² на человека`+(md==='stand'&&ar/kids.length<2.5?' — тесно для режима «стою»':''):'')+(LS.msg?' · '+LS.msg:'');
+  const NSP=VR.netsafe&&VR.netsafe._pure,lim=NSP&&ar?NSP.modeLimits(ar):null,allCal=kids.length>0&&kids.every(r=>{const q=LS.st[r.slot];return q&&q.cal;}),wc=NSP?NSP.walkCheck(kids.length,ar||0,allCal):null;
+  const d=$('lsDens');if(d)d.textContent='учеников: '+kids.length+(ar&&kids.length?` · ${(ar/kids.length).toFixed(1)} м² на человека`+(md==='stand'&&ar/kids.length<2.5?' — тесно для режима «стою»':''):'')
+    +(lim?` · предел: сидя ${lim.seat}, стоя ${lim.stand}, ходьба ${lim.walk}`:'')+(wc?' · ходьба: '+(wc.ok?'можно (после пилота)':'недоступна — '+wc.why.toLowerCase()):'')+(LS.msg?' · '+LS.msg:'');
+  lessonPlan();
 }
 
 /* ---- рейтинг ---- */

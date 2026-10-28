@@ -550,6 +550,11 @@ void main(){
     if(!E.session||!curFrame||!baseRef||!src||!src.gripSpace)return null;
     try{const gp=curFrame.getPose(src.gripSpace,baseRef);if(!gp)return null;const t=gp.transform,p=t.position,o=t.orientation;return{p:[p.x,p.y,p.z],q:[o.x,o.y,o.z,o.w]};}catch(e){return null;}
   };
+  /* голова в baseRef (local-floor, физическое положение для калибровки и колец, Н9) → {p:[x,y,z],q} или null вне VR */
+  E.headBase=()=>{
+    if(!E.session||!curFrame||!baseRef)return null;
+    try{const vp=curFrame.getViewerPose(baseRef);if(!vp)return null;const t=vp.transform,p=t.position,o=t.orientation;return{p:[p.x,p.y,p.z],q:[o.x,o.y,o.z,o.w]};}catch(e){return null;}
+  };
   /* голова в мировых координатах с кватернионом {p,q} (отправка своей позы в сеть) */
   E.headWorld=()=>{
     if(E.session&&curFrame&&refSpace){const vp=curFrame.getViewerPose(refSpace);if(vp){const t=vp.transform,p=t.position,o=t.orientation;return{p:[p.x,p.y,p.z],q:[o.x,o.y,o.z,o.w]};}}

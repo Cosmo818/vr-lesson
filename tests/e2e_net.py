@@ -125,10 +125,28 @@ try:
         txt = tp.inner_text('#lsBox')
         ok('Урок идёт' in txt and 'Иван П.' in txt and 'Мария С.' in txt, 'кабинет: вкладка «Урок» показывает идущий урок и обоих учеников (%s)' % txt[:160].replace('\n', ' '))
         ok('в сети' in txt and 'ученик' in txt, 'кабинет: у участников видны роль и связь')
-        tp.fill('#lsArea', '30'); tp.select_option('#lsMode', 'stand'); tp.fill('#lsSt', 'Лаб 1, Лаб 2'); tp.click('#lsSave'); tp.wait_for_timeout(800)
+        # Н9: устройство из статуса ученика (за экраном), тревоги из ev st, план класса
+        try:
+            tp.wait_for_function("document.getElementById('lsTab').textContent.indexOf('экран')>=0", timeout=15000)
+        except Exception:
+            pass
+        ok('экран' in tp.inner_text('#lsTab'), 'кабинет: устройство ученика «экран» (статус ev st из netsafe)')
+        pages[0][0].evaluate("VR.netsafe.detach();VR.net.send({t:'ev',k:'st',cal:1,off:1,near:2,vr:1,fps:72})")
+        try:
+            tp.wait_for_function("document.getElementById('lsTab').textContent.indexOf('ближе 0,8 м')>=0", timeout=10000)
+        except Exception:
+            pass
+        tt = tp.inner_text('#lsTab')
+        ok('ближе 0,8 м' in tt and 'ушёл с места' in tt and '72' in tt and 'шлем' in tt, 'кабинет: тревоги, кадр/с и шлем из статуса ученика (%s)' % tt.replace('\n', ' ')[-200:])
+        ok(tp.evaluate("!!document.getElementById('lsPlan')"), 'кабинет: план класса нарисован')
+        tp.fill('#lsArea', '30'); tp.select_option('#lsMode', 'stand')
+        tp.fill('#lsSn0', 'Лаб 1'); tp.fill('#lsSx0', '1,5'); tp.fill('#lsSz0', '-2'); tp.fill('#lsSy0', '90'); tp.fill('#lsSn1', 'Лаб 2')
+        tp.click('#lsSave'); tp.wait_for_timeout(800)
         st, lst = req('POST', '/api/admin/session.list', {'class_id': 'cA1'}, {'Authorization': 'Bearer ' + tok})
         o = (lst.get('open') or [{}])[0].get('settings', {})
-        ok(o.get('area_m2') == 30 and o.get('mode') == 'stand' and o.get('stations') == ['Лаб 1', 'Лаб 2'], 'кабинет: настройки сохранены на сервере (%s)' % o)
+        ok(o.get('area_m2') == 30 and o.get('mode') == 'stand' and o.get('stations') == [{'id': 'Лаб 1', 'x': 1.5, 'z': -2.0, 'yaw': 90.0}, {'id': 'Лаб 2', 'x': 0.0, 'z': 0.0, 'yaw': 0.0}],
+           'кабинет: настройки и станции с координатами сохранены на сервере (%s)' % o)
+        ok('ходьба' in tp.inner_text('#lsDens'), 'кабинет: пределы площади и доступность ходьбы показаны')
         tp.click('#lsClose'); tp.wait_for_timeout(300); tp.click('#lsClose'); tp.wait_for_selector('#lsOpen', timeout=10000)
         st, lst = req('POST', '/api/admin/session.list', {'class_id': 'cA1'}, {'Authorization': 'Bearer ' + tok})
         ok(not lst.get('open'), 'кабинет: урок закрыт после двойного нажатия')

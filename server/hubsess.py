@@ -26,7 +26,22 @@ DEF = {
     'flood_s': 10.0, 'slow1': 32 << 10, 'slow2': 128 << 10, 'slow3': 512 << 10, 'slow_s': 5.0, 'hard': 2 << 20,
     'max_seats': 60, 'aud': 'center', 'kid': None, 'poll_s': 10.0,
 }
-SESS_DEF = {'chat': 'off', 'mode': 'seat', 'maxSeats': 60, 'pointers': True}
+SESS_DEF = {'chat': 'off', 'mode': 'seat', 'maxSeats': 60, 'pointers': True, 'stations': []}
+
+
+def _stations(v):
+    """Станции калибровки из ответа app.py (Н9): до 4 {id, x, z, yaw} с конечными числами; остальное отбрасывается."""
+    out = []
+    for x in v if isinstance(v, list) else []:
+        if len(out) >= 4 or not isinstance(x, dict) or not isinstance(x.get('id'), str):
+            continue
+        try:
+            n = [float(x.get(k, 0)) for k in ('x', 'z', 'yaw')]
+        except (TypeError, ValueError):
+            continue
+        if all(abs(a) <= 1000 for a in n):
+            out.append({'id': x['id'][:24], 'x': n[0], 'z': n[1], 'yaw': n[2]})
+    return out
 
 
 class Bucket:
@@ -57,6 +72,7 @@ class Seat:
         self.pos, self.phys, self.away, self.gone_t, self.resume = (0.0, 0.0), None, False, None, None
         self.rate, self.over_t, self.react_t, self.att = None, None, 0.0, now
         self.b_ctl = self.b_pose = self.b_point = None
+        self.st = None
 
     def pub(self):
         return {'slot': self.slot, 'name': self.name, 'role': self.role, 'col': self.col, 'room': self.room, 'away': self.away}
@@ -71,7 +87,7 @@ class Session:
 
     def pub(self):
         return {'id': self.id, 'kind': self.kind, 'chat': self.set['chat'], 'mode': self.set['mode'], 'freeze': self.freeze,
-                'pointers': bool(self.set['pointers'])}
+                'pointers': bool(self.set['pointers']), 'stations': self.set['stations']}
 
 
 class Core:
@@ -292,6 +308,19 @@ class Core:
                 c.seat = None
                 c.close(4012, 'removed')
             return
+        if k == 'st':   # статус безопасности (Н9): только учителю и наблюдателям, во всех комнатах
+            v = {}
+            for f, hi in (('cal', 1), ('off', 1), ('near', 2), ('vr', 1), ('fps', 240)):
+                x = m.get(f, 0)
+                if not isinstance(x, int) or isinstance(x, bool):
+                    return
+                v[f] = max(0, min(hi, x))
+            s.st = v
+            raw = _js(dict(v, t='ev', k='st', slot=s.slot))
+            for x in sess.seats.values():
+                if x is not s and x.conn and x.role in ('t', 'a'):
+                    x.conn.text(raw)
+            return
         conn.text({'t': 'err', 'code': 'unknown', 'msg': str(k)[:20]})
 
     # ---------------------------------------------------------------- рассылка и такт §4.3–4.4
@@ -358,7 +387,10 @@ class Core:
             if tk % step:
                 continue
             far = (tk // step) % L['far_every'] == 0
-            cand = [e for e in posed if e[0] is not r and e[0].room == r.room]
+            # та же комната; физически ближе phys_m (оба откалиброваны) — из любой комнаты (кольца безопасности, Н9);
+            # кабинет учителя (t/a без своих поз) видит всех: план класса
+            watch = r.body is None and r.role in ('t', 'a')
+            cand = [e for e in posed if e[0] is not r and (watch or e[0].room == r.room or _physnear(r, e[0], L['phys_m']))]
             if not cand:
                 continue
             if len(cand) > L['near']:
@@ -457,7 +489,7 @@ class Core:
                 continue
             for k in SESS_DEF:
                 if k in st and isinstance(st[k], type(SESS_DEF[k])):
-                    sess.set[k] = st[k]
+                    sess.set[k] = _stations(st[k]) if k == 'stations' else st[k]
             self.bcast(sess, {'t': 'sess', 'sess': sess.pub()})
 
     def close_session(self, sid):

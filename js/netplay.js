@@ -1,7 +1,7 @@
 /* netplay.js — аватары других участников по сети (шаг Н7а, PLAN-network.md §6.3–6.4). Слой «модули».
    Принимает пачки поз из VR.net, ведёт буфер из 8 снимков на место, рисует аватары через E.peers (engine.js),
    отправляет свою позу с частотой net.status().hz. Кадровый вызов — E.onFrameSub (движок зовёт после hooks.onFrame, и в шлеме, и за столом).
-   Позы head/hl/hr — в мировых координатах; phys {x,z,yaw} — физическое положение в local-floor отправителя.
+   Позы head/hl/hr — в мировых координатах; phys {x,z,yaw} — физическое положение: с флагом b3 — в рамке класса (калибровка, netsafe.js), без него — local-floor отправителя.
    Чистые функции (без DOM и сети) — VR.netplay._pure, их проверяет tests/netplay.js. */
 (function(){
 'use strict';
@@ -158,9 +158,11 @@ function sendOwn(){
   let hd;try{hd=E.headWorld();}catch(e){return;}
   if(!hd)return;
   const H=E.H||[],hs=[0,1].map(i=>{const h=H[i];return h&&h.has&&h.g?{p:[h.g[12],h.g[13],h.g[14]],q:matQuat(h.g)}:null;});
-  let phys={x:0,z:0,yaw:0};
-  try{const ri=E.rigInfo();if(ri.xr){const b=E.toBase(hd.p[0],hd.p[2]);phys={x:b[0],z:b[1],yaw:ri.yaw};}}catch(e){}
-  const flags=(hs[0]?1:0)|(hs[1]?2:0)|(E.session?4:0)|(E.menuOpen?32:0)|((H[0]&&H[0].held)||(H[1]&&H[1].held)?64:0);
+  /* физическое положение: после калибровки (netsafe.js, Н9) — в рамке класса и флаг b3; без неё — local-floor, флага нет (hub и соседи его не используют) */
+  let phys={x:0,z:0,yaw:0},cal=false;
+  try{const po=VR.netsafe&&VR.netsafe.physOut();if(po){phys={x:po.x,z:po.z,yaw:po.yaw};cal=!!po.cal;}
+    else{const ri=E.rigInfo();if(ri.xr){const b=E.toBase(hd.p[0],hd.p[2]);phys={x:b[0],z:b[1],yaw:ri.yaw};}}}catch(e){}
+  const flags=(hs[0]?1:0)|(hs[1]?2:0)|(E.session?4:0)|(cal?8:0)|(E.menuOpen?32:0)|((H[0]&&H[0].held)||(H[1]&&H[1].held)?64:0);
   const buf=VR.netproto.encodePose({seq:S.seq++,t:Math.floor(net.now()),flags,head:hd,left:hs[0],right:hs[1],phys});
   if(net.sendPose(buf))S.lastSend=t;
 }
@@ -250,16 +252,28 @@ function detach(){
   if(S.E)S.E.peers=[];
   S.on=false;S.hs=[];S.E=null;S.net=null;S.roster={};S.bufs={};S.alpha={};S.me=-1;
 }
-/* физическое положение соседа сейчас (для колец): {x,z,yaw} в local-floor отправителя или null */
+/* физическое положение соседа сейчас (для колец): {x,z,yaw} (рамка класса при флаге b3) или null */
 function physNow(slot){
   const b=S.bufs[slot];if(!b||!b.length||!S.net)return null;
   const st=S.net.status();
   return physPredict(b[b.length-2],b[b.length-1],S.net.now(),st&&st.rtt);
 }
+/* физические положения всех соседей для колец (netsafe.js): [{slot,x,z,yaw,cal}] — без устаревших и «нет связи»; аватары скрыты — кольца всё равно есть */
+function physAll(){
+  const out=[];if(!S.net)return out;
+  const now=S.net.now();
+  for(const k of Object.keys(S.bufs)){
+    const s=+k,b=S.bufs[k],r=S.roster[s];
+    if(s===S.me||!r||r.away||!b.length||now-b[b.length-1].t>STALE_MS)continue;
+    const p=physNow(s);if(!p)continue;
+    out.push({slot:s,x:p.x,z:p.z,yaw:p.yaw,cal:!!(b[b.length-1].flags&8)});
+  }
+  return out;
+}
 const hideAll=v=>{S.hide=!!v;if(S.hide&&S.E)S.E.peers=[];};
 const hidden=()=>S.hide;
 
-VR.netplay={attach,detach,tick,physNow,hideAll,hidden,detectQuest1,peerIds:()=>Object.keys(S.roster).map(Number),
+VR.netplay={attach,detach,tick,physNow,physAll,hideAll,hidden,detectQuest1,peerIds:()=>Object.keys(S.roster).map(Number),
   _env:env,_state:S,
   _pure:{slerp,lerp3,sampleAt,percentile95,delayTarget,smoothD,fullLimit,pickFull,shortName,labelText,fadeTarget,fadeStep,colorOf,physPredict,detectQuest1From,matQuat,PALETTE}};
 })();

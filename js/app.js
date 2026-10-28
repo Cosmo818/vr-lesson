@@ -77,7 +77,7 @@ function netProbe(st){
 function netStart(d){
   const N=VR.net,P=VR.netplay;if(!N||!P||!E||!d||!d.ticket)return false;
   try{
-    if(!netBound){netBound=true;P.attach(E,N);
+    if(!netBound){netBound=true;P.attach(E,N);if(VR.netsafe)VR.netsafe.attach(E,N);
       N.on('status',()=>{if(E.hud)E.hud.dirty=true;});
       N.on('needTicket',async()=>{if(!netCtx)return;const r=await S.sessionTicket(netCtx.sid,netCtx.id,netCtx.pin);if(r.status===200&&r.data&&r.data.ticket)N.useTicket(r.data.ticket,r.data.hubs);});}
     N.connect({hubs:d.hubs,ticket:d.ticket,caps:{quest1:P.detectQuest1(E)}}).catch(()=>{});
@@ -226,6 +226,17 @@ function hooks(){
       p.text(ratio===null?'—':Math.round(ratio*100)+'%',X+cw-12,Y+8,{size:26,align:'right',maxW:120,color:'#fde68a'});});
     p.text('Зелёный — сдано (60% и выше). Баллы: лучший тест × 50 + 2 за открытие.',36,872,{size:24,color:'#94a3b8',maxW:W-72});
   };
+  /* вкладка «Калибровка» (Н9, PLAN-network.md §7.2): выбор станции → калибровка двумя контроллерами; «Я на месте» — своё место для режимов seat/stand */
+  const calTab=(p,W,NS)=>{
+    const sts=NS.stations(),bw=(W-90)/2;
+    p.text(NS.calibrated()?'Ты откалиброван. Если сдвинул центр в шлеме — откалибруйся снова.':'Нужна калибровка: так соседи видят, где ты стоишь на самом деле.',36,160,{size:30,maxW:W-72,color:NS.calibrated()?'#86efac':'#fde68a'});
+    p.text('Присядь у станции, левый контроллер — на метку A, правый — на B (между ними 1 м), нажми оба курка и держи 1 секунду.',36,214,{size:28,maxW:W-72,color:'#b8c7ea'});
+    sts.forEach((st,i)=>p.button(36+(i%2)*(bw+18),300+((i/2)|0)*100,bw,86,'Станция: '+st.id,()=>{NS.startCal(i);E.toggleMenu(false);},{bg:'#0f766e',size:30}));
+    const y=300+Math.ceil(sts.length/2)*100+20;
+    p.button(36,y,bw,86,'Я на месте',()=>{if(NS.placeHere())E.toast('Запомнил твоё место.','#86efac');E.toggleMenu(false);},{bg:'#334155',size:32});
+    if(NS.calibrating())p.button(54+bw,y,bw,86,'Отменить калибровку',()=>{NS.cancelCal();E.menu.dirty=true;},{bg:'#7f1d1d',size:28});
+    p.text('Режим урока: '+({seat:'сижу',stand:'стою на месте',walk:'хожу'}[NS.mode()]||NS.mode()),36,y+110,{size:28,color:'#94a3b8'});
+  };
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
@@ -233,6 +244,12 @@ function hooks(){
     const tch=E.isTeacher(),kc=tch&&st.classId?S.klass(st.classId):null;
     const me=!tch&&st.id;
     p.button(36,150,tch?170:me?(W-90)/2:W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    /* безопасность (Н9): калибровка по меткам и «Я на месте» — только в шлеме и в сетевом уроке */
+    const NS=VR.netsafe,calOk=!!(NS&&E.session&&VR.net&&VR.net.status().state!=='off');
+    if(calOk){
+      p.button(W-36-300,88,300,54,menuTab==='cal'?'← Меню':(NS.calibrated()?'Калибровка ✓':'Калибровка'),()=>{menuTab=menuTab==='cal'?'main':'cal';E.menu.dirty=true;},{bg:menuTab==='cal'?'#1d4ed8':NS.calibrated()?'#166534':'#a16207',size:28});
+      if(menuTab==='cal'){calTab(p,W,NS);return;}
+    }else if(menuTab==='cal')menuTab='main';
     if(me){
       p.button(54+(W-90)/2,150,(W-90)/2,86,menuTab==='me'?'← Меню':'Мои успехи',()=>{menuTab=menuTab==='me'?'main':'me';E.menu.dirty=true;},{bg:menuTab==='me'?'#1d4ed8':'#0f766e',size:34});
       if(menuTab==='me'){meTab(p,W,st);return;}

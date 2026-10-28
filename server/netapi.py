@@ -99,8 +99,34 @@ def clean_settings(b, base=None, allow=('chat', 'mode', 'maxSeats', 'pointers', 
         s['area_m2'] = round(float(a), 1)
     st = b.get('stations')
     if 'stations' in allow and isinstance(st, list):
-        s['stations'] = [str(x)[:24] for x in st if isinstance(x, str) and x.strip()][:20]
+        s['stations'] = clean_stations(st)
     return s
+
+
+def _fnum(v, lo, hi):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or v in (float('inf'), float('-inf')):
+        return 0.0
+    return round(float(max(lo, min(hi, float(v)))), 3)
+
+
+def clean_stations(st):
+    """Станции калибровки (Н9, PLAN-network.md §7.2): до 4 штук {id, x, z, yaw}; x, z — м в рамке класса (±50), yaw — градусы
+    направления A→B. Старый формат Н8 (строка-имя) — станция в начале координат. Неверные элементы отбрасываются."""
+    out = []
+    for x in st if isinstance(st, list) else []:
+        if len(out) >= 4:
+            break
+        if isinstance(x, str):
+            if x.strip():
+                out.append({'id': x.strip()[:24], 'x': 0.0, 'z': 0.0, 'yaw': 0.0})
+            continue
+        if not isinstance(x, dict):
+            continue
+        name = x.get('id')
+        name = name.strip()[:24] if isinstance(name, str) else ''
+        out.append({'id': name or 'Станция %d' % (len(out) + 1), 'x': _fnum(x.get('x'), -50, 50), 'z': _fnum(x.get('z'), -50, 50),
+                    'yaw': _fnum(x.get('yaw'), -360, 360)})
+    return out
 
 
 def load_settings(raw):
@@ -376,7 +402,7 @@ def control(A, c, sids):
             continue
         if st.get('banned'):
             out['banned'][sid] = list(st['banned'])
-        out['settings'][sid] = {k: st[k] for k in ('chat', 'mode', 'maxSeats', 'pointers') if k in st}
+        out['settings'][sid] = {k: st[k] for k in ('chat', 'mode', 'maxSeats', 'pointers', 'stations') if k in st}
     return out
 
 

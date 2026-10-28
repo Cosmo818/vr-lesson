@@ -178,7 +178,7 @@ try:
     # ---- настройки
     ok(adm('tA1', 'session.settings', {'id': S1, 'settings': {'chat': 'text', 'maxSeats': 99999, 'pointers': 'да', 'area_m2': 30, 'stations': ['Стол 1', 5, '']}})[0] == 200, 'учитель меняет настройки')
     st1 = json.loads(dbq('select settings from room_sessions where id=?', S1)[0][0])
-    ok(st1['chat'] == 'text' and st1['maxSeats'] == 40 and st1['pointers'] is True and st1['area_m2'] == 30 and st1['stations'] == ['Стол 1'], 'настройки: верное применено, неверное — нет')
+    ok(st1['chat'] == 'text' and st1['maxSeats'] == 40 and st1['pointers'] is True and st1['area_m2'] == 30 and st1['stations'] == [{'id': 'Стол 1', 'x': 0.0, 'z': 0.0, 'yaw': 0.0}], 'настройки: верное применено, неверное — нет')
     ok(adm('tA2', 'session.settings', {'id': S1, 'settings': {'chat': 'off'}})[0] == 404, 'чужой учитель настройки не меняет')
     ok(adm('exA', 'session.settings', {'id': S1, 'settings': {'chat': 'off'}})[0] == 403, 'эксперт — тоже нет')
 
