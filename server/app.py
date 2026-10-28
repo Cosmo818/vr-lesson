@@ -190,6 +190,55 @@ def fill_v4(doc, old=None, kind='students', device_new=False):
     return d
 
 
+def fix_rooms(old_s, s, login, boss):
+    """Своя комната учителя (Б74): поле author — логин, присланное не доверяется. Новая комната — автор тот, кто прислал; у прежней автор не меняется;
+    старую комнату без автора первым изменивший учитель забирает себе. Комнату с чужим автором учитель не меняет и не удаляет — возвращается прежняя.
+    Директор и выше правят любые, автора не перезаписывают. Возвращает (настройки, было ли исправление)."""
+    old = old_s.get('rooms') if isinstance(old_s.get('rooms'), dict) else {}
+    if not old and not isinstance(s.get('rooms'), dict):
+        return s, False
+    new = dict(s['rooms']) if isinstance(s.get('rooms'), dict) else {}
+    fixed = False
+    old_ct = (old_s.get('content') or {}).get('rooms') if isinstance(old_s.get('content'), dict) else None
+    ct = None
+    for rid, spec in old.items():
+        a = spec.get('author') if isinstance(spec, dict) else None
+        if a and a != login and not boss and new.get(rid) != spec:
+            new[rid] = spec
+            fixed = True
+            if isinstance(old_ct, dict) and rid in old_ct:  # вернуть и запись комнаты в содержимом (видимость в списке)
+                if ct is None:
+                    ct = dict(s.get('content') or {}) if isinstance(s.get('content'), dict) else {}
+                    ct['rooms'] = dict(ct.get('rooms') or {}) if isinstance(ct.get('rooms'), dict) else {}
+                ct['rooms'].setdefault(rid, old_ct[rid])
+    for rid, spec in list(new.items()):
+        if not isinstance(spec, dict):
+            continue
+        o = old.get(rid)
+        oa = o.get('author') if isinstance(o, dict) else None
+        if o is None:
+            want = login or None
+        elif oa:
+            want = oa
+        elif spec != o and not boss:
+            want = login or None
+        else:
+            want = None
+        if want:
+            if spec.get('author') != want:
+                new[rid] = dict(spec, author=want)
+                fixed = True
+        elif 'author' in spec:
+            new[rid] = {k: v for k, v in spec.items() if k != 'author'}
+            fixed = True
+    if not fixed:
+        return s, False
+    s = dict(s, rooms=new)
+    if ct is not None:
+        s['content'] = ct
+    return s, True
+
+
 def fill_test(doc, old=None, uid=None):
     """Автор теста (Б74.8): поле author — id пользователя, сервер источник правды. Присланное игнорируется; остаётся автор прежней записи,
     у нового теста его ставит сервер, если тест создал пользователь (ключ учителя и шлем — без автора). Правило то же в js/store.js (merge, А11)."""
@@ -552,6 +601,10 @@ def merge_in(c, inc, role, ip='', principal=None):
                     s = {k: v for k, v in s.items() if k != 'pinHash'}
                     if 'pinHash' in get_settings(c):
                         s['pinHash'] = get_settings(c)['pinHash']
+                if user:  # комнаты: автор — логин, сервер источник правды; чужую комнату меняет и удаляет только автор или директор и выше
+                    s, fixed = fix_rooms(get_settings(c), s, (principal or {}).get('login') or '', sc['all'] or bool(sc['dir']))
+                    if fixed:  # прислали не то, что сохранили: настройки новее присланных, клиент заберёт исправленную версию
+                        s['updated'] = num(s.get('updated')) + 1
                 old_rooms = get_settings(c).get('rooms')
                 new_rooms = s.get('rooms')
                 if isinstance(old_rooms, dict):  # комнаты, пропавшие из настроек, уходят в корзину (Б74)
@@ -761,7 +814,8 @@ def state(c, hide_pins=False, principal=None):
                     st = stud(raw)
                     if d.get('classId') in sub_cls:  # предметнику ни видимый код, ни хэш (4 цифры по хэшу подбираются мгновенно)
                         st.pop('pinView', None)
-                        st.pop('pinHash', None)
+                        if st.pop('pinHash', None):
+                            st['hasPin'] = True  # клиент без хэша не пускает такого ученика на устройстве предметника (вход — через урок)
                     students.append(st)
             for sid, raw in c.execute('SELECT id, doc FROM students WHERE school IN (%s)' % ph, mine):
                 take(sid, raw)
@@ -1633,7 +1687,14 @@ def admin_action(c, p, act, b, ip):
         if act == 'class.teacher.remove':
             if not c.execute('DELETE FROM class_teachers WHERE class_id = ? AND user_id = ?', (cid, uid)).rowcount:
                 raise AdminError(404, 'Этот учитель не ведёт уроки в классе.')
-            audit(c, who, 'class.teacher.remove', 'class', cid, row[0], {'user': uid})
+            closed = []
+            try:  # его открытые уроки в этом классе закрываются сразу (хаб узнаёт через control)
+                closed = [r[0] for r in c.execute("SELECT id FROM room_sessions WHERE class_id = ? AND host_id = ? AND status = 'open'", (cid, uid))]
+                for sid in closed:
+                    c.execute("UPDATE room_sessions SET status = 'closed', closed_at = ?, closed_by = ? WHERE id = ?", (now, p['id'], sid))
+            except sqlite3.OperationalError:  # база без сетевых таблиц
+                closed = []
+            audit(c, who, 'class.teacher.remove', 'class', cid, row[0], {'user': uid, 'closed': closed})
             return {'ok': True}
         t = user_row(c, uid)
         if not t or t['status'] != 'active' or not c.execute("SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'teacher' AND school = ? AND status = 'active'", (uid, row[0])).fetchone():

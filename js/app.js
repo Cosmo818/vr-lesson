@@ -35,7 +35,7 @@ async function tryEnter(e){
   const s=/^\d{1,3}$/.test(n)?S.studentByNum(v==='-'?null:v,n):null;
   const ok=s?await S.checkStudentPin(s,$('selPin').value):(await S.pinHash('none',String($('selPin').value)),false);
   $('enterBtn').disabled=false;
-  if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}$('pickErr').textContent='Неверный номер или пароль. Если забыл — подойди к учителю.';return;}
+  if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}$('pickErr').textContent=s&&s.hasPin&&!s.pinHash?'На этом устройстве вход в этот класс закрыт — войди через урок учителя.':'Неверный номер или пароль. Если забыл — подойди к учителю.';return;}
   fails=0;$('selPin').value='';$('selNum').value='';try{localStorage.setItem(LKEY,$('selClass').value);}catch(err){}
   choose(s);
 }

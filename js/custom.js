@@ -88,13 +88,14 @@ function buildSpec(E,S,spec){
 /* ---------- редактор прямо в шлеме: планшет на левой руке повторяет меню редактора (Б50) ---------- */
 const ED={on:false,id:null,sel:null,hist:[],fut:[]};
 const teacherOk=()=>{try{return +sessionStorage.getItem('vrl.editor')>Date.now();}catch(e){return false;}};
-/* редактор в шлеме: открыт из кабинета («Править в VR») или учитель в своей комнате (автор = его логин; у старых комнат без автора — любой учитель) */
+/* редактор в шлеме: открыт из кабинета («Править в VR») или учитель в своей комнате (автор = его логин; комнату без автора — только из кабинета). Ученик с учёткой — никогда */
 function canEdit(E,id){
+  if(E&&E.student&&E.student.id)return false;
   if(teacherOk())return true;
   const sp=VR.Store.customRoom(id);if(!sp||VR.Store.temp[id])return false;
   if(!(E&&E.isTeacher&&E.isTeacher()))return false;
   const who=VR.Store.account&&VR.Store.account.who?VR.Store.account.who():'';
-  return !sp.author||(!!who&&sp.author===who);
+  return !!sp.author&&!!who&&sp.author===who;
 }
 const copy=o=>JSON.parse(JSON.stringify(o));
 const r05=v=>Math.round(v*20)/20;

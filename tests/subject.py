@@ -125,6 +125,7 @@ try:
     ok(ids(S, 'classes') == ['cA1', 'cA2'] and S.get('sub') == ['cA1'], 'предметник видит свой класс и класс, где ведёт уроки; sub = [cA1]')
     a1 = [s for s in S['students'] if s.get('classId') == 'cA1']
     ok(len(a1) == 3 and all('pinView' not in s and 'pinHash' not in s for s in a1) and 'h-st-cA1' not in json.dumps(S), 'предметник видит 3 учеников класса A1 без кодов входа (ни pinView, ни pinHash)')
+    ok(all(s.get('hasPin') is True for s in a1), 'у учеников класса предметника метка hasPin: на его устройстве вход без кода закрыт')
     ok(all('pinView' in s for s in S['students'] if s.get('classId') == 'cA2'), 'в своём классе коды входа видны как раньше')
     ok(sorted(r['sid'] for r in S['results'] if r['sid'].startswith('st-cA1')) == ['st-cA1-1', 'st-cA1-2', 'st-cA1-3'] and 'st-cA1-1' in S['disc'], 'предметник видит результаты и открытия учеников класса (статистика)')
     st, b = sync('tA3'); ok(ids(b['state'], 'classes') == [] and b['state'].get('sub') == [], 'другой учитель школы класса A1 не видит')
@@ -170,13 +171,13 @@ try:
     st, b = sync('tA2', {'students': [bad], 'classes': [], 'results': [], 'disc': {}})
     ok(st == 200, 'синхронизация с правкой чужого ученика проходит, правка отклонена')
     ok(json.loads(sql("select doc from students where id = 'st-cA1-1'")[0][0])['name'] == 'Ученик cA1 1', 'имя ученика класса A1 не изменилось')
-    st, b = adm('tA2', 'student.pin', {'id': 'st-cA1-1'})
-    ok(st in (403, 404), 'предметник не сбрасывает код входа ученика (%s)' % st)
+    st, b = adm('tA2', 'student.pin', {'student_id': 'st-cA1-1'})
+    ok(st == 403, 'предметник не сбрасывает код входа ученика (%s)' % st)
     ok(json.loads(sql("select doc from students where id = 'st-cA1-1'")[0][0]).get('pinHash') == 'h-st-cA1-1', 'код входа ученика на месте')
     st, b = adm('tA2', 'class.teacher.add', {'class_id': 'cA1', 'user_id': UID['tA3']})
     ok(st == 403, 'предметник не назначает других предметников (%s)' % st)
-    st, b = adm('tA2', 'class.archive', {'id': 'cA1'})
-    ok(st in (403, 404) and sql("select status from classes where id = 'cA1'")[0][0] != 'archived', 'предметник не архивирует класс (%s)' % st)
+    st, b = adm('tA2', 'class.archive', {'class_id': 'cA1'})
+    ok(st == 403 and sql("select status from classes where id = 'cA1'")[0][0] != 'archived', 'предметник не архивирует класс (%s)' % st)
     nr = {'id': 'r-new-1', 'sid': 'st-cA1-2', 'subj': 'inf', 'score': 5, 'total': 5, 'ts': NOW + 10}
     st, b = sync('tA2', {'results': [nr], 'students': [], 'classes': [], 'disc': {}})
     ok(sql("select count(*) from results where id = 'r-new-1'")[0][0] == 0, 'предметник не дописывает результаты ученикам чужого класса')
@@ -203,6 +204,41 @@ try:
     st, b = adm('tA2', 'class.teacher.remove', {'class_id': 'cA2', 'user_id': UID['tA3']})
     ok(st == 200, 'классный руководитель A2 снимает предметника своего класса')
     st, b = sync('tA3'); ok(ids(b['state'], 'classes') == [] and b['state'].get('sub') == [], 'после снятия класс у предметника пропал')
+    # --- снятие закрывает открытый урок предметника
+    st, b = adm('tA1', 'class.teacher.add', {'class_id': 'cA1', 'user_id': UID['tA3'], 'subject': 'Химия'})
+    st, b = adm('tA3', 'session.open', {'class_id': 'cA1', 'room': 'hall'})
+    sid3 = b.get('id')
+    ok(st == 200 and sid3, 'предметник A3 открыл урок в A1 (%s)' % st)
+    st, b = adm('tA1', 'class.teacher.remove', {'class_id': 'cA1', 'user_id': UID['tA3']})
+    ok(st == 200 and sql('select status from room_sessions where id = ?', sid3)[0][0] == 'closed', 'снятие предметника закрывает его открытый урок')
+    st, b = req('POST', '/api/room/ticket', {'session_id': sid3}, H('tA3'))
+    ok(st in (403, 404, 409), 'снятый предметник билета на закрытый урок не получает (%s)' % st)
+
+    # --- комнаты: автор — логин, сервер источник правды
+    cur = lambda: json.loads(sql('select doc from settings where id = 1')[0][0])  # noqa: E731
+    room = lambda rid, title: {'id': rid, 'title': title, 'created': NOW, 'updated': NOW}  # noqa: E731
+    s0 = cur(); s1 = dict(s0, rooms={'rm-a1': dict(room('rm-a1', 'Комната A1'), author='t.a2')}, updated=NOW + 9000)
+    sync('tA1', {'settings': s1, 'students': [], 'classes': [], 'results': [], 'disc': {}})
+    ok(cur()['rooms']['rm-a1'].get('author') == 't.a1', 'новая комната: автор — логин приславшего, подставленный автор не принят')
+    ok(cur()['updated'] > NOW + 9000, 'исправленные настройки новее присланных — клиент заберёт их')
+    s2 = dict(cur()); s2['rooms'] = {'rm-a1': dict(room('rm-a1', 'Взлом'), author='t.a2')}; s2['updated'] = cur()['updated'] + 10
+    sync('tA2', {'settings': s2, 'students': [], 'classes': [], 'results': [], 'disc': {}})
+    ok(cur()['rooms']['rm-a1'].get('title') == 'Комната A1' and cur()['rooms']['rm-a1'].get('author') == 't.a1', 'чужую комнату учитель не меняет и автора не подменяет')
+    s3 = dict(cur()); s3['rooms'] = {}; s3['updated'] = cur()['updated'] + 10
+    sync('tA2', {'settings': s3, 'students': [], 'classes': [], 'results': [], 'disc': {}})
+    ok('rm-a1' in cur().get('rooms', {}), 'чужую комнату учитель не удаляет')
+    s4 = dict(cur()); s4['rooms'] = dict(cur()['rooms'], **{'rm-a1': dict(cur()['rooms']['rm-a1'], title='Правка автора')}); s4['updated'] = cur()['updated'] + 10
+    sync('tA1', {'settings': s4, 'students': [], 'classes': [], 'results': [], 'disc': {}})
+    ok(cur()['rooms']['rm-a1'].get('title') == 'Правка автора', 'автор правит свою комнату')
+    s5 = dict(cur()); s5['rooms'] = dict(cur()['rooms'], **{'rm-a1': dict(cur()['rooms']['rm-a1'], title='Директор')}); s5['updated'] = cur()['updated'] + 10
+    sync('dirA', {'settings': s5, 'students': [], 'classes': [], 'results': [], 'disc': {}})
+    ok(cur()['rooms']['rm-a1'].get('title') == 'Директор' and cur()['rooms']['rm-a1'].get('author') == 't.a1', 'директор правит любую комнату, автор остаётся')
+    s6 = cur(); s6['rooms'] = dict(s6['rooms'], **{'rm-old': room('rm-old', 'Старая')}); s6['updated'] = s6['updated'] + 10
+    sql('update settings set doc = ?, updated = ?', json.dumps(s6, ensure_ascii=False), s6['updated'])
+    s7 = cur(); s7['rooms'] = dict(s7['rooms'], **{'rm-old': dict(room('rm-old', 'Старая, правка'), author='t.b1')}); s7['updated'] = s7['updated'] + 10
+    sync('tA2', {'settings': s7, 'students': [], 'classes': [], 'results': [], 'disc': {}})
+    ok(cur()['rooms']['rm-old'].get('author') == 't.a2', 'старую комнату без автора забирает первый изменивший учитель')
+
     sql("update classes set status = 'archived', doc = json_set(doc, '$.status', 'archived') where id = 'cA1'")
     st, b = sync('tA2'); ok('cA1' not in (b['state'].get('sub') or []), 'архивный класс предметнику не отдаётся')
     sql("update classes set status = 'active', doc = json_set(doc, '$.status', 'active') where id = 'cA1'")

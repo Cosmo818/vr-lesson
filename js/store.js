@@ -133,7 +133,7 @@ const Store=VR.Store={
     return btoa(String.fromCharCode(...new Uint8Array(b)));
   },
   async setStudentPin(id,pin){pin=pin||Store.genPin();Store.updateStudent(id,{pinHash:await Store.pinHash(id,pin),pinView:pin});return pin;},
-  async checkStudentPin(s,pin){if(!s.pinHash)return true;return(await Store.pinHash(s.id,String(pin||'').trim()))===s.pinHash;},
+  async checkStudentPin(s,pin){if(!s.pinHash)return !s.hasPin;/* hasPin без хэша: класс предметника, код на устройстве не проверить — вход только через урок */return(await Store.pinHash(s.id,String(pin||'').trim()))===s.pinHash;},
 
   /* рейтинг классов. Балл ученика — его баллы (тесты + открытия).
      Средний балл класса считается только по активным ученикам и «подтягивается» к общему среднему
