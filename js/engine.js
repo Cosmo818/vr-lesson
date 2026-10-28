@@ -191,6 +191,11 @@ void main(){
     hooks:{},clear:[.04,.06,.12]
   };
   E.mkMesh=mkMesh;E.mkDyn=mkDyn;
+  /* сеть (Н7): аватары других участников {slot,head:{p,q},hl,hr,col,name,alpha,full,desk,tex}, рисуются в buildDraw; netplay.js заполняет */
+  E.peers=[];
+  const extraDraw=[],frameSubs=[];
+  E.extraDraw=fn=>{if(typeof fn==='function'&&extraDraw.indexOf(fn)<0)extraDraw.push(fn);};   /* fn(add,E) — после аватаров (кольца, пузыри) */
+  E.onFrameSub=fn=>{if(typeof fn==='function'&&frameSubs.indexOf(fn)<0)frameSubs.push(fn);};   /* fn(dt) каждый кадр, XR и за столом, после hooks.onFrame */
   E.roomMesh=(data,mode)=>{const m=mkMesh(data,mode);E.roomMeshes.push(m);return m;};
   E.roomDyn=(max,mode)=>{const m=mkDyn(max,mode);E.roomMeshes.push(m);return m;};
 
@@ -399,6 +404,7 @@ void main(){
     const t=E.hooks.hud?E.hooks.hud():{a:'',b:''};
     p.text(t.a||'',24,22,{size:64,bold:true,color:t.alert?'#f87171':'#fff'});
     p.text(t.b||'',24,118,{size:56,color:'#b8c7ea'});
+    if(t.dot)p.text('●',488,24,{size:40,align:'right',color:t.dot});
   }});
   E.hud=hud;
 
@@ -534,6 +540,22 @@ void main(){
     if(E.session&&baseRef){P.yaw=0;teleportTo(E.spawn.x,E.spawn.z);}
   }
   E.respawn=respawn;E.player=P;E.deskCam=D;
+  /* мир ↔ local-floor (baseRef): world = R2(yaw,base)+t; те же формулы, что в teleportTo/applyPlayer */
+  E.rigInfo=()=>({xr:!!(E.session&&baseRef),yaw:P.yaw,tx:P.tx,tz:P.tz});
+  E.toBase=(x,z)=>R2(-P.yaw,x-P.tx,z-P.tz);          /* мир → local-floor */
+  E.fromBase=(x,z)=>{const r=R2(P.yaw,x,z);return[r[0]+P.tx,r[1]+P.tz];};   /* local-floor → мир */
+  /* поза контроллера hi в baseRef (для калибровки) → {p,q} или null */
+  E.gripBase=hi=>{
+    const src=H[hi]&&H[hi].src;
+    if(!E.session||!curFrame||!baseRef||!src||!src.gripSpace)return null;
+    try{const gp=curFrame.getPose(src.gripSpace,baseRef);if(!gp)return null;const t=gp.transform,p=t.position,o=t.orientation;return{p:[p.x,p.y,p.z],q:[o.x,o.y,o.z,o.w]};}catch(e){return null;}
+  };
+  /* голова в мировых координатах с кватернионом {p,q} (отправка своей позы в сеть) */
+  E.headWorld=()=>{
+    if(E.session&&curFrame&&refSpace){const vp=curFrame.getViewerPose(refSpace);if(vp){const t=vp.transform,p=t.position,o=t.orientation;return{p:[p.x,p.y,p.z],q:[o.x,o.y,o.z,o.w]};}}
+    const sy=Math.sin(D.yaw/2),cy=Math.cos(D.yaw/2),sx=Math.sin(D.pitch/2),cx=Math.cos(D.pitch/2);
+    return{p:[D.x,eyeY(),D.z],q:[cy*sx,sy*cx,-sy*sx,cy*cx]};
+  };
   /* текущее место и поворот игрока и возврат на него: редактор пересобирает комнату после каждой правки, а человек остаётся где стоял */
   E.poseNow=()=>{if(E.session&&baseRef){const w=headWorld();return{x:w.x,z:w.z,yaw:P.yaw};}return{x:D.x,z:D.z,yaw:D.yaw};};
   E.setPose=(x,z,yaw)=>{if(E.session&&baseRef){P.yaw=yaw;teleportTo(x,z);}else{D.x=x;D.z=z;D.yaw=yaw;}};
@@ -762,6 +784,7 @@ void main(){
     if(E.menuOpen&&E.laser.on&&E.LASER_COLORS[E.laser.ci].rainbow&&E.isTeacher()){mT+=dt;if(mT>.12){mT=0;menu.dirty=true;}}
     hudT+=dt;if(hudT>1){hudT=0;hud.dirty=true;if(E.menuOpen)menu.dirty=true;}
     if(E.hooks.onFrame)try{E.hooks.onFrame(dt);}catch(e){}
+    for(const f of frameSubs)try{f(dt);}catch(e){}
     listen();
     const all=E.panels.concat(E.ui);
     for(const p of all)p._h=-1;
@@ -776,12 +799,47 @@ void main(){
   let L=[];
   const add=(m,model,col,em,mode,tex,ps,uv)=>{L.push({m,model,col,em:em||0,mode:mode||0,tex:tex||null,ps:ps||1,uv:uv||1});};
   E.add=add;
+  /* модель из позиции, кватерниона и масштаба */
+  function qModel(p,q,sx,sy,sz){
+    const x=q[0],y=q[1],z=q[2],w=q[3],m=new Float32Array(16);
+    m[0]=(1-2*(y*y+z*z))*sx;m[1]=2*(x*y+z*w)*sx;m[2]=2*(x*z-y*w)*sx;
+    m[4]=2*(x*y-z*w)*sy;m[5]=(1-2*(x*x+z*z))*sy;m[6]=2*(y*z+x*w)*sy;
+    m[8]=2*(x*z+y*w)*sz;m[9]=2*(y*z-x*w)*sz;m[10]=(1-2*(x*x+y*y))*sz;
+    m[12]=p[0];m[13]=p[1];m[14]=p[2];m[15]=1;return m;
+  }
+  /* аватары E.peers. Прозрачности в шейдере нет (режим 3/0 — непрозрачный), поэтому alpha<1 — цвет смешивается с фоном E.clear */
+  function drawPeers(head){
+    for(const p of E.peers){
+      if(!p||!p.head||!p.head.p)continue;
+      const a=p.alpha===undefined?1:Math.max(0,Math.min(1,p.alpha)),cl=E.clear,c0=p.col||[.6,.6,.6];
+      if(a<.04)continue;
+      const mx=c=>[c[0]*a+cl[0]*(1-a),c[1]*a+cl[1]*(1-a),c[2]*a+cl[2]*(1-a)];
+      const col=mx(c0),hp=p.head.p,hq=p.head.q||[0,0,0,1];
+      if(!p.full){
+        add(mesh.disc,TRS(hp[0],.015,hp[2],.5,1,.5),col,.15);
+        add(mesh.cyl,TRS(hp[0],.6,hp[2],.08,1.2,.08),col,.15);
+        continue;
+      }
+      const hm=qModel(hp,hq,.18,.18,.18);
+      add(mesh.sphere,hm,col,.1);
+      add(mesh.cube,M.mul(qModel(hp,hq,1,1,1),M.mul(M.trans(0,.01,-.085),M.scale(.14,.05,.04))),mx([.07,.08,.11]),0);
+      const fx=-(2*(hq[0]*hq[2]+hq[1]*hq[3])),fz=-(1-2*(hq[0]*hq[0]+hq[1]*hq[1])),ry=Math.atan2(-fx,-fz);
+      add(mesh.cyl,TRS(hp[0],hp[1]-.12-.275,hp[2],.3,.55,.18,ry),mx([c0[0]*.7,c0[1]*.7,c0[2]*.7]),.05);
+      if(!p.desk)for(const h of[p.hl,p.hr])if(h&&h.p)add(mesh.cube,qModel(h.p,h.q||[0,0,0,1],.07,.04,.09),col,.1);
+      if(p.tex&&a>=.3){
+        const dx=head[0]-hp[0],dz=head[2]-hp[2];
+        add(mesh.quad,M.mul(M.trans(hp[0],hp[1]+.28,hp[2]),M.mul(M.rotY(Math.atan2(dx,dz)),M.scale(.5,.125,1))),[1,1,1],0,1,p.tex);
+      }
+    }
+  }
   function buildDraw(head){
     L=[];
     for(const s of E.envStatics)L.push(s);
     for(const s of E.statics)L.push(s);
     if(E.room&&E.room.draw)try{E.room.draw(E,E.S,add);}catch(e){try{console.log('room draw error',e);}catch(_){}}
     for(const b of E.bodies){const hl=(b._hl||0)*.22,c=b.col;add(b.mesh||(b.shape==='cube'?mesh.cube:mesh.ball),M.mul(M.trans(b.p[0],b.p[1],b.p[2]),M.mul(b.m,M.scale(b.s,b.s,b.s))),hl?[c[0]+(1-c[0])*hl*2,c[1]+(1-c[1])*hl*2,c[2]+(1-c[2])*hl*2]:c,hl?Math.min(1,(b.em||0)+hl):b.em);}
+    if(E.peers.length)try{drawPeers(head);}catch(e){}
+    for(const fn of extraDraw)try{fn(add,E);}catch(e){}
     for(const c of E.conf)add(mesh.cube,TRS(c.p[0],c.p[1],c.p[2],c.size,c.size,c.size,c.life*5),c.col,.8);
     for(let hi=0;hi<2;hi++){
       const h=H[hi];if(!h.has)continue;
@@ -862,6 +920,7 @@ void main(){
       if(gl.makeXRCompatible)await gl.makeXRCompatible();
       s.updateRenderState({baseLayer:new XRWebGLLayer(s,gl)});
       baseRef=await s.requestReferenceSpace('local-floor');
+      try{if(baseRef.addEventListener)baseRef.addEventListener('reset',()=>{if(E.hooks.onRefReset)try{E.hooks.onRefReset();}catch(_){}});}catch(_){}
       E.session=s;E.desk=false;deskId++;
       s.addEventListener('end',onEnd);
       P.yaw=0;P.tx=E.spawn.x;P.tz=E.spawn.z;applyPlayer();last=0;

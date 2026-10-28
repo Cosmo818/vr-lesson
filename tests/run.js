@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/games.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/netplay.js','js/games.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -840,6 +840,12 @@ function makeCtx(xr){
     Lh.gp.buttons[1].pressed=false;frames(2);XE.gravity=9.8;
     XE.loadRoom('hall');frames(2);
     ok(XE.hud.attachOff===null&&XE.tpOk(0,-4,.4)===true,'в другой комнате смещение таймера и запретные зоны сброшены');
+    /* сеть Н7: хуки аватаров и перевод мир ↔ local-floor при ненулевом сдвиге и повороте */
+    ok(Array.isArray(XE.peers)&&typeof XE.rigInfo==='function'&&typeof XE.toBase==='function'&&typeof XE.fromBase==='function'&&typeof XE.gripBase==='function'&&typeof XE.extraDraw==='function'&&typeof XE.onFrameSub==='function'&&typeof XE.headWorld==='function','движок: E.peers, rigInfo, toBase, fromBase, gripBase, extraDraw, onFrameSub, headWorld есть');
+    {const sv=[XE.player.yaw,XE.player.tx,XE.player.tz];XE.player.yaw=.7;XE.player.tx=1.3;XE.player.tz=-2.1;
+     const w=XE.fromBase(2.5,-1.2),b=XE.toBase(w[0],w[1]),ri=XE.rigInfo();
+     ok(Math.abs(b[0]-2.5)<1e-9&&Math.abs(b[1]+1.2)<1e-9&&Math.abs(Math.hypot(w[0]-1.3,w[1]+2.1)-Math.hypot(2.5,-1.2))<1e-9&&ri.yaw===.7&&ri.tx===1.3&&ri.tz===-2.1,'toBase(fromBase(x,z)) возвращает исходную точку при повороте и сдвиге игрока');
+     [XE.player.yaw,XE.player.tx,XE.player.tz]=sv;}
   }
   // выход из VR → итог
   XE.exitXR();
@@ -1362,11 +1368,57 @@ except RuntimeError:
       else if(ln.startsWith('FAIL: '))ok(false,label+': '+ln.slice(6));
     }
   }
+  /* стартовый экран и меню шлема при сети: «Урок идёт — войти», значок связи, «Скрыть всех» */
+  {
+    const CN=makeCtx(false),VN=CN.sb.VR,SN=VN.Store,dn=CN.sb.document.getElementById.bind(CN.sb.document);
+    await tick();await tick();
+    const kn=SN.addClass(6,'а'),sn=SN.addStudent('Аня Петрова',null,kn.id),pn=await SN.setStudentPin(sn.id);
+    CN.sb.localStorage.setItem('vrlesson.server',JSON.stringify({url:'http://srv.test',key:'k'}));
+    let live=[],tickets=[],conns=[];
+    SN.sessionLive=async()=>({status:200,data:{sessions:live}});
+    SN.sessionTicket=async(sid,id,pin)=>{tickets.push([sid,id,pin]);return{status:200,data:{ticket:'tk.1',hubs:[{url:'ws://hub.test/ws',kind:'center'}]}};};
+    VN.net.connect=o=>{conns.push(o);return Promise.resolve({});};
+    const enter=async()=>{VN.app.renderList();dn('selClass').value=kn.id;dn('selClass').onchange();dn('selNum').value=String(SN.numOf(sn));dn('selPin').value=pn;await dn('login').onsubmit({preventDefault(){}});for(let i=0;i<6;i++)await tick();};
+    await enter();
+    ok(dn('netGo').hidden===true&&!dn('ready').hidden,'сеть: урока нет — кнопки «Урок идёт — войти» нет, вход как раньше');
+    dn('back').onclick();
+    live=[{id:'rs-1',class_id:'other',kind:'lesson',room:'hall'}];await enter();
+    ok(dn('netGo').hidden===true,'сеть: урок чужого класса — кнопки нет');
+    dn('back').onclick();
+    live=[{id:'rs-1',class_id:kn.id,kind:'lesson',room:'hall'}];await enter();
+    ok(dn('netGo').hidden===false,'сеть: урок класса идёт — кнопка видна (текст проверяет e2e_net)');
+    await dn('netGo').onclick();for(let i=0;i<4;i++)await tick();
+    ok(tickets.length===1&&tickets[0][0]==='rs-1'&&tickets[0][1]===sn.id&&tickets[0][2]===pn,'сеть: билет запрошен для выбранного ученика с кодом, который он ввёл');
+    ok(conns.length===1&&conns[0].ticket==='tk.1'&&conns[0].hubs[0].url==='ws://hub.test/ws'&&typeof conns[0].caps.quest1==='boolean','сеть: connect получил билет, адреса hub и caps.quest1');
+    const EN=VN.app.E;ok(!!EN.student&&EN.student.id===sn.id&&EN.deskInput,'сеть: после подключения обычный вход (режим экрана)');
+    const labels=[],drawMenu=()=>{const m=EN.menu;m.btns=[];m.over=[];labels.length=0;const ob=m.button;m.button=(x,y,w,h,l,fn,o)=>{labels.push(l);return ob.call(m,x,y,w,h,l,fn,o);};EN.hooks.menuDraw(m.ctx,m);m.button=ob;return m;};
+    EN.peers=[];drawMenu();
+    ok(!labels.includes('Скрыть всех'),'меню: без сети и без аватаров кнопки «Скрыть всех» нет');
+    EN.peers=[{slot:2,head:{p:[0,1.6,-2],q:[0,0,0,1]},hl:null,hr:null,col:[1,0,0],name:'Пётр И.',alpha:1,full:true,desk:true}];
+    let m=drawMenu();const i0=labels.indexOf('Скрыть всех');
+    ok(i0>=0&&!VN.netplay.hidden(),'меню: при аватарах есть «Скрыть всех»');
+    const bt=m.btns.filter(b=>b.fn);bt.find(b=>b.y===22)&&bt.find(b=>b.y===22).fn();
+    ok(VN.netplay.hidden()===true&&EN.peers.length===0,'меню: «Скрыть всех» прячет аватары (netplay.hidden)');
+    drawMenu();ok(labels.includes('Показать всех'),'меню: после скрытия кнопка «Показать всех»');
+    m.btns.find(b=>b.y===22).fn();ok(VN.netplay.hidden()===false,'меню: «Показать всех» возвращает аватары');
+    ok(EN.hooks.hud().dot===''||EN.hooks.hud().dot===undefined,'HUD: нет связи — значка нет');
+    const st0=VN.net.status;
+    VN.net.status=()=>({state:'on',rtt:40});ok(EN.hooks.hud().dot==='#4ade80','HUD: на связи — зелёный');
+    VN.net.status=()=>({state:'on',rtt:200});ok(EN.hooks.hud().dot==='#facc15','HUD: задержка >150 мс — жёлтый');
+    VN.net.status=()=>({state:'connecting',rtt:0});ok(EN.hooks.hud().dot==='#94a3b8','HUD: подключение — серый');
+    VN.net.status=st0;
+    VN.app.endSession();
+  }
   /* клиент сети js/net.js: отдельный процесс с поддельными WebSocket и временем */
   {let out='';
    try{out=cp.execFileSync('node',[path.join(ROOT,'tests','net_client.js')],{encoding:'utf-8',timeout:120000});}
    catch(e){out=(e.stdout||'')+'\nFAIL: tests/net_client.js завершился с ошибкой '+String(e.stderr||e.message).slice(-300);}
    for(const ln of out.split('\n')){if(ln.startsWith('ok  : '))ok(true,'клиент сети: '+ln.slice(6));else if(ln.startsWith('FAIL: '))ok(false,'клиент сети: '+ln.slice(6));}}
+  /* аватары по сети js/netplay.js: чистые функции и сборка E.peers в отдельном процессе */
+  {let out='';
+   try{out=cp.execFileSync('node',[path.join(ROOT,'tests','netplay.js')],{encoding:'utf-8',timeout:120000});}
+   catch(e){out=(e.stdout||'')+'\nFAIL: tests/netplay.js завершился с ошибкой '+String(e.stderr||e.message).slice(-300);}
+   for(const ln of out.split('\n')){if(ln.startsWith('ok  : '))ok(true,'аватары по сети: '+ln.slice(6));else if(ln.startsWith('FAIL: '))ok(false,'аватары по сети: '+ln.slice(6));}}
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');
   process.exit(fails?1:0);
 })().catch(e=>{console.log('EXCEPTION',e&&e.stack||e);process.exit(2);});

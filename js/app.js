@@ -5,6 +5,7 @@ const VR=window.VR,D=VR.DATA,S=VR.Store;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let E=null,xrOk=false,chosen=null,sess=null,lastStudent=null;
+let netLive=null,netPin='',netCtx=null,netBound=false;  /* сеть: идущий урок класса, код ученика (только в памяти), параметры повторного билета */
 
 function showSection(id){for(const s of['pick','ready','fb'])$(s).hidden=s!==id;$('fbOpen').hidden=id==='fb';}
 /* вход: класс → ученик → код */
@@ -33,11 +34,12 @@ async function tryEnter(e){
   if(Date.now()<lockUntil){$('pickErr').textContent='Слишком много попыток. Подожди '+Math.ceil((lockUntil-Date.now())/1000)+' с.';return;}
   $('pickErr').textContent='';$('enterBtn').disabled=true;
   const s=/^\d{1,3}$/.test(n)?S.studentByNum(v==='-'?null:v,n):null;
+  const pinTyped=String($('selPin').value||'').trim();
   const ok=s?await S.checkStudentPin(s,$('selPin').value):(await S.pinHash('none',String($('selPin').value)),false);
   $('enterBtn').disabled=false;
   if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}$('pickErr').textContent=s&&s.hasPin&&!s.pinHash?'На этом устройстве вход в этот класс закрыт — войди через урок учителя.':'Неверный номер или пароль. Если забыл — подойди к учителю.';return;}
   fails=0;$('selPin').value='';$('selNum').value='';try{localStorage.setItem(LKEY,$('selClass').value);}catch(err){}
-  choose(s);
+  netPin=pinTyped;choose(s);
 }
 let openPick=null;
 function choose(st){
@@ -60,6 +62,42 @@ function choose(st){
   else $('whoInfo').textContent='Результаты гостя не сохраняются. Выбери класс для заданий:';
   $('go').textContent=xrOk?'Войти в VR':'Начать на экране';
   showSection('ready');
+  netProbe(st);
+}
+/* урок идёт — войти: кнопка только когда сервер ответил, что у класса ученика открыт урок; иначе всё как раньше (без сети) */
+function netProbe(st){
+  const b=$('netGo');if(!b)return;b.hidden=true;netLive=null;
+  if(!st||!st.id||!st.classId||!S.server()||!VR.net||!VR.netplay)return;
+  S.sessionLive().then(r=>{
+    if(chosen!==st||r.status!==200||!r.data||!Array.isArray(r.data.sessions))return;
+    const l=r.data.sessions.find(x=>x&&x.class_id===st.classId&&x.kind==='lesson');
+    if(l){netLive=l;b.hidden=false;}
+  }).catch(()=>{});
+}
+function netStart(d){
+  const N=VR.net,P=VR.netplay;if(!N||!P||!E||!d||!d.ticket)return false;
+  try{
+    if(!netBound){netBound=true;P.attach(E,N);
+      N.on('status',()=>{if(E.hud)E.hud.dirty=true;});
+      N.on('needTicket',async()=>{if(!netCtx)return;const r=await S.sessionTicket(netCtx.sid,netCtx.id,netCtx.pin);if(r.status===200&&r.data&&r.data.ticket)N.useTicket(r.data.ticket,r.data.hubs);});}
+    N.connect({hubs:d.hubs,ticket:d.ticket,caps:{quest1:P.detectQuest1(E)}}).catch(()=>{});
+    return true;
+  }catch(e){return false;}
+}
+function netStop(){
+  if(netCtx){netCtx=null;try{VR.net.close('end');}catch(e){}}
+  netPin='';
+}
+/* цепочка: ученик выбран → код (введён при входе) → билет → подключение → обычный вход */
+async function joinLive(){
+  if(!netLive||!chosen||!chosen.id)return;
+  const b=$('netGo');$('err').textContent='';b.disabled=true;
+  const sid=netLive.id,r=await S.sessionTicket(sid,chosen.id,netPin);
+  b.disabled=false;
+  if(r.status!==200||!r.data||!r.data.ticket){$('err').textContent=r.status===403?'Урок не пустил: проверь код или подойди к учителю. Можно начать без урока.':'Урок сейчас недоступен. Можно начать без него.';return;}
+  netCtx={sid,id:chosen.id,pin:netPin};
+  netStart(r.data);
+  await go();
 }
 function startSession(){
   if(!chosen)return;
@@ -94,6 +132,7 @@ async function go(){
 function showLockHint(on){const h=$('lockHint');if(!h)return;h.hidden=!(on&&E.deskInput&&(typeof matchMedia!=='function'||matchMedia('(pointer:fine)').matches));}
 function endSession(){
   if(!sess)return;
+  netStop();
   const st=E.student;let msg='';
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
@@ -114,10 +153,13 @@ const mmss=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+String(s%
 const left=()=>sess?sess.limit-(performance.now()-sess.t0)/1000:0;
 
 function hooks(){
+  /* значок связи: нет связи — ничего; подключение — серый; на связи — зелёный, задержка >150 мс — жёлтый */
+  const netDot=()=>{try{const s=VR.net&&VR.net.status();if(!s||s.state==='off')return '';if(s.state==='on')return s.rtt>150?'#facc15':'#4ade80';return '#94a3b8';}catch(e){return '';}};
   E.hooks.hud=()=>{
-    if(!sess||!E.student)return{a:'',b:''};
+    const dot=netDot();
+    if(!sess||!E.student)return{a:'',b:'',dot};
     const l=left(),pts=E.student.id?S.points(E.student.id).total:0;
-    return{a:(l>0?mmss(l):'Время!'),b:E.student.name.split(' ')[0]+' · '+pts+' б.',alert:l<=0};
+    return{a:(l>0?mmss(l):'Время!'),b:E.student.name.split(' ')[0]+' · '+pts+' б.',alert:l<=0,dot};
   };
   E.hooks.onFrame=()=>{
     if(!sess)return;
@@ -213,6 +255,10 @@ function hooks(){
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';
       p.button(36+(i%2)*(bw+18),252+((i/2)|0)*100,bw,86,sub.title+b,()=>{E.toggleMenu(false);E.goRoom(VR.entryOf(k));},{bg:E.roomId===k||(E.roomId||'').indexOf(k+'-')===0?'#f8fafc':sub.color,fg:'#0b1020',size:36});
     });
+    /* аватары по сети: личное пространство — убрать всех; кнопка есть, только когда есть связь или чужие аватары */
+    try{const ns=VR.net&&VR.net.status(),NP=VR.netplay;
+      if(NP&&((ns&&ns.state!=='off')||(E.peers&&E.peers.length)||NP.hidden()))p.button(W-36-300,22,300,60,NP.hidden()?'Показать всех':'Скрыть всех',()=>{NP.hideAll(!NP.hidden());E.menu.dirty=true;},{bg:NP.hidden()?'#0f766e':'#475569',size:30});
+    }catch(e){}
     p.button(36,780,bw,90,'Закрыть',()=>E.toggleMenu(false),{bg:'#334155',size:38});
     p.button(54+bw,780,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
     if(E.roomId&&E.roomId!=='hall'){
@@ -248,7 +294,8 @@ function bind(){
     if(!ok){location.href='teacher.html?vr=1';return;}choose({id:null,name:'Учитель',grade:5,role:'teacher'});};
   $('teachBtn').onclick=teacherIn;
   VR.teacherIn=teacherIn;
-  $('back').onclick=()=>{chosen=null;showSection('pick');};
+  $('back').onclick=()=>{chosen=null;netPin='';netLive=null;$('netGo').hidden=true;showSection('pick');};
+  $('netGo').onclick=joinLive;
   $('go').onclick=go;
   $('deskExit').onclick=endSession;
   /* форма отзывов */
