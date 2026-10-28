@@ -157,10 +157,10 @@ function favDraw(E,S,c,p){
 }
 ROOMS.ein={
   title:'Эйнштейн',env:{floor:[.06,.07,.14],wall:[.12,.14,.3],trim:[.55,.5,1],grid:[.35,.3,.8]},spawn:{x:0,z:-.4},
-  hint:'Эйнштейн: открой все фишки 6×6 по подсказкам. Курок на фишку — исключить (режим переключается).',
+  hint:'Эйнштейн: открой все фишки 6×6 по подсказкам. Курок на фишку — выбрать её (режим «убрать» переключается кнопкой).',
   build(E,S){
     VR.RU.backDoor(E);
-    S.mode='excl';S.tid=null;S.mid=null;
+    S.mode='pick';S.tid=null;S.mid=null;
     const pd=VR.games&&VR.games.pending;if(pd&&pd.game==='einstein'){S.tid=pd.tid;S.mid=pd.r+'.'+pd.i;S.nextSeed=pd.seed;VR.games.pending=null;}
     S.field=E.addPanel({w:3.4,h:2.4,res:2048,pos:[-1.2,1.55,-4.2],yaw:0,accent:'#818cf8',draw:(c,p)=>fieldDraw(E,S,c,p)});
     S.hints=E.addPanel({w:2.2,h:2.4,res:1536,pos:[2.0,1.55,-4.2],yaw:0,accent:'#a78bfa',draw:(c,p)=>hintDraw(E,S,c,p)});
