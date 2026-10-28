@@ -1,35 +1,39 @@
-# PLAN-einstein — пауза, настройки ученика, терминал, веб-версия, привязка устройства ученика, рейтинг
+# PLAN-einstein — пауза, настройки ученика, терминал, веб-версия, привязка устройства ученика, рейтинг; комнаты учителей; урок из шлема
 
-План architect (Opus), 28.10.2026. Код не начат. Подчиняется `docs/LAWS.md` (А1–А17 выше всего), `CLAUDE.md`, `docs/ROLES.md`.
-Каждый шаг Э1… — один запуск coder (Sonnet). В каждом шаге, где меняются файлы сайта: поднять `V` в `sw.js`, новый файл — в `FILES`; `node tests/run.js` и `python3 tests/e2e.py` зелёные; в конце обновить «Статус» в `HANDOFF.md`. Большие файлы (`js/engine.js`, `js/rooms*.js`, `teacher.html`, `server/app.py`) — только grep и куски.
+План architect (Opus), 28.10.2026. **Утверждён Айратом 28.10.2026** (ответы на В1–В3 внесены). Код не начат. Подчиняется `docs/LAWS.md` (А1–А17 выше всего), `CLAUDE.md`, `docs/ROLES.md`.
+Каждый шаг (Э…, Т…) — один запуск coder (Sonnet). В каждом шаге, где меняются файлы сайта: поднять `V` в `sw.js`, новый файл — в `FILES`; `node tests/run.js` и `python3 tests/e2e.py` зелёные; в конце обновить «Статус» в `HANDOFF.md`. Большие файлы (`js/engine.js`, `js/rooms*.js`, `teacher.html`, `server/app.py`) — только grep и куски.
 
 ---
 
-## 0. Принятые решения (архитектор, с обоснованием)
+## 0. Решения
 
 | № | Решение | Почему |
 |---|---|---|
-| Р1 | **Дома вход только через привязку устройства к ученику** (код от учителя). Фильтр «регион → район → школа → класс → ученик» без ключа **не делаем**. Непривязанное устройство без ключа школы — **только гость** (вне рейтинга). | Фильтр без ключа — публичный список школ, классов и имён детей (нарушение минимума данных, Б16 отложен), а 4-значный код входа перебирается по всем ученикам (пауза по одному ученику не мешает обходу класса). Привязка: код одноразовый, 8 знаков, 15 мин, выдаёт учитель лично — перебор бессмыслен, имён наружу нет. |
-| Р2 | Привязка даёт устройству **личный ключ ученика** (`X-Student`), отдельный от ключа шлема школы (`X-Key`). Права ключа ученика — только его данные: выдача сида, отправка своего решения, просмотр рейтинга, `GET /api/student/me`. В `/api/sync` ключ ученика не принимается (403). | А10, минимум прав. Ключ шлема добавляет учеников — ключ ученика не должен уметь ничего похожего. |
-| Р3 | На устройстве с ключом школы (`Store.server().key`) привязка ученика **запрещена** (кнопки нет, `Store.studentPair` отказывает). | Общий школьный шлем не должен «принадлежать» одному ребёнку. |
-| Р4 | В зачёт рейтинга — **только сиды, выданные сервером этому ученику** (`POST /api/ein/seed`), первое решение такого сида, без «Открыть клетку», **не турнирное**. | Сервер знает время выдачи → проверяет, что заявленное время ≤ прошедшего (накрутку временем не сделать). Сид из «Сохранённых» на общем шлеме мог решать другой ученик — такой сид не выдан → вне зачёта. Турнир исключён: оба игрока матча решают один сид на одном шлеме по очереди, второй видел решение первого. |
-| Р5 | Решение с «Открыть клетку» тоже отправляется (`helped:1`) и **сжигает** сид (повтор не идёт в зачёт). Проигрыш не отправляется: «Сначала» по тому же выданному сиду остаётся зачётным. | «Первое решение без помощи» — по слову владельца; ошибки частые, наказывать сжиганием за проигрыш жёстко. |
-| Р6 | Рейтинг считается на сервере по таблице сводки `ein_stats` (обновляется в той же транзакции, что и решение), ответы кэшируются в памяти на 60 с. | Б60: выборки по индексам, не просмотром всех решений. |
-| Р7 | Настройки игры ученика — только на устройстве, один ключ `vrl.einprefs` (объект по id ученика, до 200 записей, старые вытесняются). | Без сервера (слово владельца). Один ключ — не засоряем localStorage общего шлема. |
-| Р8 | Новые серверные функции под флагами конфигурации `studentDevices` и `einRating` (по умолчанию выключены → 404; нужны `accounts=true`). | А7. |
-| Р9 | Из холла убираются демо-стенды «Возьми и брось» и «Красная кнопка» (список — шаг Э6). Файлы не удаляются. Упражнение «Возьми и брось» остаётся в комнате `learn`. | Слово владельца; А15. |
+| Р1 | **Дома вход только через привязку устройства к ученику** (код от учителя). Фильтр «регион → район → школа → класс → ученик» без ключа **не делаем**. Непривязанное устройство без ключа школы — **только гость** (вне рейтинга). | Фильтр без ключа — публичный список школ, классов и имён детей (минимум данных, Б16 отложен), а 4-значный код входа перебирается по всем ученикам класса. Привязка: код одноразовый, 8 знаков, 15 мин, выдаёт учитель лично; имён наружу нет. |
+| Р2 | Привязка даёт устройству **личный ключ ученика** (`X-Student`), отдельный от ключа шлема школы (`X-Key`). Ключ сам по себе ничего не открывает: **на каждом входе ученик вводит свой код** (ответ Айрата В1), сервер проверяет его и выдаёт короткий **сеанс ученика** (`X-Stoken`, 2 ч простоя, ≤ 8 ч). Права сеанса — только данные этого ученика (свои результаты, открытия, игры, рейтинг, тесты своего класса). Ключ шлема школы может добавлять учеников, ключ ученика — нет. | А10, минимум прав. Код спрашиваем — устройство может быть семейным. |
+| Р3 | На устройстве с ключом школы (`Store.server()?.key`) привязка ученика **запрещена**. | Общий школьный шлем не «принадлежит» одному ребёнку. |
+| Р4 | В зачёт рейтинга — **только номер головоломки (сид), выданный сервером этому игроку** (`POST /api/ein/seed`), первое решение, без «Открыть клетку», **не турнирное**. | Сервер знает время выдачи → заявленное время не больше прошедшего. Сид из «Сохранённых» на общем шлеме мог решать другой. Турнир исключён: оба игрока матча решают один сид на одном шлеме по очереди. |
+| Р5 | Решение с «Открыть клетку» отправляется (`helped:1`) и **сжигает** сид. Проигрыш не отправляется: «Сначала» по тому же выданному сиду остаётся зачётным. | «Первое решение без помощи» — слово владельца; за ошибку сжигать жёстко. |
+| Р6 | Рейтинг считает сервер по сводной таблице `ein_stats` (обновляется в той же транзакции), ответы кэшируются в памяти на 60 с. | Б60. |
+| Р7 | Настройки игры — только на устройстве, ключ `vrl.einprefs` (по id ученика, ≤ 200 записей). | Слово владельца: без сервера. |
+| Р8 | Новые серверные функции — под флагами конфигурации `studentDevices`, `einRating`, `teacherRooms` (по умолчанию выключены → 404 / старое поведение; нужны `accounts=true`). | А7. |
+| Р9 | Из холла убираются демо-стенды «Возьми и брось» и «Красная кнопка» (список — Э6). Файлы не удаляются; упражнение «Возьми и брось» остаётся в комнате `learn`. | Слово владельца; А15. |
+| Р10 | **Рейтинг видят:** ученик — только свою школу, свой район и свой регион (сервер игнорирует присланный `id`); учитель, директор, администраторы и суперадмин — любой срез через фильтр регион → район → школа (ответ Айрата В2). Невошедший — ничего. | Минимум данных детей до решения по согласиям (Б16). |
+| Р11 | Привязанное устройство работает **для всего сайта**: комнаты, тесты, открытия, «Эйнштейн»; данные — на сервере (ответ Айрата В3, шаг Э10). | Слово владельца. |
+| Р12 | **Учителя — отдельный рейтинг** (Т1): те же таблицы с полем `pk` (`s` ученик / `t` учитель), в выдаче не смешиваются. Поле `pk` закладывается сразу в миграции Э1. | Одна миграция вместо двух (А6). |
+| Р13 | **Комнаты учителей переезжают из общих настроек в свою таблицу** `teacher_rooms` по школе и автору (Т3); `settings.rooms` остаётся как зеркало для старых клиентов. | Причины поломок — раздел 4. |
 
 ---
 
 ## 1. Форматы данных
 
-### 1.1 Сервер, миграция v9 (`DB_VERSION = 9`, функция `migrate_v9(c)` — по образцу `migrate_v8`: `CREATE … IF NOT EXISTS`, повторяема, ничего не удаляет)
+### 1.1 Сервер, миграция v9 (`DB_VERSION = 9`, `studev.migrate_v9(A, c)` — по образцу `netapi.migrate_v7`: одна явная транзакция, `CREATE … IF NOT EXISTS`, повторяема, ничего не удаляет; копия базы `vrlesson.db.bak-v8-*` до транзакции, как у прежних миграций)
 ```sql
 CREATE TABLE IF NOT EXISTS student_devices(
   id TEXT PRIMARY KEY,                 -- 'sd-' + 12 hex
   student_id TEXT NOT NULL, school TEXT NOT NULL,
   key_hash TEXT NOT NULL UNIQUE,       -- sha256 ключа; сам ключ не хранится
-  name TEXT,                           -- «Телефон», «ПК» — от ученика, ≤ 40, только печатные
+  name TEXT,                           -- «Телефон», «ПК» — ≤ 40, только печатные
   created INTEGER, last_seen INTEGER,
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
   revoked_at INTEGER, revoked_by TEXT);
@@ -38,189 +42,289 @@ CREATE TABLE IF NOT EXISTS student_pair_codes(
   code_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, school TEXT NOT NULL,
   created_by TEXT, created INTEGER, expires INTEGER, used_at INTEGER);
 CREATE INDEX IF NOT EXISTS student_pair_codes_st ON student_pair_codes(student_id);
+CREATE TABLE IF NOT EXISTS student_sessions(
+  token_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, device_id TEXT NOT NULL,
+  created INTEGER, last_seen INTEGER, expires INTEGER);
+CREATE INDEX IF NOT EXISTS student_sessions_dev ON student_sessions(device_id);
+-- «Эйнштейн»: pk = 's' (ученик, pid = id ученика) или 't' (учитель, pid = id учётки users)
 CREATE TABLE IF NOT EXISTS ein_issued(
-  student_id TEXT NOT NULL, seed INTEGER NOT NULL, issued INTEGER NOT NULL, src TEXT,  -- 'vr'|'web'
-  PRIMARY KEY(student_id, seed));
+  pk TEXT NOT NULL DEFAULT 's', pid TEXT NOT NULL, seed INTEGER NOT NULL, issued INTEGER NOT NULL, src TEXT,
+  PRIMARY KEY(pk, pid, seed));
 CREATE TABLE IF NOT EXISTS ein_solves(
-  student_id TEXT NOT NULL, seed INTEGER NOT NULL, school TEXT NOT NULL,
-  t INTEGER NOT NULL,                  -- секунды игры
-  moves INTEGER NOT NULL DEFAULT 0, helped INTEGER NOT NULL DEFAULT 0,
-  void INTEGER NOT NULL DEFAULT 0,     -- аннулировано директором/суперадмином
-  ts INTEGER NOT NULL, src TEXT,
-  PRIMARY KEY(student_id, seed));
+  pk TEXT NOT NULL DEFAULT 's', pid TEXT NOT NULL, seed INTEGER NOT NULL, school TEXT NOT NULL,
+  t INTEGER NOT NULL, moves INTEGER NOT NULL DEFAULT 0, helped INTEGER NOT NULL DEFAULT 0,
+  void INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL, src TEXT,
+  PRIMARY KEY(pk, pid, seed));
 CREATE TABLE IF NOT EXISTS ein_stats(
-  student_id TEXT PRIMARY KEY, school TEXT NOT NULL,
-  n INTEGER NOT NULL DEFAULT 0, sum_t INTEGER NOT NULL DEFAULT 0, last_ts INTEGER);
-CREATE INDEX IF NOT EXISTS ein_stats_school ON ein_stats(school);
+  pk TEXT NOT NULL DEFAULT 's', pid TEXT NOT NULL, school TEXT NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0, sum_t INTEGER NOT NULL DEFAULT 0, last_ts INTEGER,
+  PRIMARY KEY(pk, pid));
+CREATE INDEX IF NOT EXISTS ein_stats_school ON ein_stats(pk, school);
 ```
-`ein_stats` — только зачётные (helped=0, void=0). Пересчёт строки ученика: `restat(c, sid)` (одна функция, вызывается после вставки решения и после `ein.void`).
+`ein_stats` — только зачётные (helped=0, void=0). Пересчёт строки: `einrank.restat(c, pk, pid)` — одна функция; школу берёт текущую (ученик — `students.school`, учитель — первая школа роли `teacher`, иначе `director`).
+Таблица `teacher_rooms` — миграция v10 в шаге Т3 (раздел Т3).
 
 ### 1.2 Конфигурация (`load_config` в `app.py`, значения по умолчанию)
-`studentDevices:false`, `einRating:false`, `studentDeviceLimit:3`, `einMinSec:20`, `einMaxSec:14400`, `einIssueTtlH:24`.
-CLI: `python3 server/app.py student-devices on|off`, `ein-rating on|off`, `set-ein-min N` (5…600), `set-student-devices N` (1…10). Каждая команда — строка аудита `config.*`.
+`studentDevices:false`, `einRating:false`, `teacherRooms:false`, `studentDeviceLimit:3`, `einMinSec:20`, `einMaxSec:14400`, `einIssueTtlH:24`, `studentSessionMin:120`.
+CLI: `python3 server/app.py student-devices on|off`, `ein-rating on|off`, `teacher-rooms on|off`, `set-ein-min N` (5…600), `set-student-devices N` (1…10). Каждая команда — строка аудита `config.*`.
 
-### 1.3 Код привязки и ключ ученика
-- Код: 8 знаков из `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (как у кода шлема, переиспользовать генератор), срок 15 мин, одноразовый; новый код ученику гасит прежний неиспользованный. Показывается учителю один раз; в базе — `sha256`.
-- Ключ: `secrets.token_urlsafe(32)`, отдаётся один раз в ответе на привязку. На устройстве: `localStorage['vrlesson.student'] = {"v":1,"url":"…","key":"…","sid":"…","name":"Имя Ф.","grade":5,"cls":"5А","schoolName":"…"}`. Ключ — секрет: в журнал ошибок, тосты и аудит не пишется.
-- Ключ действует, пока: строка `active`, ученик `active`, школа ученика = `student_devices.school`, `last_seen` моложе 180 дней.
+### 1.3 Код привязки, ключ и сеанс ученика
+- Код привязки: 8 знаков из алфавита кода шлема (переиспользовать генератор `device.code`), 15 мин, одноразовый; новый код ученику гасит прежний. Показывается учителю один раз; в базе — `sha256`.
+- Ключ устройства: `secrets.token_urlsafe(32)`, отдаётся один раз. На устройстве `localStorage['vrlesson.student'] = {"v":1,"url":"…","key":"…","sid":"…","name":"Имя Ф.","grade":5,"cls":"5А","schoolName":"…"}`. Ключ действует, пока строка `active`, ученик `active`, школа ученика = `student_devices.school`, простой < 180 дней.
+- Вход на привязанном устройстве: ученик вводит код (4–8 цифр) → `Store.pinHash(sid, код)` → `POST /api/student/login {pin_hash}` с `X-Student` → `{token, exp}`. Токен — только `sessionStorage['vrl.stoken']` (закрыл вкладку — вход заново). Без связи вход невозможен: показывается «Нет связи — можно играть гостем» (код на устройстве не проверяем: хэш 4 цифр на личном устройстве перебирается за секунды).
+- Пауза: 5 ошибок кода → пауза по ученику (`register_fail('dpin:'+sid)`, как у входа учётки: 30 с, удваивается, ≤ 15 мин); 20 попыток в минуту с одного устройства → 429.
+- Ключ и токен — секреты: не попадают в журнал ошибок, тосты, аудит.
 
 ### 1.4 Настройки на устройстве (`vrl.einprefs`)
 ```json
-{"v":1,"u":{"<sid|guest>":{"hk":1,"mode":"pick","view":"wall","tab":"school","order":"avg","ts":1730000000000}}}
+{"v":1,"u":{"<sid|t:<login>|guest>":{"hk":1,"mode":"pick","view":"wall","tab":"school","order":"avg","who":"s","ts":1730000000000}}}
 ```
-`hk` 0…2 (ступени `HK`), `mode` `pick|excl`, `view` `wall|term`, `tab` `school|district|region`, `order` `avg|count`. Неизвестное отбрасывается, неверное → по умолчанию (А5). Больше 200 записей — вытесняется самая старая по `ts`.
+`hk` 0…2, `mode` `pick|excl`, `view` `wall|term`, `tab` `school|district|region`, `order` `avg|count`, `who` `s|t` (какой рейтинг смотреть — Т1). Неизвестное отбрасывается, неверное → по умолчанию (А5). Больше 200 — вытесняется самая старая по `ts`.
 
-### 1.5 API (все ответы JSON; ошибки — простые слова, без деталей)
+### 1.5 API (JSON; ошибки — простые слова, без деталей)
 | Маршрут | Кто | Тело / ответ |
 |---|---|---|
 | `POST /api/student/pair` | без входа | `{code, name}` → `200 {key, student:{id,name,grade,cls,schoolName}}`; `403 {error:'denied'}` на любую причину; `429 {retry}` |
-| `GET /api/student/me` | `X-Student` | `→ {id,name,grade,cls,school,schoolName,district,region}`; `401` если ключ отозван/ученик в архиве |
-| `POST /api/student/unpair` | `X-Student` | отвязать это устройство → `{ok:true}` |
-| admin `student.device.code` | владелец класса, директор, админы выше, суперадмин | `{student_id}` → `{code, expires}` |
-| admin `student.device.list` | те же + предметник (только чтение) | `{student_id}` → `{items:[{id,name,created,lastSeen,status}], limit}` |
-| admin `student.device.revoke` | владелец класса, директор и выше | `{id}` → `{ok}` |
-| `POST /api/ein/seed` | `X-Student` или `X-Key`+`{student_id,pin_hash}` | `{src}` → `{seed, issued}` |
-| `POST /api/ein/solve` | как выше | `{seed,time,moves,helped,src}` → `{ok:true, rated:bool, reason?:'repeat'|'helped'|'not_issued'|'fast'|'slow'|'expired', stats:{n,avg}}` |
-| `POST /api/ein/top` | `X-Student`; `X-Key`+пин; `Bearer` любой роли | `{scope:'school'|'district'|'region', id?, order:'avg'|'count', page?}` → `{scope,id,label,order,minN:5,total,items:[{rank,name,cls,school,n,avg}],me:{rank,n,avg}|null}` |
-| `POST /api/ein/places` | как `top` | `→ {regions:[{name, districts:[{name, schools:[{id,name}]}]}]}` — только действующие школы, без учеников |
-| admin `ein.void` | директор своей школы, суперадмин | `{student_id, seed?}` → аннулировать решения (все или одно), `restat`, аудит |
+| `POST /api/student/login` | `X-Student` | `{pin_hash}` → `{token, exp}`; `403 denied`; `429 {retry}`; `401` ключ отозван / ученик в архиве / другая школа |
+| `POST /api/student/logout` | `X-Student`+`X-Stoken` | гасит токен |
+| `GET /api/student/me` | `X-Student`+`X-Stoken` | `{id,name,grade,cls,school,schoolName,district,region}` |
+| `POST /api/student/unpair` | `X-Student` (+ код, как у login) | отвязать это устройство |
+| `POST /api/student/sync` | `X-Student`+`X-Stoken` | Э10 |
+| admin `student.device.code` | владелец класса, директор и выше, суперадмин | `{student_id}` → `{code, expires}` |
+| admin `student.device.list` | те же + предметник (чтение) | `{student_id}` → `{items:[{id,name,created,lastSeen,status}], limit}` |
+| admin `student.device.revoke` | владелец класса, директор и выше | `{id}` → `{ok}` (гасит и его сеансы) |
+| `POST /api/ein/seed` | сеанс ученика; `X-Key`+`{student_id,pin_hash}`; `Bearer` учителя (Т1) | `{src}` → `{seed, issued}` |
+| `POST /api/ein/solve` | как выше | `{seed,time,moves,helped,src}` → `{ok:true, rated, reason?:'repeat'|'helped'|'not_issued'|'fast'|'slow'|'expired', stats:{n,avg}}` |
+| `POST /api/ein/top` | как выше + `Bearer` любой роли | `{who:'s'|'t', scope:'school'|'district'|'region', id?, order:'avg'|'count', page?}` → `{who,scope,id,label,order,minN:5,total,items:[{rank,name,cls?,school,n,avg}],me}` |
+| `POST /api/ein/places` | `Bearer` (ученику не нужен — у него только свои срезы) | `{regions:[{name, districts:[{name, schools:[{id,name}]}]}]}` |
+| admin `ein.void` | директор своей школы, суперадмин | `{pk, pid, seed?}` → аннулировать, `restat`, аудит |
 
-Пределы: `pair` — 10 попыток в минуту с IP (`netapi.rate`) + пауза после ошибок `register_fail('spair:'+ip)`; `seed` — 60 в час на ученика; `solve` — 60 в час на ученика; `top/places` — 60 в минуту на ключ/токен. Тело ≤ 2 КБ.
+Пределы: `pair` — 10/мин с IP + пауза `spair:`+ip; `login` — см. 1.3; `seed`, `solve` — 60/ч на игрока; `top`, `places` — 60/мин на ключ/токен. Тело ≤ 2 КБ (`student/sync` — ≤ 256 КБ).
 
 ---
 
-## 2. Шаги
+## 2. Шаги «Эйнштейн» и привязка (Э)
 
-### Э1. Сервер: привязка устройства к ученику (ревью Opus — обязательно)
-**Файлы:** новый `server/studev.py`; `server/app.py` (только: `DB_VERSION=9`, вызов `migrate_v9` рядом с `migrate_v8`, значения конфигурации, CLI, маршруты `/api/student/*` в `do_GET`/`do_POST`, ветка admin-действий `student.device.*`, очистка в `purge_erase_student`); новый `tests/student_devices.py` (добавить в список python-проверок `tests/run.js`).
-**Сигнатуры (`studev.py`, стиль `netapi.py`: `A` — модуль app, после `register_fail` исключений не бросать, возвращать `(код, тело)`):**
-- `migrate_v9(A, c)` — таблицы 1.1 (все пять, чтобы v9 была одна).
-- `principal_by_key(A, c, key, now) -> dict|None` → `{'kind':'student','id':sid,'school':…,'dev':sd_id}`; `last_seen` обновлять не чаще раза в минуту.
-- `issue_code(A, c, p, sid, ip, now) -> dict` (права: `class_in_scope` класса ученика; предметник — 403; ученик в архиве — 400; активных устройств ≥ лимита — 400 «Достигнут предел устройств ученика: отвяжите старое»).
-- `pair(A, c, code, name, ip, now) -> (int, dict)`; повторная проверка лимита при обмене кода.
-- `list_devices(A, c, p, sid)`, `revoke(A, c, p, dev_id, ip, now)`, `unpair_self(A, c, sp, ip, now)`.
-- `me(A, c, sp) -> dict` — имя через `netapi.short_name`.
-**Аудит:** `student.device.code`, `student.device.pair`, `student.device.revoke` (target — ученик, detail `{dev, by}`; без кода, ключа, имени ученика).
-**Граничные случаи (каждый — проверка в `tests/student_devices.py` на реальных данных: 2 школы, 3 класса, 8 учеников, у одного предметник):** просроченный, использованный, чужой и пустой код → 403 одинаково; 11-я попытка в минуту → 429; предметник не выдаёт код, но видит список; учитель чужого класса → 403; лимит 3 устройства; новый код гасит прежний; ученик в архиве → ключ 401, после «Вернуть» снова работает; перевод в другой класс той же школы → ключ работает, `me` показывает новый класс; перевод в другую школу → ключ 401 (школа не совпала), устройства в списке остаются отозванными; `purge` ученика стирает его строки во всех пяти таблицах; ключ ученика в `/api/sync` и `/api/admin/*` → 403; флаг выключен → 404; повторный старт сервера — миграция ничего не меняет, `user_version=9`; старый код (`tests/fixtures/server_v3.py`) по-прежнему открывает базу.
-**Риски:** утечка ключа через журнал — проверить, что `audit` и журнал ошибок его не получают; ключ хранить только хэшем.
+### Э1. Сервер: привязка устройства и сеанс ученика (ревью Opus — обязательно)
+**Файлы:** новый `server/studev.py`; `server/app.py` (только: `DB_VERSION=9`, вызов `migrate_v9` после `migrate_v8`, конфигурация и CLI 1.2, маршруты `/api/student/*` в `do_GET`/`do_POST`, admin `student.device.*`, стирание строк ученика в `purge_erase_student`); новый `tests/student_devices.py` (в список python-проверок `tests/run.js`).
+**Сигнатуры (`studev.py`, стиль `netapi.py`: `A` — модуль app; после `register_fail` исключений не бросать, возвращать `(код, тело)`):**
+- `migrate_v9(A, c)` — все таблицы 1.1.
+- `device_by_key(A, c, key, now) -> row|None`; `principal(A, c, key, token, now) -> {'kind':'student','id','school','dev'}|None` (ключ и токен одного устройства и ученика; `last_seen` — не чаще раза в минуту; простой токена > `studentSessionMin` → None).
+- `login(A, c, key, pin_hash, ip, now) -> (int, dict)` — сверка `pinHash` ученика как в `netapi.student_check` (`hmac.compare_digest`); у ученика нет `pinHash` → 403 «Попроси учителя выдать код входа».
+- `issue_code(A, c, p, sid, ip, now)` (права `class_in_scope`; предметник — 403; ученик в архиве — 400; активных ≥ лимита — 400 «Достигнут предел устройств ученика: отвяжите старое»).
+- `pair(A, c, code, name, ip, now)` (лимит проверяется повторно), `list_devices(A, c, p, sid)`, `revoke(A, c, p, dev_id, ip, now)`, `unpair_self(A, c, key, pin_hash, ip, now)`, `me(A, c, sp)` (имя — `netapi.short_name`).
+**Аудит:** `student.device.code`, `student.device.pair`, `student.device.revoke`, `student.login.lockout` (target — ученик; detail `{dev, by}`; без кода, ключа, токена, имени).
+**Проверки (`tests/student_devices.py`, реальные данные: 2 школы, 3 класса, 8 учеников с кодами, у одного класса предметник):** просроченный, использованный, чужой, пустой код → 403 одинаково; 11-я попытка в минуту → 429; предметник видит список, но не выдаёт код; чужой учитель → 403; лимит 3; новый код гасит прежний; ключ без токена — только `login`/`unpair`, остальное 401; неверный код 5 раз → пауза, верный в паузу → 429; ученик в архиве → 401, после «Вернуть» снова работает; перевод в другой класс той же школы → работает, `me` показывает новый класс; перевод в другую школу → 401; «Новый код» ученику у учителя → старый код не подходит; отвязка учителем гасит сеансы; `purge` стирает строки во всех таблицах ученика; ключ/токен ученика в `/api/sync` и `/api/admin/*` → 403; флаг выключен → 404; повторный старт — `user_version=9`, данные те же; `tests/fixtures/server_v3.py` по-прежнему открывает базу.
+**Риски:** утечка ключа/токена в журнал — проверка грепом по таблице `audit_log` и выводу сервера.
 
-### Э2. Клиент: привязка в `Store` и в кабинете учителя (ревью Opus — короткий, данные детей)
+### Э2. Клиент: привязка и вход в `Store`, кабинет учителя (ревью Opus — короткое)
 **Зависит от:** Э1.
-**Файлы:** `js/store.js`, `teacher.html` (только куски с таблицей учеников), `tests/e2e_studev.py` (новый, Playwright + живой сервер, порт 8850).
-**Сигнатуры `VR.Store`:**
-- `studentPair(code, name) -> {status,data}` — отказ без запроса, если `Store.server()?.key` (Р3); при успехе пишет `vrlesson.student`.
-- `studentSelf() -> {sid,name,grade,cls,schoolName}|null` — из `vrlesson.student`, проверка формы (А5).
-- `studentMe()` — `GET /api/student/me`; на 401 стирает `vrlesson.student` и возвращает `{status:401}`.
-- `studentUnpair()` — запрос + стирание локальной записи (даже без связи).
-- в `netCall` новый вид `auth==='stu'` → заголовок `X-Student`.
-- `studentDevices(sid)`, `studentDeviceCode(sid)`, `studentDeviceRevoke(id)` — обёртки `Store.admin`.
+**Файлы:** `js/store.js`, `teacher.html` (куски таблицы учеников), новый `tests/e2e_studev.py` (Playwright + живой сервер, порт 8850).
+**Сигнатуры `VR.Store`:** `studentPair(code, name)` (отказ без запроса, если есть ключ школы); `studentSelf() -> {sid,name,grade,cls,schoolName}|null` (проверка формы, А5); `studentLogin(pin) -> {status}` (хэш кода считается здесь, сам код не хранится; токен — в `sessionStorage['vrl.stoken']`); `studentLogout()`; `studentMe()` (на 401 по ключу стирает `vrlesson.student`); `studentUnpair(pin)` (стирает локальную запись даже без связи); в `netCall` вид `auth==='stu'` → `X-Student` + `X-Stoken`; `studentDevices(sid)`, `studentDeviceCode(sid)`, `studentDeviceRevoke(id)` — обёртки `Store.admin`.
 **Кабинет:** в строке ученика кнопка «Устройства» → окно: код крупно + «действует до ЧЧ:ММ» (показ один раз), список устройств, «Отвязать» с подтверждением (А9). Предметнику — список без кнопок. Вывод только `textContent`.
-**Проверки:** e2e — учитель выдаёт код, вторая вкладка без ключа школы привязывается, `studentMe` отдаёт «Имя Ф.», учитель отвязывает → вторая вкладка получает 401 и забывает ключ; вкладка с ключом школы кнопки привязки не видит.
+**Проверки (e2e):** учитель выдаёт код → вкладка без ключа школы привязывается → вход с верным кодом даёт `studentMe` «Имя Ф.» → неверный код 5 раз → пауза → учитель отвязывает → вкладка получает 401 и забывает ключ; вкладка с ключом школы кнопки привязки не видит.
 
-### Э3. Сервер: зачётные решения и рейтинг (ревью Opus — обязательно)
+### Э3. Сервер: зачётные решения и рейтинг учеников (ревью Opus — обязательно)
 **Зависит от:** Э1 (принципал ученика, миграция v9).
-**Файлы:** новый `server/einrank.py`; `server/app.py` (маршруты `/api/ein/*`, admin `ein.void`, CLI из 1.2); новый `tests/ein_rank.py` (в список `run.js`).
+**Файлы:** новый `server/einrank.py`; `server/app.py` (маршруты `/api/ein/*`, admin `ein.void`, CLI 1.2); новый `tests/ein_rank.py` (в список `run.js`).
 **Сигнатуры:**
-- `viewer(A, c, hdr, body, ip, now) -> (principal|None, err|None)` — порядок: `Bearer` → `X-Student` → `X-Key` + `student_id` + `pin_hash` (проверка как `netapi.student_check`: ученик `active`, школа = школа шлема, есть `pinHash` и совпадает; без `pinHash` — отказ; пауза `register_fail('epin:'+sid)`).
-- `issue_seed(A, c, sp, src, now) -> {seed, issued}` — `secrets.randbelow(2**32)`, повтор при совпадении с уже решённым.
-- `solve(A, c, sp, b, now) -> (int, dict)` — проверки по порядку: сид целый 0…4294967295 и есть в `ein_issued` этого ученика (иначе `not_issued`); выдан не позже `einIssueTtlH` (`expired`); `time` целое, `einMinSec ≤ time ≤ einMaxSec` (`fast`/`slow`); `time ≤ (now−issued)/1000 + 5` (`fast`); `moves` 1…9999; уже есть строка → `repeat` (не перезаписывать); `helped` → строка с `helped=1`, `rated:false`. Отказ проверки — `200 {ok:true, rated:false, reason}` (шлем не повторяет), неверный формат — 400. Вставка + `restat` — одна транзакция.
-- `restat(c, sid)`.
-- `top(A, c, viewer, b) -> dict` — `scope` по умолчанию: школа/район/регион самого зрителя (для `Bearer`: первая школа из ролей; суперадмин без `id` → 400 «Выберите школу»). Запрос: `ein_stats JOIN students (status='active') JOIN schools` с фильтром по `school`, `district+region` или `region`; порядок (а) `avg = sum_t/n` по возрастанию, только `n ≥ 5`, при равенстве больше `n`, затем раньше `last_ts`; порядок (б) `n` по убыванию, затем `avg`, затем `last_ts`. Страница 50, не больше 4 страниц (топ-200). `me` — место зрителя-ученика (если он в срезе). Подпись: `short_name(имя)`, класс `grade+letter`, название школы.
-- Кэш: словарь `{(scope,id,order,page): (ts, out)}` на 60 с, ≤ 500 ключей; сбрасывать ключи школы при новом зачётном решении и `ein.void`. `me` в кэш не кладётся (считать отдельно).
-- `places(A, c)` — регионы → районы → школы (`status` школы действующая).
-**Права на просмотр:** см. вопрос В2; по умолчанию (до ответа) — любой вошедший видит любой срез; в ответ никогда не попадают id учеников, коды, полное ФИО, учитель, IP.
-**Проверки (`tests/ein_rank.py`, реальные данные: 2 региона, 3 района, 4 школы, 40 учеников, ≥ 250 решений, один в архиве, один предметник):** все причины отказа; повтор не меняет время; helped сжигает сид; турнир не приходит вообще (клиент), но сервер всё равно принимает только выданные; порядок (а) отсекает `n<5`; оба порядка и разрешение равенств; срезы школа/район/регион (район с одинаковым названием в двух регионах — разные срезы); архивный не виден, после возврата виден; `ein.void` пересчитывает; чужой шлем (другая школа) и неверный пин → 403 одинаково, пауза после 5 ошибок; кэш: второе обращение не ходит в базу (счётчик запросов), новое решение сбрасывает кэш школы; флаг выключен → 404; ответ без лишних полей (сверка ключей); время ответа `top` на 20 000 учеников / 300 000 решений < 0,3 с (генератор данных в тесте, как в Б60).
-**Риски:** имена детей видны другим школам (В2); сговор (одноклассник подсказывает решение того же сида) невозможен, т.к. сиды случайные на ученика; накрутка «решил на бумаге за 30 с после выдачи» — ограничена `einMinSec`; ручная зачистка — `ein.void`.
+- `viewer(A, c, hdr, body, ip, now) -> (who|None, err|None)`; `who = {'pk':'s'|'t'|None, 'pid', 'school', 'roles'}`. Порядок: `Bearer` → (`X-Student`+`X-Stoken`) → `X-Key` + `student_id` + `pin_hash` (как `netapi.student_check`: ученик `active`, школа = школа шлема, `pinHash` есть и совпадает; пауза `register_fail('epin:'+sid)`). `Bearer` в этом шаге — только зритель (`pk:None`), игра учителя — Т1.
+- `issue_seed(A, c, who, src, now) -> {seed, issued}` — `secrets.randbelow(2**32)`, повтор при совпадении с решённым.
+- `solve(A, c, who, b, now) -> (int, dict)` — проверки по порядку: сид целый 0…4294967295 и выдан этому игроку (`not_issued`); выдан не раньше `einIssueTtlH` (`expired`); `einMinSec ≤ time ≤ einMaxSec` (`fast`/`slow`); `time ≤ (now−issued)/1000 + 5` (`fast`); `moves` 1…9999; уже есть строка → `repeat` (не перезаписывать); `helped` → строка `helped=1`, `rated:false`. Отказ проверки — `200 {ok:true, rated:false, reason}` (клиент не повторяет); неверный формат — 400. Вставка + `restat` — одна транзакция.
+- `restat(c, pk, pid)`.
+- `top(A, c, who, b) -> dict`. Срез (Р10): ученик — всегда свой (`id` игнорируется); учётка — по `id` (школа: id школы; район: `{region, district}`; регион: имя) или по умолчанию первая школа из ролей; суперадмин без `id` → 400 «Выберите школу». Запрос: `ein_stats (pk) JOIN students (status='active') JOIN schools`. Порядок (а) `avg = sum_t/n` по возрастанию, только `n ≥ 5`, при равенстве больше `n`, затем раньше `last_ts`; порядок (б) `n` по убыванию, затем `avg`, затем `last_ts`. Страница 50, не больше 4 (топ-200). `me` — место зрителя, если он в срезе. Подпись: `short_name(имя)`, класс `grade+letter`, название школы.
+- Кэш: `{(pk,scope,id,order,page): (ts, out)}` на 60 с, ≤ 500 ключей; сброс ключей школы при зачётном решении и `ein.void`. `me` в кэш не кладётся.
+- `places(A, c)` — регионы → районы → действующие школы.
+**Проверки (`tests/ein_rank.py`, данные: 2 региона, 3 района, 4 школы, 40 учеников, ≥ 250 решений, один в архиве, один предметник):** все причины отказа; повтор не меняет время; helped сжигает сид; порядок (а) отсекает `n<5`; оба порядка и равенства; срезы (район с одинаковым названием в двух регионах — разные); ученик с `id` чужой школы получает свою; учитель получает чужую школу по фильтру; невошедший → 401; архивный не виден, после возврата виден; `ein.void` пересчитывает; чужой шлем и неверный код → 403 одинаково, пауза после 5 ошибок; кэш (счётчик запросов к базе) и его сброс; флаг выключен → 404; в ответе нет лишних полей (сверка ключей: нет id учеников, кодов, полного ФИО, учителя, IP); `top` на 20 000 учеников / 300 000 решений < 0,3 с (генератор в тесте, как в Б60).
 
 ### Э4. Пауза и настройки ученика в комнате «Эйнштейн» (без сервера)
 **Файлы:** `js/einroom.js`, `js/games.js`, `tests/run.js` (блок «эйнштейн»).
-**Сигнатуры (`js/games.js`):** `VR.games.prefs(sid) -> {hk,mode,view,tab,order}` (гость → `'guest'`), `VR.games.setPrefs(sid, patch)`; формат 1.4; `_reset` чистит и `vrl.einprefs`.
-**Пауза (`einroom.js`):** поле `S.paused`; кнопка «⏸ Пауза / ▶ Продолжить» на панели управления — только при `S.phase==='play' && g.status==='play' && !S.tid`; в `update` время не идёт при `S.paused`; `fieldDraw` и `hintDraw` при паузе рисуют только табличку «Пауза» на всю панель (фишки и подсказки скрыты, клики по полю не регистрируются — `p.area` не создаются); «Сначала»/«Новая»/«Начать» снимают паузу. Автопауза: если открыто меню (`E.menuOpen`) и не турнир — пауза (снимает её только кнопка). В турнире кнопки нет, автопаузы нет.
-**Настройки:** при `build` читать `VR.games.prefs(E.student?.id)` → `S.hk`, `S.mode`, `S.view`; при изменении A−/A+, режима курка, вида — `setPrefs`.
-**Проверки (`run.js`):** пауза останавливает `S.t` на 5 с `run`, панель поля без кнопок-фишек и с текстом «Пауза», `p.over` пуст; в турнире (`VR.games.pending` с tid) кнопки нет и меню паузу не включает; два ученика на одном «шлеме» — у каждого свой `hk` после перезахода; испорченный `vrl.einprefs` (строка, массив, `hk:99`) → значения по умолчанию; 201-й ученик вытесняет самого старого.
+**Сигнатуры (`js/games.js`):** `VR.games.prefs(key) -> {hk,mode,view,tab,order,who}`, `VR.games.setPrefs(key, patch)`; `key` — id ученика, `'t:'+логин` у учителя, иначе `'guest'`; формат 1.4; `_reset` чистит и `vrl.einprefs`. Вспомогательная `VR.games.prefKey(E)`.
+**Пауза (`einroom.js`):** `S.paused`; кнопка «⏸ Пауза / ▶ Продолжить» на панели управления — только при `S.phase==='play' && g.status==='play' && !S.tid`; в `update` время не идёт; `fieldDraw` и `hintDraw` при паузе рисуют только табличку «Пауза» (фишки и подсказки скрыты, `p.area` не создаются); «Сначала»/«Новая»/«Начать» снимают паузу. Автопауза при открытом меню (`E.menuOpen`), если не турнир; снимает только кнопка. В турнире нет ни кнопки, ни автопаузы.
+**Настройки:** при `build` — `prefs(prefKey(E))` → `S.hk`, `S.mode`, `S.view`; при A−/A+, смене режима курка и вида — `setPrefs`.
+**Проверки:** пауза держит `S.t` за 5 с `run`; на панели поля нет кнопок-фишек, есть «Пауза», `p.over` пуст; в турнире (`VR.games.pending` с `tid`) кнопки нет и меню паузу не включает; два ученика на одном шлеме — у каждого свой `hk` после перезахода; испорченный `vrl.einprefs` (строка, массив, `hk:99`) → по умолчанию; 201-я запись вытесняет самую старую.
 
 ### Э5. Ядро игры отдельно от стены (рефакторинг без смены поведения)
-**Зависит от:** Э4 (тот же файл).
-**Файлы:** `js/einroom.js`, `js/einstein.js` (перенести сюда `drawHint`, `hintTile`, `dArrow`, `blueSq`, `grad` — чистое рисование на canvas 2D, без движка), `tests/run.js`.
-**Сигнатуры:** `VR.einstein.drawHint(c, rule, x, y, T, dim)` (алиас `VR.einroomDrawHint` оставить); в `einroom.js` экспорт `VR.einplay = {create(E, opt) -> G, start(E,G,seed,again,begin), click(E,G,h,c,r,e), tick(E,G,dt), drawField(E,G,c,p,rect), drawHints(E,G,c,p,rect,K), drawCtl(E,G,c,p,rect,layout)}`, где `G` — состояние партии (то, что сейчас лежит в `S`: `g,t,helped,sec,sent,used,phase,paused,mode,hk,tid,mid,msg,showRules,rated,seedSrc`), `rect={x,y,w,h}` в пикселях текстуры, `opt={sid, onDirty()}`. Комната `ein` использует `VR.einplay` для трёх стенных панелей.
-**Проверки:** весь прежний блок «эйнштейн» в `run.js` зелёный без правки ожиданий; новые: `drawField` в прямоугольнике 1152×1152 и 2048×1445 — все `p.area` внутри `rect`; `VR.einstein.drawHint` работает без `VR.ROOMS` (загрузка одного `einstein.js` в песочнице).
-**Риски:** ошибка TDZ — экспорт `VR.einplay` объявить до `ROOMS.ein`, автозапуска нет.
+**Зависит от:** Э4.
+**Файлы:** `js/einroom.js`, `js/einstein.js` (перенести сюда `drawHint`, `hintTile`, `dArrow`, `blueSq`, `grad` — чистое рисование canvas 2D), `tests/run.js`.
+**Сигнатуры:** `VR.einstein.drawHint(c, rule, x, y, T, dim)` (алиас `VR.einroomDrawHint` оставить); `VR.einplay = {create(E, opt) -> G, start(E,G,seed,again,begin), click(E,G,h,c,r,e), tick(E,G,dt), drawField(E,G,c,p,rect), drawHints(E,G,c,p,rect,K), drawCtl(E,G,c,p,rect,layout)}`; `G` — состояние партии (`g,t,helped,sec,sent,used,phase,paused,mode,hk,tid,mid,msg,showRules,rated,seedSrc`), `rect={x,y,w,h}` в пикселях текстуры, `opt={prefKey, onDirty()}`. Комната `ein` рисует три стенные панели через `VR.einplay`.
+**Проверки:** прежний блок «эйнштейн» зелёный без правки ожиданий; `drawField` в 1152×1152 и 2048×1445 — все `p.area` внутри `rect`; `VR.einstein.drawHint` работает без `VR.ROOMS`.
+**Риск:** TDZ — `VR.einplay` объявить до `ROOMS.ein`.
 
 ### Э6. Терминал-стойка: комната «Эйнштейн» и холл; демо-стенды из холла
 **Зависит от:** Э5.
-**Файлы:** новый `js/einterm.js` (подключить в `index.html` после `einroom.js`, в `FILES` `sw.js`, в список загрузки `tests/run.js` строка 46), `js/einroom.js`, `js/rooms.js` (только `ROOMS.hall`), `tests/run.js`, `tests/e2e_play.py`.
-**Геометрия (расчёт для проверки):** экран 0,8×0,6 м, `res:2048` (текстура 2048×1536), `tilt: 0.52` (30° назад), центр экрана на высоте 1,10 м → нижний край ≈ 0,84 м, верхний ≈ 1,36 м; тумба `E.addStatic(E.mesh.cube, …)` 0,5×0,82×0,3 м под экраном + `E.addBox` для столкновений. Игрок стоит в 0,5–0,6 м перед экраном. Плотность 2560 px/м: шрифт не меньше 26 px (≈1 см).
-**Разметка экрана (px):** шапка 0…110 — «Эйнштейн», таймер, «Пауза», «Курок: …», A−/A+; поле `rect{20,120,1160,1160}` (клетка 193 px ≈ 7,5 см, фишка 64 px ≈ 2,5 см); подсказки `rect{1200,120,828,1160}`; низ 1300…1520 — «Начать/Сначала», «Новая», «Открыть клетку», «Правила», «Стена ⇄ Терминал» (в холле вместо неё — «В комнату Эйнштейна»).
-**Сигнатуры (`einterm.js`):** `VR.einterm.build(E, host, {x, z, yaw, G}) -> {panel, G}` (создаёт тумбу, коллизию, панель с `tilt` и `draw` через `VR.einplay.draw*`), `VR.einterm.poke(E, term)` — каждый кадр из `update` комнаты: для каждой руки `h` с `h.has` точка контроллера `h.g[12..14]`, луч из точки, сдвинутой на 5 см вдоль нормали экрана, по нормали внутрь — `E.rayPanel(p,o,d)`; если пересечение на глубине ≤ 2 см от плоскости — нажать кнопку под `(px,py)` (поиск по `p.btns`, как `btnAt`), повтор только после отхода > 5 см (`h._pokeEin`), вибрация `E.buzz(h,.4,30)`. Луч с курком работает как у любой панели.
-**Комната `ein`:** терминал в `(0, −2.0)`, `yaw 0`; `G.view` из настроек: `wall` — стенные панели `show=true`, терминал `show=false` (и тумба не рисуется: держать ссылки и переключать), `term` — наоборот. Кнопка «Стена ⇄ Терминал» на обоих видах, выбор сохраняется `setPrefs`. Состояние партии одно (`G`), при переключении партия не сбрасывается.
-**Холл (`ROOMS.hall.build/targets/update/draw/onRelease`) — убрать из сборки:**
-1. стол «разминки» `E.addTable(-2.7,-3.7,…)` и 5 предметов (3 куба, 2 шара) на нём;
+**Файлы:** новый `js/einterm.js` (в `index.html` и `teacher.html` после `einroom.js` — порядок скриптов одинаковый, CHECKLIST; в `FILES` `sw.js`; в список загрузки `tests/run.js`), `js/einroom.js`, `js/rooms.js` (только `ROOMS.hall`), `tests/run.js`, `tests/e2e_play.py`.
+**Геометрия:** экран 0,8×0,6 м, `res:2048` (2048×1536), `tilt:0.52` (30° назад), центр 1,10 м → нижний край ≈ 0,84, верхний ≈ 1,36 м; тумба `E.addStatic(E.mesh.cube, …)` 0,5×0,82×0,3 м + `E.addBox`. Игрок в 0,5–0,6 м. Плотность 2560 px/м: шрифт ≥ 26 px.
+**Разметка (px):** шапка 0…110 — «Эйнштейн», таймер, «Пауза», «Курок: …», A−/A+; поле `{20,120,1160,1160}` (клетка 193 px ≈ 7,5 см); подсказки `{1200,120,828,1160}`; низ 1300…1520 — «Начать/Сначала», «Новая», «Открыть клетку», «Правила», «Стена ⇄ Терминал» (в холле — «В комнату Эйнштейна»).
+**Сигнатуры (`einterm.js`):** `VR.einterm.build(E, {x, z, yaw, G}) -> term` (тумба, коллизия, панель с `tilt`, рисование через `VR.einplay.draw*`); `VR.einterm.poke(E, term)` — из `update` комнаты: для руки `h` с `h.has` точка `h.g[12..14]`, луч из точки, сдвинутой на 5 см вдоль нормали экрана, внутрь по нормали — `E.rayPanel(p,o,d)`; пересечение на глубине ≤ 2 см → нажать кнопку под `(px,py)` (поиск по `p.btns`, как `btnAt`), повтор после отхода > 5 см (`h._pokeEin`), `E.buzz(h,.4,30)`. Луч с курком работает как у любой панели.
+**Комната `ein`:** терминал в `(0, −2.0)`, `yaw 0`; `G.view` из настроек: `wall` — стенные панели `show=true`, терминал скрыт (ссылки держать, тумбу не рисовать); `term` — наоборот. Партия одна (`G`), переключение её не сбрасывает.
+**Холл — убрать из сборки (`ROOMS.hall` build/targets/update/draw/onRelease), методы контракта оставить (CHECKLIST: `targets` возвращает `[]`):**
+1. стол «разминки» `E.addTable(-2.7,-3.7,…)` и 5 предметов (3 куба, 2 шара);
 2. табличку «Возьми и брось» `(-2.7,1.75,-3.95)`;
-3. «Красную кнопку»: тумбу `addStatic`+`addBox` в `(2.7,…,-3.7)`, табличку «Красная кнопка» `S.btnPanel`, `S.press`, цель `targets` `id:'btn'`, нажатие рукой в `update`, кнопку и лампу в `draw`;
-4. открытие `hall:throw` в `onRelease` (открытие `hall:button` уходит вместе с кнопкой). Записанные ранее открытия учеников остаются в данных.
-Оставить: главную панель, двери, тест учителя, панели конструктора и обучения. Новый терминал холла — `(2.7, −3.7)`, `yaw 0` (на месте кнопки); своё `G` холла (`tid:null`); результат победы идёт в `VR.games.finish` так же.
-**Проверки:** `run.js` — в холле нет тел и `targets()` пуст, есть панель с `tilt≈0.52` на высоте центра 1,10±0,02; угол между нормалью экрана и направлением на глаза игрока (стоит в 0,55 м, голова 1,6 м; сидит — 1,2 м) ≤ 35°; все панели холла и терминала `p.over` пуст после `E.paintPanel`; тычок рукой (имитация `h.g`) по кнопке «Новая» меняет сид ровно один раз, отход и повтор — ещё раз; в `ein` переключение вида сохраняет `G.t` и `G.g`; в турнире терминал не показывает «Новая/Сначала/Пауза». `e2e_play.py` — картинки `shots/ein_term.png`, `shots/hall_term.png`, `shots/hall_front.png` (смотреть глазами, правило HANDOFF «Очередь» п.9).
-**Риски:** фишка 2,5 см мала для пальца — тычок оставить для кнопок и клеток, а режим фишек по-прежнему лучом (в подсказке на экране написать «Фишки — лучом и курком»); fps на Quest 1 — одна текстура 2048×1536 вместо трёх стенных в виде `term`, перерисовка только по `dirty`.
+3. «Красную кнопку»: тумбу `addStatic`+`addBox` `(2.7,…,-3.7)`, табличку `S.btnPanel`, `S.press`, цель `id:'btn'`, нажатие рукой в `update`, кнопку и лампу в `draw`;
+4. открытие `hall:throw` в `onRelease` (`hall:button` уходит с кнопкой). Записанные открытия учеников остаются в данных.
+Оставить: главную панель, двери, тест учителя, панели конструктора (до Т5) и обучения. Терминал холла — `(2.7, −3.7)`, `yaw 0`; своё `G` (`tid:null`); победа — в `VR.games.finish`.
+**Проверки:** `run.js` — в холле нет тел, `targets()` пуст, есть панель `tilt≈0.52` с центром 1,10±0,02; угол между нормалью экрана и направлением на глаза (стоя 1,6 м и сидя 1,2 м, игрок в 0,55 м) ≤ 35°; `p.over` пуст у всех панелей холла и терминала после `E.paintPanel`; тычок рукой по «Новая» меняет сид ровно один раз, отход и повтор — ещё раз; в `ein` переключение вида сохраняет `G.t` и `G.g`; в турнире нет «Новая/Сначала/Пауза». `e2e_play.py` — `shots/ein_term.png`, `shots/hall_term.png`, `shots/hall_front.png` (смотреть глазами, HANDOFF «Очередь» п.9).
+**Риски:** фишка 2,5 см мала для пальца — тычок для кнопок и клеток, а фишки по-прежнему лучом (надпись «Фишки — лучом и курком»); fps на Quest 1 — одна текстура 2048×1536 в виде `term`, перерисовка только по `dirty`.
 
-### Э7. Веб-версия `einstein.html` (игра мышью, вход, гость, привязка)
-**Зависит от:** Э2 (Store привязки), Э5 (рисование без движка). Рейтинга ещё нет.
-**Файлы:** новые `einstein.html`, `js/einweb.js`; `sw.js` (`FILES` + `V`); `index.html` (ссылка «Эйнштейн в браузере» на стартовом экране); `teacher.html` (ссылка в шапке); `tests/e2e_einweb.py` (новый, порт 8851).
-**Подключение:** `js/errors.js`, `js/schema.js`, `js/store.js`, `js/einstein.js`, `js/games.js`, `js/einweb.js` (если `store.js` обращается к `VR.DATA` — проверить grep `VR.DATA` в store.js; при необходимости добавить `js/data.js`). Без движка, без `rooms*.js`, `questions.js`. `einweb.js` к сети не обращается — только `VR.Store.*` (А2).
-**Вход (три случая, экран входа как в `js/app.js` `renderList/tryEnter`):**
-1. устройство школы (`Store.server()?.key` и классы в Store): «класс → номер → код», 5 ошибок → пауза 30 с, `Store.checkStudentPin`; хэш кода держать только в памяти страницы (для Э8);
-2. привязанное (`Store.studentSelf()`): сразу «Вы — Имя Ф., 5А» и «Играть»; «Это не я — отвязать» с подтверждением → `Store.studentUnpair()`; при старте проверка `Store.studentMe()` (если 401 — экран 3);
-3. иначе: «Играть гостем (вне рейтинга)» и «Привязать устройство» (поле кода 8 знаков, название устройства по умолчанию «Компьютер»/«Телефон» по `navigator.userAgent`), на устройстве школы этой кнопки нет.
-**Игра:** поле — `<canvas>` 6×6 (рисование `VR.einstein.drawTile`), ЛКМ — выбрать фишку, ПКМ — исключить (как в оригинале), переключатель режима для телефона (касание = режим); подсказки — второй `<canvas>`, клик гасит подсказку; кнопки «Начать», «Пауза» (и автопауза по `document.visibilitychange`), «Сначала», «Новая», «Открыть клетку (без зачёта)», «Правила», A−/A+; настройки — `VR.games.prefs/setPrefs` (тот же ключ, что в шлеме); результат — `VR.games.finish` с поддельным `E={student}`. Ширина ≥ 360 px — поле сверху, подсказки ниже; ≥ 900 px — рядом.
-**Проверки (e2e):** три вида входа; гость играет и не пишет журнал; клики ЛКМ/ПКМ меняют `P`; пауза останавливает таймер и скрывает поле; размер подсказок сохраняется после перезагрузки для того же ученика и другой у второго; страница работает офлайн из кэша `sw.js` (`tests/e2e_sw.py` образец); в консоли нет ошибок; телефон 390×844 — ничего не выходит за край.
+### Э7. Веб-версия `einstein.html` (мышь, вход, гость, привязка)
+**Зависит от:** Э2, Э5. Рейтинга ещё нет.
+**Файлы:** новые `einstein.html`, `js/einweb.js`; `sw.js`; `index.html` (ссылка «Эйнштейн в браузере»); `teacher.html` (ссылка в шапке); новый `tests/e2e_einweb.py` (порт 8851).
+**Подключение:** `js/errors.js`, `js/schema.js`, `js/store.js`, `js/einstein.js`, `js/games.js`, `js/einweb.js` (если `store.js` читает `VR.DATA` при загрузке — grep и при необходимости `js/data.js`). Без движка и комнат. `einweb.js` к сети не обращается — только `VR.Store.*` (А2).
+**Вход (как `js/app.js` `renderList/tryEnter`):**
+1. устройство школы (ключ и классы в Store): «класс → номер → код», 5 ошибок → пауза 30 с, `Store.checkStudentPin`; хэш кода — только в памяти страницы (Э8);
+2. привязанное (`Store.studentSelf()`): «Вы — Имя Ф., 5А» + поле кода → `Store.studentLogin(pin)`; ошибки и паузы — по ответу сервера; «Это не я — отвязать» (с кодом, подтверждение) → `Store.studentUnpair(pin)`; нет связи → «Нет связи — играть гостем»;
+3. иначе: «Играть гостем (вне рейтинга)» и «Привязать устройство» (код 8 знаков, название по умолчанию «Компьютер»/«Телефон»); на устройстве школы этой кнопки нет;
+4. учётка учителя в этой вкладке (`Store.account.token()`) — «Вы — учитель», игра (зачёт — Т1).
+**Игра:** поле — `<canvas>` 6×6 (`VR.einstein.drawTile`), ЛКМ — выбрать фишку, ПКМ — исключить, переключатель режима для касаний; подсказки — второй `<canvas>`, клик гасит подсказку; «Начать», «Пауза» (и автопауза по `visibilitychange`), «Сначала», «Новая», «Открыть клетку (без зачёта)», «Правила», A−/A+; настройки — `VR.games.prefs/setPrefs`; результат — `VR.games.finish` с `E={student}`. ≥ 900 px — поле и подсказки рядом, меньше — друг под другом.
+**Проверки (e2e):** четыре вида входа; гость не пишет журнал; ЛКМ/ПКМ меняют `P`; пауза останавливает таймер и скрывает поле; размер подсказок сохраняется для ученика после перезагрузки и свой у второго; страница работает офлайн из кэша (образец `tests/e2e_sw.py`); нет ошибок в консоли; 390×844 — ничего не выходит за край.
 
-### Э8. Зачётная игра: сид с сервера и отправка решения (ревью Opus — короткий, путь кода ученика)
+### Э8. Зачётная игра: сид с сервера и отправка решения (ревью Opus — короткое)
 **Зависит от:** Э3, Э6, Э7.
-**Файлы:** `js/store.js`, `js/einroom.js`, `js/einterm.js` (если нужно), `js/einweb.js`, `js/app.js` (передать хэш кода в сеанс), `tests/run.js` (моки `fetch`), `tests/e2e_einweb.py`.
-**Сигнатуры `VR.Store`:** `einSeed(who) -> {status,data}`, `einSolve(who, rec)`, `einTop(who, q)`, `einPlaces(who)`, где `who = {sid, ph}` (шлем: id ученика и хэш кода из памяти) или `{stu:true}` (привязанное) или `null` (учётка `Bearer` в кабинете). `ph` нигде не сохраняется на диск.
-**`js/app.js`:** при успешном входе ученика хранить `E.student.ph` (хэш кода, только в памяти; при выходе обнулять). Имя поля не совпадает с общими функциями страницы.
-**Логика партии:** «Новая»/«Начать» у вошедшего ученика вне турнира → `einSeed`; ответ 200 — `G.rated=true`, сид с сервера; нет связи, 404 или гость — локальный сид, `G.rated=false`, на панели «вне рейтинга». Сид из «Сохранённых», турнир, «Открыть клетку» → `G.rated=false` (после помощи — отправить `helped:1`, если сид выдан). Победа при `G.rated` → `einSolve`; не дошло — очередь `vrl.einq` (`[{sid,seed,time,moves,helped,src,ts}]`, ≤ 50, без кода), отправка при следующем входе этого же ученика и при «Новая»; старше 24 ч — выбросить. Ответ `rated:false` — показать причину простыми словами («Эту головоломку ты уже решал», «Слишком быстро для зачёта»…).
-**Проверки:** `run.js` — мок `fetch` в песочнице: выдача сида, победа → один `solve` с верным временем; второй `won()` не шлёт повторно; турнир/гость/сохранённый сид не шлют; без связи — запись в `vrl.einq` без поля кода, отправка после повторного входа; e2e с живым сервером (флаги включены в тестовой конфигурации) — решение (подставить решение через `pz.sol`) попадает в `ein_solves`.
+**Файлы:** `js/store.js`, `js/einroom.js`, `js/einterm.js` (если нужно), `js/einweb.js`, `js/app.js` (хэш кода в сеанс), `tests/run.js` (моки `fetch`), `tests/e2e_einweb.py`.
+**Сигнатуры `VR.Store`:** `einSeed(who)`, `einSolve(who, rec)`, `einTop(who, q)`, `einPlaces()`, где `who = {sid, ph}` (шлем школы: id и хэш кода из памяти), `{stu:true}` (сеанс ученика), `{acc:true}` (учётка). `ph` нигде не пишется на диск.
+**`js/app.js`:** после входа ученика хранить хэш кода в `E.student.ph` (только память; при выходе обнулять). Имя не совпадает с общими функциями страницы.
+**Логика:** «Новая»/«Начать» у вошедшего ученика вне турнира → `einSeed`; 200 — `G.rated=true`; нет связи / 404 / гость — локальный сид, `G.rated=false`, надпись «вне рейтинга». Сохранённый сид, турнир, «Открыть клетку» → `G.rated=false` (после помощи по выданному сиду — отправить `helped:1`). Победа при `G.rated` → `einSolve`; не дошло — очередь `vrl.einq` (`[{sid,seed,time,moves,helped,src,ts}]`, ≤ 50, без кода), отправка при следующем входе этого же ученика и при «Новая»; старше 24 ч — выбросить. `rated:false` — причина простыми словами («Эту головоломку ты уже решал», «Слишком быстро для зачёта»).
+**Проверки:** `run.js` с моком `fetch`: выдача сида, победа → один `solve` с верным временем; второй `won()` не шлёт; турнир/гость/сохранённый не шлют; без связи — запись в `vrl.einq` без поля кода, отправка после повторного входа; e2e с живым сервером (флаги включены в тестовой конфигурации): решение (по `pz.sol`) попадает в `ein_solves` — для шлема школы и для привязанного устройства.
 
 ### Э9. Где виден рейтинг: шлем (комната и арена), веб, кабинет
 **Зависит от:** Э8.
-**Файлы:** `js/einroom.js` (панель справа: вкладки «Сохранённые | Рейтинг»), `js/arena.js` (вкладка «Эйнштейн — регион/район/школа» на доске лучших), `js/einweb.js`, `teacher.html` (раздел «Эйнштейн» в колонке разделов), `js/regions.js` (переиспользовать фильтр регион → район → школа; данные — `Store.einPlaces` для ученика, `Store.options` для учётки), `tests/run.js`, `tests/e2e_einweb.py`, `tests/e2e_admin.py` или новый `tests/e2e_einrank.py`.
-**Вид:** вкладки «Регион», «Район», «Школа» (по умолчанию — свой срез и последняя вкладка из настроек), переключатель «Среднее время (от 5 решений)» / «Больше решено», строки «№. Имя Ф., 5А, Школа № 12 — 14 решено, 3:41», своя строка подсвечена и показана внизу, если не в топе. «Другая школа/район» — тем же фильтром регион → район → школа (очередь HANDOFF п.2). Гость и невошедший — текст «Рейтинг виден после входа», запросов нет. Флаг сервера выключен (404) — вкладки нет. В шлеме — до 10 строк на панели, листание кнопками; выбор других срезов в шлеме — только своя школа/район/регион (фильтр — в вебе и кабинете).
-**Проверки:** `run.js` с моком ответов `top` — 50 строк, длинные названия школ не выходят за край (`p.over` пуст), гость не делает запрос; e2e — учитель видит рейтинг своей школы, директор переключает район фильтром; ученик в вебе видит свою строку.
+**Файлы:** `js/einroom.js` (панель справа: вкладки «Сохранённые | Рейтинг»), `js/arena.js` (доска лучших: «Эйнштейн — регион/район/школа»), `js/einweb.js`, `teacher.html` (раздел «Эйнштейн» в колонке разделов), `js/regions.js` (фильтр регион → район → школа; данные — `Store.einPlaces`), `tests/run.js`, `tests/e2e_einweb.py`, новый `tests/e2e_einrank.py`.
+**Вид:** вкладки «Регион», «Район», «Школа» (по умолчанию — свой срез и последняя вкладка из настроек), переключатель «Среднее время (от 5 решений)» / «Больше решено», строки «№. Имя Ф., 5А, Школа № 12 — 14 решено, 3:41», своя строка подсвечена и показана внизу, если не в топе. **Ученику фильтра нет — только свои срезы (Р10).** Учителю и выше — «Другая школа/район» фильтром регион → район → школа (очередь HANDOFF п.2). Гость и невошедший — «Рейтинг виден после входа», запросов нет. Флаг сервера выключен (404) — вкладки нет. В шлеме — 10 строк на панели, листание кнопками.
+**Проверки:** `run.js` с моком `top` — 50 строк, длинные названия школ не выходят за край (`p.over` пуст), гость не делает запрос, у ученика нет кнопки фильтра; e2e — учитель видит свою школу, директор переключает район фильтром, ученик в вебе видит свою строку.
 
-### Э10. (по ответу В3) Привязанное устройство на главной `index.html`
-**Зависит от:** Э2. Ревью Opus — обязательно.
-**Суть:** стартовый экран на привязанном устройстве — «Войти как Имя Ф.»; результаты тестов и открытия с такого устройства отправляются новым `POST /api/student/sync` (только добавление своих `results`/`disc` с `sid` = свой, общая очистка как в `merge_in` ветке шлема, никаких учеников/классов/тестов/настроек; в ответ — только тесты своего класса без кодов). Логика слияния не меняется — новый маршрут вызывает существующий `merge_in` с ролью `'student'` и срезом из одного ученика (менять `merge_in` и `store.js merge` одинаково, А11). Подробности уточнить после ответа В3.
+### Э10. Привязанное устройство для всего сайта (ревью Opus — обязательно)
+**Зависит от:** Э2 (и Э1). Можно параллельно с Э3–Э9.
+**Файлы:** `server/studev.py` (`student_sync`), `server/app.py` (маршрут, вызов `merge_in`), `js/store.js` (ветка синхронизации), `js/app.js` (стартовый экран), `tests/student_sync.py`, `tests/e2e_studev.py`.
+**Суть:**
+- Стартовый экран `index.html` на привязанном устройстве: «Вы — Имя Ф., 5А», поле кода → `Store.studentLogin`; «Это не я» → гость; без связи — только гость.
+- `POST /api/student/sync` (сеанс ученика): сервер вызывает существующий `merge_in(c, inc, role='student', …, principal={'kind':'student', …})`. Новая ветка роли `'student'` в `merge_in` принимает **только** `results` и `disc` с `sid` = свой (остальное отбрасывается, ответа об ошибке нет — как у шлема с чужими данными), `feedback` с `sid` = свой. Ученики, классы, тесты, настройки, `deleted` — игнорируются.
+- Ответ — срез: свой ученик (без `pinHash`, `pinView`), свой класс, тесты своего класса, `settings` только `content` (видимость комнат/блоков) и `rooms`/`teacher_rooms` своей школы (после Т3), свои результаты и открытия. Других учеников нет.
+- В `js/store.js` при сеансе ученика `Store.sync()` идёт на `/api/student/sync`; локальная база такого устройства хранит только себя. Логика слияния (`merge` в `store.js` и `merge_in`) — **одинаковое правило в обоих местах** (А11): ветка роли `student` добавляется в оба.
+- При отвязке/архиве (401) — локальная база устройства очищается от данных ученика (только с этого устройства, на сервере ничего не удаляется; это кэш, А15 не нарушается — уточнить в ревью).
+**Проверки (`tests/student_sync.py`, реальные данные двух школ):** свой результат принят; результат с чужим `sid` отброшен; присланный ученик/класс/тест/настройки не меняют базу; ответ без других учеников и без кодов; ученик в архиве → 401; предметник-класс — тесты класса приходят; объём ответа ≤ 256 КБ на классе из 35 учеников с 2000 результатов; e2e: тест, пройденный дома, виден учителю в кабинете.
 
 ### Э11. Документы и справка
-**Файлы:** `HANDOFF.md` (статус, карта модулей: `js/einterm.js`, `js/einweb.js`, `server/studev.py`, `server/einrank.py`; раздел «Данные»: v9), `docs/ARCHITECTURE.md`, `help.html` (ученику: пауза, терминал, веб-версия, «как привязать свой компьютер»), `help-teacher.html` (выдача кода устройства, отвязка, рейтинг, `ein.void`) — без адресов серверов и ключей; `CHECKLIST.md` (новые сбои, если были); предложение Айрату записей Б79–Б83 в `docs/LAWS.md` (пауза, настройки на устройстве, терминал, веб-версия и привязка, рейтинг) — вносит только по его слову; README «команды сервера» — `student-devices on`, `ein-rating on` для `deploy/vr-cli.sh`.
+**Файлы:** `HANDOFF.md` (статус, карта модулей: `js/einterm.js`, `js/einweb.js`, `server/studev.py`, `server/einrank.py`; «Данные»: v9), `docs/ARCHITECTURE.md`, `help.html` (ученику: пауза, терминал, веб-версия, «как привязать свой компьютер или телефон»), `help-teacher.html` (код устройства, отвязка, рейтинг, `ein.void`) — без адресов серверов и ключей; `CHECKLIST.md`; предложение Айрату записей Б79–Б83 в `docs/LAWS.md` (пауза, настройки на устройстве, терминал, веб-версия и привязка, рейтинг) — вносит только по его слову; README «команды сервера» — `student-devices on`, `ein-rating on` через `deploy/vr-cli.sh`.
 
 ---
 
-## 3. Порядок и параллельность (не больше 3 одновременно)
+## 3. Новые требования (Т)
 
-| Волна | Шаги параллельно | Почему можно |
+### Т1. Рейтинг учителей в «Эйнштейне» (ревью Opus — короткое: права учёток)
+**Зависит от:** Э3, Э9.
+**Файлы:** `server/einrank.py`, `js/store.js`, `js/einroom.js`, `js/einweb.js`, `js/arena.js`, `teacher.html` (раздел «Эйнштейн»), `tests/ein_rank.py`, `tests/e2e_einrank.py`.
+**Суть:**
+- Игрок-учитель — учётка с ролью `teacher` или `director` (по `Bearer`): `pk='t'`, `pid=user.id`, школа — первая школа роли `teacher`, иначе `director`. Суперадмин и администраторы региона/района без школы в зачёт не идут (`rated:false, reason:'no_school'`).
+- В шлеме учитель играет зачётно, только если в этом браузере есть токен учётки (`Store.account.token()`; вход учителя в VR — Т6). Без токена — как гость.
+- `top {who:'t'}`: подпись «Имя О. Ф.» из `users.name` (`netapi.short_name` даёт «Имя Ф.» — для учителей та же функция), школа; без класса. Видят все вошедшие (ученики — тоже только свои срезы, Р10). Ученики и учителя не смешиваются никогда: в одном ответе только один `pk`.
+- Интерфейс: переключатель «Ученики | Учителя» над вкладками «Регион / Район / Школа» (запоминается `who` в `vrl.einprefs`).
+- Учитель, ставший неактивным (учётка в архиве или без ролей), из выдачи пропадает (JOIN `users` со статусом активный — grep поля статуса учётки).
+**Проверки:** решение учителя попадает в `pk='t'`; в ответе `who:'s'` его нет и наоборот; учитель двух школ — в первой; суперадмин без школы — `no_school`; ученик видит рейтинг учителей только своей школы/района/региона; e2e — учитель в кабинете переключает «Учителя».
+
+### Т2. Почему ломаются комнаты учителей — воспроизвести и закрепить проверками
+**Файлы:** новый `tests/e2e_rooms_bugs.py` (порт 8852, живой сервер с учётками), `CHECKLIST.md`. Код не правится — только проверки, которые сейчас падают, помечены `xfail` (печатают «ИЗВЕСТНО:»), и записи в CHECKLIST. Цель шага — подтвердить причины раздела 4 на настоящем клиенте (правило CHECKLIST 22.10: проверки — на комнате, собранной настоящим клиентом).
+**Сценарии:** (1) учитель A и учитель B из разных школ создают по комнате → видит ли ученик школы B комнату A; (2) A и B правят свои комнаты одновременно с двух вкладок → не теряется ли комната одного (lww по `settings.updated`, корзина «пропавших» комнат); (3) новая комната без отметок классов не видна в холле, учитель не понимает почему; (4) 9-я комната класса не попадает на панель холла (`slice(0,8)`); (5) 31-я комната на сервере отклоняется у всех учителей (`LIM.rooms=30` на весь сервер); (6) комната со ссылкой `index.html?room=c-…` до загрузки холла; (7) комната старого ключа учителя без автора — правка в шлеме недоступна, первый изменивший забирает её себе; (8) шлем школы (`X-Key`) получает комнаты всех школ в `settings`.
+**Результат:** в CHECKLIST — подтверждённые причины; неподтверждённые убрать из раздела 4 при Т3.
+
+### Т3. Сервер: комнаты учителей отдельной таблицей, автокомната приглашённого учителя (ревью Opus — обязательно)
+**Зависит от:** Т2. Ставить после Э1 и Э3 (общий `app.py`, следующая версия базы).
+**Файлы:** новый `server/troom.py`; `server/app.py` (`DB_VERSION=10`, вызов миграции, маршруты, ветка `settings.rooms` в `merge_in`, `state()`, `auth/activate`); `tests/teacher_rooms.py` (в список `run.js`).
+**Таблица (миграция v10, `troom.migrate_v10(A, c)`, копия базы до транзакции):**
+```sql
+CREATE TABLE IF NOT EXISTS teacher_rooms(
+  id TEXT PRIMARY KEY,            -- 'c-…' как сейчас
+  school TEXT NOT NULL, owner TEXT,          -- id учётки users (NULL — старая комната без автора)
+  subject TEXT NOT NULL DEFAULT '',          -- ключ D.subjects или '' («Разное»)
+  num INTEGER NOT NULL DEFAULT 0,            -- номер комнаты учителя по порядку (1, 2, …)
+  bands TEXT NOT NULL DEFAULT '',            -- 'abcd' видимость по классам; '' — черновик
+  auto INTEGER NOT NULL DEFAULT 0,           -- создана автоматически при приглашении
+  spec TEXT NOT NULL, updated INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')));
+CREATE INDEX IF NOT EXISTS teacher_rooms_school ON teacher_rooms(school, status);
+CREATE INDEX IF NOT EXISTS teacher_rooms_owner ON teacher_rooms(owner);
+```
+Перенос: каждая комната из `settings.rooms` → строка (`school = DEFAULT_SCHOOL`, `owner` — учётка по логину `spec.author`, иначе NULL; `bands` из `settings.content.rooms[id]`). `settings.rooms` в базе **не удаляется** (А15) и дальше отдаётся старым клиентам как зеркало (собирается из таблицы по срезу).
+**Права:** создать/изменить/архивировать — владелец (`owner`) или директор школы и выше; учитель — до `LIM.rooms` (30) **своих** комнат; читать — все в школе (шлем школы, ученик своей школы, учитель, директор). Чужая школа — не видит (сценарий Т2.1, Т2.8).
+**API (admin):** `troom.list {school?, owner?}` → `{items:[{id,title,owner,ownerName,subject,num,bands,auto,updated}]}`; `troom.save {spec, subject?, bands?}` (автор = вызывающий, `spec` чистится `roomspec`-правилами на сервере — повторить проверку размеров и типов: `LIM.bytes` 40 000, число блоков); `troom.archive|restore {id}` (архив вместо удаления, Б74); `troom.bands {id, bands}`. В `state()` для шлема и учётки — `troomsBrief` школы: `[{id,owner,ownerName,subject,num,bands,title}]` + `spec` комнат, у которых `bands` не пустой (черновики — только автору и директору).
+**Автокомната:** при `auth/activate` по приглашению с ролью `teacher` — создать комнату `auto=1`, `num=1`, `subject` из приглашения (новое необязательное поле приглашения `subject`, ключ `D.subjects` или пусто), заголовок «Кабинет <Имя О. Ф.>», `bands=''` (черновик, пока учитель не отметит классы) и шаблон «пустой класс» (стол, доска-приветствие, дверь в холл). Повторная активация не создаёт вторую. Учителю без автокомнаты (старые учётки) — CLI `python3 server/app.py troom-autocreate` (один раз, идемпотентно, аудит).
+**Совместимость (А6, А11):** старый клиент шлёт `settings.rooms` целиком → сервер применяет к таблице только изменения комнат, где отправитель — владелец или директор+ (правило `fix_rooms`), пропавшие из присланного — **не** архивирует (это было причиной потерь, Т2.2), пишет аудит. Клиент `js/store.js` `merge` для `settings.rooms` — то же правило (оба места).
+**Проверки:** перенос 3 старых комнат (с автором, без автора, с отметками классов); две школы не видят чужих комнат; учитель не меняет чужую, директор меняет; старый клиент без комнаты B не архивирует её; автокомната создаётся один раз при активации и CLI; лимит 30 — на учителя; флаг `teacherRooms` выключен → старое поведение целиком; `tests/fixtures/server_v3.py` открывает базу v10.
+
+### Т4. Клиент: `Store` и конструктор на новых комнатах (ревью Opus — не нужен, кроме совместимости — короткий взгляд на `merge`)
+**Зависит от:** Т3.
+**Файлы:** `js/store.js` (`customRooms`, `customRoom`, `saveRoom`, `removeRoom` → через `troom.*` при учётке; иначе прежний путь), `js/builder.js` (список «Мои комнаты» / «Комнаты школы», поле «Предмет», «Видна классам» сразу при создании с подсказкой «Пока ничего не отмечено — комната видна только вам», «Удалить» → «В архив»), `js/custom.js` (`refresh` по `troomsBrief`), `teacher.html` (только подключение), `tests/run.js`, `tests/e2e_rooms_bugs.py` (снять `xfail` у исправленных).
+**Сигнатуры:** `Store.teacherRooms({school}) -> [{id,title,owner,ownerName,subject,num,bands,auto}]`, `Store.roomsOfTeacher(owner)`, `Store.teachersWithRooms(grade) -> [{owner,ownerName,subject,rooms:[…]}]` (только комнаты, открытые для параллели `grade`; учитель без открытых — не попадает), `Store.saveRoom(spec, {subject, bands})`.
+**Проверки:** сценарии Т2 зелёные; учитель создаёт комнату, отмечает 5–6 класс — ученик 5 класса видит её; ученик 9 класса — нет.
+
+### Т5. Холл: карусель дверей учителей, второй уровень — комнаты учителя
+**Зависит от:** Т4.
+**Файлы:** новый `js/hallcarousel.js` (в `index.html`/`teacher.html` до `rooms.js`… нет — после `custom.js`, порядок одинаковый; `sw.js` `FILES`), `js/rooms.js` (`ROOMS.hall`: вместо `VR.custom.hallPanel` — `VR.hallcarousel.build(E, S, gr)`), `js/custom.js` (`hallPanel` оставить, но не вызывать — для отката флагом), `js/flags.js` (флаг `hallCarousel`, по умолчанию `true`; при `false` — прежняя панель), `tests/run.js`, `tests/e2e_play.py` (картинки).
+**Место:** задняя стена (z = 5,88, `yaw π`) на отрезке x 2,9…4,9 (сейчас «Комнаты учителя»; CHECKLIST 22.10 — занятые отрезки), дверь `E.door` не используется (она ведёт в одну комнату) — своя рамка двери + панель.
+**Вид, уровень 1 «Учителя»:** рамка двери 1,1×2,1 м с табличкой «Математика · Иванова М. П.» и цветом предмета (`D.subjects[subject].color`, «Разное» — серый); слева/справа кнопки ◀ ▶ (листание по учителям, по кругу; порядок — предмет по `VR.ORDER`, затем имя); под дверью «3 из 12». Курок на дверь → уровень 2.
+**Уровень 2 «Комнаты учителя»:** на той же рамке — панель-список до 6 комнат этого учителя (заголовок, номер), ◀ ▶ страницы, кнопка «← Все учителя». Курок на комнату → `E.goRoom(id)`. Одна комната у учителя — сразу переход без второго уровня.
+**Состояние:** `S.car = {lvl:1|2, i, page}` запоминается в `sessionStorage['vrl.car']` (возврат в холл — на того же учителя).
+**Пусто:** нет открытых комнат — табличка «Здесь появятся комнаты учителей» (без кнопок).
+**Проверки:** `run.js` — 12 учителей, у одного 9 комнат: листание по кругу, уровень 2 страница 2 содержит 3 комнаты, одна комната — переход сразу; рамка и панель не пересекают двери информатики/игровой и панель «Обучение» (отрезки по x); `p.over` пуст; угол к игроку на spawn и с 2 м перед стеной ≤ 35°; флаг `hallCarousel=false` — прежняя панель; картинки `shots/hall_car_1.png`, `shots/hall_car_2.png` (смотреть глазами).
+**Риск:** много учителей (50+) — листание по одному долго: в уровне 1 добавить кнопку «Предмет: Все ▾» (фильтр по предмету, цикл по предметам) — если не влезает, вынести в вопрос Айрату после картинки.
+
+### Т6. Вход учителя в VR через hub (ревью Opus — короткое: билет учителя на шлеме)
+**Зависит от:** ничего из Э/Т (сеть Н4–Н10 готова); можно с волны 1.
+**Файлы:** `js/app.js` (экран входа учителя «Я учитель»), `js/store.js` (если нужна обёртка), `js/netplay.js`/`js/netlead.js` (только подключение роли `t`), `tests/teacher_entry.py`, `tests/e2e_net.py`.
+**Суть:**
+- Сейчас учитель в шлеме — без учётки (`vrl.laser`/`?as=teacher`), билет в hub не получает (HANDOFF Н8/Н10: «вход учителя в VR через hub не сделан»). Надо: если в браузере шлема есть токен учётки (`Store.account.token()`), на экране «Я учитель» показать «Урок идёт — войти ведущим» для открытых уроков классов учителя (`Store.sessionAdmin('list', {})` → открытые) → `Store.sessionTicket(sid)` (ветка `user`, уже есть) → `VR.net.connect` с ролью из ответа (`t` или `a`).
+- Если токена нет — форма «логин + пароль» прямо на экране входа учителя (`Store.account.login`, как в `teacher.html`), токен — `sessionStorage` этой вкладки. Проверить: передаётся ли `sessionStorage` при переходе по кнопке «▶ Войти в VR как учитель» из кабинета в той же вкладке (тогда форма не нужна) — зафиксировать результат в CHECKLIST.
+- Учитель в шлеме шлёт позу как все (`netplay`), `E.isTeacher()` — истина, ученик с id — никогда (прежнее правило).
+**Проверки:** e2e — учитель логинится на экране шлема, видит открытый урок своего класса и входит ролью `t`; чужой класс — урока в списке нет; предметник входит ролью `t` в урок, который открыл сам, иначе `a`.
+
+### Т7. Планшет учителя: кнопки ведущего и приглашение класса из VR
+**Зависит от:** Т6.
+**Файлы:** `js/app.js` (вкладка «Урок» в меню учителя — рядом с вкладкой «Класс» из Т4 учителей), `js/netlead.js` (отправка событий ведущего — `VR.net.send('ev', …)`; приём уже есть), `js/store.js` (обёртки `sessionAdmin('open'|'close'|'kick'|'unkick'|'list')` — уже есть), `tests/netlead.js`, `tests/e2e_net.py`.
+**Кнопки (только при роли `t` из ответа на билет; по `NET_PROTOCOL.md` §события):** «Все ко мне» (`ev {k:'gather'}` — без `id`, сбор вокруг позы учителя, `netlead.gather` уже это делает), «За мной» / «Не следовать» (`ev {k:'follow', on}`), «Внимание!» / «Снять» (`ev {k:'freeze', on}`), «Все в холл» (`ev {k:'hall'}`), «Позвать в мою комнату» (`ev {k:'room', id:E.roomId}`), «Убрать» — список участников из roster → выбрать → двойное нажатие (`ev {k:'kick', slot}`; А9), «Убраны» → «Вернуть» (`sessionAdmin('unkick')`).
+**Приглашение класса из VR:** если урока нет — «Открыть урок для 5А здесь» (класс — выбранный при входе, Т3 учителей: `E.student.classId`; комната — текущая) → `sessionAdmin('open', {class_id, room:E.roomId, settings:{mode:'seat'}})` → сразу билет и вход ведущим; у учеников на шлемах школы появляется кнопка «Урок идёт — войти» (`netProbe`, уже есть). Для удалённых — «Код для входа из дома» (`settings.remote`, код показывается один раз крупно на планшете). «Закрыть урок» — двойное нажатие.
+**Проверки:** `tests/netlead.js` — каждая кнопка шлёт ровно одно сообщение нужного вида; у роли `a` кнопок нет; `e2e_net.py` — учитель в VR открывает урок, два ученика входят, «Все ко мне» ставит их на кольцо 1,5 м вокруг учителя, «Внимание» замораживает, «Убрать» закрывает ученику соединение 4012; рендер планшета — `p.over` пуст, картинка `shots/tablet_lesson.png`.
+
+---
+
+## 4. Причины поломок комнат учителей (по коду, проверить в Т2)
+
+1. **Все комнаты всех школ — в одном общем документе настроек** (`settings.rooms`, сервер: строка `settings id=1`, аудит пишет `DEFAULT_SCHOOL` — «школа пока одна»). Учитель видит и получает комнаты чужих школ; шлем школы тоже; лимит `RS.LIM.rooms = 30` — на весь сервер, а не на учителя.
+2. **Слияние «последний победил» по `settings.updated` целым документом** (`store.js merge`: `settings` берётся у того, у кого `updated` больше). Две вкладки/учителя правят комнаты — одна версия затирает другую; сервер восстанавливает только комнаты с чужим автором (`fix_rooms`), комнаты без автора теряются.
+3. **Комнаты, «пропавшие» из присланных настроек, сервер уводит в корзину** (`merge_in`: цикл по `old_rooms` → `to_trash`). Старая вкладка без новой комнаты коллеги → комната коллеги без автора уходит в корзину.
+4. **Новая комната — скрытый черновик** (`saveRoom` пишет `content.rooms[id]=''`, `bandsOf` для `c-…` без отметки → ''): в холле её нет, пока учитель не отметит классы в конструкторе; подсказка есть только в таблице конструктора — отсюда «непонятно, где их ставить».
+5. **Видимость по классам — тоже общая** (`settings.content` — один на сервер): отметка классов одной школы действует во всех.
+6. **Панель холла показывает не больше 8 комнат** (`hallPanel`: `slice(0,8)`), все учителя вперемешку по алфавиту; панель на задней стене за спиной игрока.
+7. **Комната старого ключа учителя без автора** правится в шлеме только из кабинета (`canEdit`: `sp.author===who`); первый изменивший учитель забирает её себе (`fix_rooms`) — комната «уходит» к другому учителю.
+8. **Комната регистрируется в `VR.ROOMS` только при сборке холла** (`VR.custom.refresh` вызывается из `hallPanel`) — переход по ссылке на комнату до холла может не найти её (проверить в Т2.6).
+
+## 5. Порядок и параллельность (не больше 3 одновременно)
+
+| Волна | Шаги параллельно | Замечание |
 |---|---|---|
-| 1 | **Э1** (сервер), **Э4** (`einroom.js`, `games.js`) | разные файлы |
-| 2 | **Э2** (`store.js`, `teacher.html`), **Э3** (`server/*`), **Э5** (`einroom.js`, `einstein.js`) | разные файлы; Э3 и Э1 оба трогают `app.py` — Э3 строго после Э1 |
-| 3 | **Э6** (`einterm.js`, `rooms.js`, `einroom.js`), **Э7** (`einstein.html`, `einweb.js`, `index.html`) | Э7 `einroom.js` не трогает |
-| 4 | **Э8** | трогает `einroom.js`, `einweb.js`, `store.js`, `app.js` |
-| 5 | **Э9**, затем **Э10** (если «да» на В3), **Э11** | |
+| 1 | **Э1** (сервер), **Э4** (`einroom.js`, `games.js`), **Т6** (`app.js`, сеть) | разные файлы |
+| 2 | **Э2** (`store.js`, `teacher.html`), **Э3** (`server/*`), **Э5** (`einroom.js`, `einstein.js`) | Э3 строго после Э1 (`app.py`) |
+| 3 | **Э6** (`einterm.js`, `rooms.js`), **Э7** (`einstein.html`, `einweb.js`), **Т2** (только тесты) | |
+| 4 | **Э8**, **Э10** (`server`, `store.js` — после Э8 по `store.js`… см. ниже), **Т7** | Э8 и Э10 оба меняют `store.js`: Э10 запускать после Э8 в той же волне не параллельно — если координатор не хочет ждать, Э10 в волну 5 |
+| 5 | **Э9**, **Э10** (если не успел), **Т3** (`server`, v10) | Т3 после Э1/Э3 (`app.py`, версия базы) |
+| 6 | **Т1**, **Т4** | Т1 трогает `einrank.py` и панели рейтинга, Т4 — `store.js`, `builder.js`, `custom.js` |
+| 7 | **Т5**, **Э11** | Э11 — в самом конце, включая Т |
 
 Параллельные шаги поднимают `V` в `sw.js` каждый — при слиянии координатор ставит итоговую версию на единицу больше максимальной.
-**Ревью Opus:** Э1 и Э3 — обязательно (сервер, права, данные детей, перебор); Э2 и Э8 — короткое ревью (показ кода/ключа, хэш кода в памяти); Э10 — обязательно. Остальное — reviewer не нужен, достаточно зелёных проверок и картинок.
-**Включение на VPS:** после Э3 и Э8 — команды Айрату (`student-devices on`, `ein-rating on`) по скиллу `homebrain-cmd`; до этого всё под флагами.
+**Ревью Opus:** обязательно — Э1, Э3, Э10, Т3; короткое — Э2, Э8, Т1, Т6. Остальное — зелёные проверки и картинки.
+**Включение на VPS:** после Э3 и Э8 — команды Айрату `student-devices on`, `ein-rating on`; после Т4 — `teacher-rooms on` и `troom-autocreate` (по скиллу `homebrain-cmd`). До этого всё под флагами.
 
-## 4. Риски
+## 6. Риски
 
-1. **Имена детей вне своей школы** (Э3/Э9): «Имя Ф., класс, школа» видят вошедшие из других школ и регионов — это распространение персональных данных несовершеннолетних; согласия (Б16) отложены. Смягчение: только вошедшие, только сокращённое имя, топ-200, без id; окончательно — В2.
-2. **Ключ ученика утёк** (скопировали `localStorage` на чужом ПК): ключ даёт только игру и просмотр рейтинга от имени ученика; учитель видит устройства и отвязывает; простой > 180 дней — ключ гаснет.
-3. **Код ученика на шлеме** (Э8): сервер впервые проверяет код ученика на каждый зачётный запрос с ключом шлема — нужна общая пауза по ученику, иначе шлем школы станет «перебирателем» кодов; повторяем логику `student_check` (пауза после 5 ошибок).
-4. **Перерисовка терминала** (Э6): клетки поля перерисовываются при каждом нажатии на 2048×1536 — на Quest 1 проверить fps; при просадке — `res:1536`.
-5. **Старые клиенты** (А6): шлем без Э8 продолжает играть локально, сервер его не видит — рейтинг наполняется только с обновлённых шлемов (обновление по `sw.js` со второго открытия).
-6. **Перевод ученика в другую школу**: ключи гаснут (школа не совпала), решения остаются со старой `school` в `ein_solves`, но `ein_stats.school` обновлять при `restat` по текущей школе ученика — рейтинг идёт за новой школой. Проверка в Э3.
+1. **Код ученика проверяет сервер на каждом зачётном запросе с ключа шлема** (Э3/Э8): без общей паузы по ученику шлем школы стал бы инструментом перебора кодов — повторяем `student_check` с паузой после 5 ошибок.
+2. **Ключ ученика утёк** (скопировали `localStorage`): без кода ученика он бесполезен (Р2); учитель видит устройства и отвязывает; простой > 180 дней — ключ гаснет.
+3. **`merge_in` с ролью `student`** (Э10) — самое опасное место: ошибка даст ученику право писать чужие результаты или читать чужих. Ревью Opus и проверки на двух школах.
+4. **Перенос комнат в таблицу** (Т3): старые клиенты продолжают слать `settings.rooms` — ошибка зеркала вернёт потери из раздела 4. Флаг `teacherRooms`, проверки старого клиента, копия базы до миграции.
+5. **Перерисовка терминала** (Э6) на Quest 1 — при просадке `res:1536`.
+6. **Старые шлемы** (А6): шлем без Э8 играет локально — рейтинг наполняется с обновлённых (`sw.js` — со второго открытия).
+7. **Перевод ученика в другую школу:** ключи гаснут; `restat` пишет в `ein_stats` текущую школу — рейтинг идёт за учеником (проверка в Э3).
 
-## 5. Вопросы к Айрату
+## 7. Вопросы к Айрату
 
-- **В1.** Привязанное личное устройство (свой ПК, телефон): спрашивать код ученика при каждом входе или нет? Предлагаю **не спрашивать** — устройство личное, есть «Отвязать» у ученика и у учителя. Если дома общий семейный компьютер с братом/сестрой — код нужен.
-- **В2.** Кто видит рейтинг других школ и регионов с именами «Имя Ф., класс, школа»: (а) любой вошедший, через фильтр — как сейчас в плане; (б) ученики — только своя школа/район/регион, а другие срезы — только учителя и выше; (в) вне своей школы имена скрыты («Ученик 5А, Школа № 12»). Предлагаю **(б)** до решения по согласиям (Б16).
-- **В3.** Привязанное устройство — только для «Эйнштейна» или сразу и для всего сайта (комнаты и тесты из дома с записью результатов на сервер, шаг Э10)? Э10 — отдельная работа с ревью Opus; предлагаю сначала только «Эйнштейн».
+Ответы на В1–В3 получены 28.10.2026 (код спрашивать; видимость — вариант «б»; привязка для всего сайта). Новые вопросы, без которых Т3/Т5 не закончить:
+- **В4.** «Номер» на двери учителя — это номер кабинета в школе (учитель вводит сам, «каб. 12») или порядковый номер его комнаты (1, 2, 3)? В плане — порядковый номер; номер кабинета можно добавить полем профиля позже (Б75 отложен).
+- **В5.** Предмет учителя для автокомнаты брать из приглашения (директор выбирает при приглашении, новое необязательное поле) — так? Если предмета нет — дверь «Разное».
