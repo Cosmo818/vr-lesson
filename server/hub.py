@@ -383,6 +383,61 @@ async def serve(host, port, limits, test=False, core=None):
     return hub, srv
 
 
+class AppLink:
+    """Связь hub → app.py: отчёты (POST /api/hub/report) и опрос закрытых сессий (GET /api/hub/sessions) с подписью HMAC k_report.
+    Запросы идут в одном фоновом потоке (цикл событий не ждёт сеть); ответы app.py забираются при следующем вызове и применяются Core.apply."""
+
+    def __init__(self, url, k_report, timeout=5.0):
+        import concurrent.futures
+        self.url, self.k, self.timeout = url.rstrip('/'), k_report, timeout
+        self.ex = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='applink')
+        self.futs = []
+        self.errors = 0
+
+    def _call(self, method, path, data, headers):
+        import urllib.request
+        import urllib.error
+        r = urllib.request.Request(self.url + path, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(r, timeout=self.timeout) as f:
+                return json.loads(f.read().decode('utf-8'))
+        except (urllib.error.URLError, OSError, ValueError):
+            self.errors += 1
+            return None
+
+    def _sig(self, raw):
+        import hubticket
+        return hubticket.sign_report(self.k, raw)
+
+    def take(self):
+        out = {}
+        keep = []
+        for f in self.futs:
+            if not f.done():
+                keep.append(f)
+                continue
+            try:
+                r = f.result()
+            except Exception:
+                r = None
+            if isinstance(r, dict):
+                out.setdefault('closed', []).extend(r.get('closed') or [])
+                out.setdefault('banned', {}).update(r.get('banned') or {})
+                out.setdefault('settings', {}).update(r.get('settings') or {})
+        self.futs = keep
+        return out or None
+
+    def report(self, body):
+        raw = json.dumps(body, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        self.futs.append(self.ex.submit(self._call, 'POST', '/api/hub/report', raw, {'Content-Type': 'application/json', 'X-Sig': self._sig(raw)}))
+        return self.take()
+
+    def poll(self):
+        ts = str(int(time.time() * 1000))
+        self.futs.append(self.ex.submit(self._call, 'GET', '/api/hub/sessions', None, {'X-Ts': ts, 'X-Sig': self._sig(('sessions:' + ts).encode())}))
+        return self.take()
+
+
 def file_reporter(path):
     def rep(body):
         with open(path, 'a', encoding='utf-8') as f:
@@ -417,6 +472,7 @@ def main():
     ap.add_argument('--port', type=int, default=8788)
     ap.add_argument('--config', default='')
     ap.add_argument('--origins', default='')
+    ap.add_argument('--app-url', default='', help='адрес app.py для отчётов и опроса (по умолчанию hubAppUrl из config.json), например http://127.0.0.1:8787')
     ap.add_argument('--report-file', default='', help='отчёты посещаемости в файл (пока нет /api/hub/report — шаг Н4)')
     ap.add_argument('--test', action='store_true', help='эхо-канал для тестов (в рабочем режиме не включать)')
     ap.add_argument('--handshake_s', type=float)
@@ -424,6 +480,8 @@ def main():
     ap.add_argument('--max_unauth_ip', type=int)
     ap.add_argument('--max_conns', type=int)
     ap.add_argument('--ping_s', type=float)
+    ap.add_argument('--report_s', type=float)
+    ap.add_argument('--poll_s', type=float)
     ap.add_argument('--idle_s', type=float)
     a = ap.parse_args()
     L, cfg = load_config(a)
@@ -437,8 +495,13 @@ def main():
             keys = hubticket.derive(cfg.get('hubSecret'))
         except ValueError as e:
             sys.exit('hub: hubSecret не задан или короток (%s); создать: python3 server/app.py hub-secret' % e)
-        core = hubsess.Core(keys, {'aud': str(cfg.get('hubId') or 'center'), 'kid': cfg.get('hubKid')},
-                            reporter=file_reporter(a.report_file) if a.report_file else None)
+        app_url = a.app_url or str(cfg.get('hubAppUrl') or '')
+        link = AppLink(app_url, keys['report']) if app_url else None
+        lim = {'aud': str(cfg.get('hubId') or 'center'), 'kid': cfg.get('hubKid') or None}
+        lim.update({k: getattr(a, k) for k in ('report_s', 'poll_s') if getattr(a, k) is not None})
+        core = hubsess.Core(keys, lim,
+                            reporter=link.report if link else file_reporter(a.report_file) if a.report_file else None,
+                            poller=link.poll if link else None)
 
     async def run():
         hub, srv = await serve(a.host, a.port, L, a.test, core)

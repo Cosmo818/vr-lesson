@@ -1107,7 +1107,7 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
     let p2=await start();
     try{
       ok(baks().length===1&&pyq(path.join(dir2,baks()[0]),'select count(*) from students')==='4','миграция: перед ней сделана копия базы v2 (4 ученика)');
-      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='6','миграция v2→v6: user_version = 6');
+      ok(pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='7','миграция v2→v7: user_version = 7');
       const exp=await (await fetch(url2+'/api/export',{headers:{'X-Key':'teach-secret'}})).json();
       const yr=id=>exp.students.find(x=>x.id===id).year;
       ok(exp.students.length===4&&exp.students.every(x=>x.school==='school-default'&&x.status==='active')&&yr('s1')===2025&&yr('s2')===2024&&yr('s3')===null&&yr('s4')===null&&exp.classes.find(x=>x.id==='c5a').year===2025,'миграция: ученики и классы дозаполнены, годы выведены');
@@ -1118,7 +1118,7 @@ print(json.dumps(c.execute('select action,detail,length(target_id),ip from audit
     await new Promise(r=>setTimeout(r,300));
     p2=await start();
     try{
-      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='6','миграция повторяема: после перезапуска новой копии нет');
+      ok(baks().length===1&&pyq(path.join(dir2,'vrlesson.db'),'pragma user_version')==='7','миграция повторяема: после перезапуска новой копии нет');
     }finally{p2.kill();}
     /* обрыв миграции: на временной базе v2 ломаем заполнение на второй записи; база должна остаться целой v2, повторный запуск — дать ту же v3 */
     {
@@ -1184,7 +1184,7 @@ c=sqlite3.connect(sys.argv[1]);s=app.state(c);s.pop('v');s.pop('purged',None);pr
     }finally{p4.kill();}
     await new Promise(r=>setTimeout(r,300));
     const d1=JSON.parse(py(dumpDb,db4));
-    ok(d1[0]===6&&NEWT.every(t=>d1[1].includes(t))&&d1[2].includes('teacherId'),'миграция v3→v6: user_version = 6, есть все новые таблицы и колонка classes.teacherId');
+    ok(d1[0]===7&&NEWT.every(t=>d1[1].includes(t))&&d1[2].includes('teacherId'),'миграция v3→v7: user_version = 7, есть все новые таблицы и колонка classes.teacherId');
     ok(py(stateJson,db4,srvDir,dir4)===before,'миграция v3→v4: состояние (state) до и после совпадает по всем данным, кроме номера схемы');
     ok(JSON.stringify([d1[3],d1[4],d1[5]])===JSON.stringify([d0[3],d0[4],d0[5]]),'миграция v3→v4: строки учеников, классов и число результатов не изменились');
     const cnt=(t,w)=>py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0])',db4,'select count(*) from '+t+(w?' where '+w:''));
@@ -1248,7 +1248,7 @@ c=sqlite3.connect(sys.argv[1]);app.migrate_v4(c);c.close()`;
         ok(ex.v===4&&ex.students.length===5&&ex.students.some(x=>x.id==='rb1')&&ex.results.length===syN&&syN>0,'откат: новый сервер снова открывает базу после работы прежнего, данные не потеряны');
       }finally{p4.kill();}
       await new Promise(r=>setTimeout(r,300));
-      ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='6'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 6');
+      ok(py('import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("pragma user_version").fetchone()[0])',db6)==='7'&&cnt('schools')==='1','откат: после возврата на новый код user_version = 7');
     }
     /* Б74, шаг 18: миграция v5→v6 и корзина */
     {
@@ -1284,7 +1284,7 @@ except RuntimeError:
       }finally{pB.kill();}
       await new Promise(r=>setTimeout(r,300));
       const A1=JSON.parse(py(dumpB,dbB));
-      ok(A1[0]===6&&JSON.stringify(A1[2].map(r=>[r[0],r[2]]))===JSON.stringify([['gone1','legacy'],['old-x','legacy']])&&A1[1].includes('trash')&&A1[4]===5,'Б74: user_version = 6, purged содержит все id из deleted, результаты на месте');
+      ok(A1[0]===7&&JSON.stringify(A1[2].map(r=>[r[0],r[2]]))===JSON.stringify([['gone1','legacy'],['old-x','legacy']])&&A1[1].includes('trash')&&A1[4]===5,'Б74: user_version = 7, purged содержит все id из deleted, результаты на месте');
       ok(q(dbB,"select count(*) from pragma_table_info('uploads') where name in ('archived_at','archived_by')")==='2','Б74: у uploads есть archived_at и archived_by');
       const a1=py(dumpB,dbB);
       pB=await startOn(dirB,8801,path.join(srvDir,'app.py'));
@@ -1337,7 +1337,7 @@ except RuntimeError:
     }
   }
   /* учётки (шаги 4–7…): отдельные Python-файлы с живым сервером; их строки ok/FAIL входят в общий счёт */
-  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы'],['open.py','открытые'],['hierarchy.py','иерархия'],['ai.py','помощник'],['history.py','история'],['purge.py','стирание'],['net_bots.py','hub-сессии'],['hub_ws.py','hub-WebSocket']]){
+  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы'],['open.py','открытые'],['hierarchy.py','иерархия'],['ai.py','помощник'],['history.py','история'],['purge.py','стирание'],['net_bots.py','hub-сессии'],['hub_ws.py','hub-WebSocket'],['net_sessions.py','сеть-сессии']]){
     if(!fs.existsSync(path.join(ROOT,'tests',file)))continue;
     let out='';
     try{out=cp.execFileSync('python3',['-I',path.join(ROOT,'tests',file)],{encoding:'utf-8',timeout:240000});}

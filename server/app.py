@@ -17,7 +17,7 @@ CONFIG_PATH = os.path.join(DATA, 'config.json')
 MAX_BODY = 8 * 1024 * 1024
 VERSION = '3'
 SCHEMA = 4
-DB_VERSION = 6  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
+DB_VERSION = 7  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
 DEFAULT_SCHOOL = 'school-default'
 PURGE_HOLD_DEFAULT = 30  # дней в архиве до окончательного стирания (config purgeHoldDays, 0-3650)
 PURGE_KEEP_YEARS = 5  # копии bak-purge-* хранятся 5 лет; сервер их не удаляет, только показывает, какие устарели
@@ -92,6 +92,7 @@ def init_db():
         migrate_v3(c)  # при каждом старте: идемпотентно, дозаполняет строки, записанные прежней версией
         migrate_v4(c)
         migrate_b74(c)
+        net_module().migrate_v7(sys.modules[__name__], c)  # таблицы сессий создаются всегда (пустые), работают только при config net=true
         c.execute("CREATE INDEX IF NOT EXISTS students_class ON students(json_extract(doc, '$.classId'))")  # поиск и фильтр по классу (шаг 8); старому коду индекс не мешает
 
 
@@ -804,10 +805,25 @@ def ai_module():
     return _AI['m']
 
 
+_NET = {}
+
+
+def net_module():
+    """Сессии живого урока (server/netapi.py) — загрузка по пути рядом с app.py, как ai.py."""
+    if 'm' not in _NET:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('vr_netapi', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'netapi.py'))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _NET['m'] = m
+    return _NET['m']
+
+
 def load_config():
     """/data/config.json: accounts (по умолчанию false — новые эндпоинты отвечают 404), legacyTeacher (true), sessionMinutes (15). Читается на каждый запрос: выключатель действует без перезапуска.
     Это НЕ settings.flags: те синхронизируются и меняются ключом teacher, а флаг безопасности старым ключом включаться не должен."""
-    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False, 'ai': False, 'aiDaily': 30, 'purge': False, 'purgeHoldDays': PURGE_HOLD_DEFAULT}
+    cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False, 'ai': False, 'aiDaily': 30, 'purge': False, 'purgeHoldDays': PURGE_HOLD_DEFAULT,
+           'net': False, 'hubSecret': '', 'hubOrigins': [], 'hubTrusted': [], 'hubUrl': '', 'hubId': '', 'hubKid': '', 'hubAppUrl': ''}
     try:
         with open(CONFIG_PATH, encoding='utf-8') as f:
             raw = json.load(f)
@@ -818,6 +834,14 @@ def load_config():
                 cfg['openRooms'] = raw['openRooms']
             if isinstance(raw.get('purge'), bool):
                 cfg['purge'] = raw['purge']
+            if isinstance(raw.get('net'), bool):
+                cfg['net'] = raw['net']
+            for k in ('hubSecret', 'hubUrl', 'hubId', 'hubKid', 'hubAppUrl'):  # сеть: секрет hub и адреса — только из config.json, наружу не отдаются
+                if isinstance(raw.get(k), str) and len(raw[k]) <= 300:
+                    cfg[k] = raw[k]
+            for k in ('hubOrigins', 'hubTrusted'):
+                if isinstance(raw.get(k), list):
+                    cfg[k] = [x for x in raw[k] if isinstance(x, str) and len(x) <= 200][:20]
             h = raw.get('purgeHoldDays')
             if isinstance(h, int) and not isinstance(h, bool) and 0 <= h <= 3650:
                 cfg['purgeHoldDays'] = h
@@ -1306,6 +1330,8 @@ def guard_last_director(c, uid):
 
 def admin_action(c, p, act, b, ip):
     """Выполняет административное действие; возвращает dict-ответ или бросает AdminError. Вызывать под lock в одной транзакции."""
+    if act.startswith('session.'):
+        return net_module().admin(sys.modules[__name__], c, p, act, b, ip)
     who = ('user', p['id'], ip)
     now = int(time.time() * 1000)
     rank = my_rank(p)
@@ -2489,6 +2515,29 @@ def cli(argv):
             audit(c, who, 'config.accounts', 'config', 'accounts', None, {'from': old, 'to': cfg['accounts']})
         print('Учётки %s.' % ('включены' if cfg['accounts'] else 'выключены'))
         return 0
+    if cmd == 'net' and len(argv) == 2 and argv[1] in ('on', 'off'):
+        cfg = load_config()
+        if argv[1] == 'on' and not cfg['hubSecret']:
+            print('Сначала создайте секрет hub: python3 server/app.py hub-secret', file=sys.stderr)
+            return 1
+        old = cfg['net']
+        cfg['net'] = argv[1] == 'on'
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.net', 'config', 'net', None, {'from': old, 'to': cfg['net']})
+        print('Сеть уроков %s.' % ('включена' if cfg['net'] else 'выключена'))
+        return 0
+    if cmd == 'hub-secret' and len(argv) in (1, 2) and (len(argv) == 1 or argv[1] == '--rotate'):
+        cfg = load_config()
+        if cfg['hubSecret'] and len(argv) == 1:
+            print('Секрет hub уже есть (config.json). Заменить: hub-secret --rotate (действующие билеты станут недействительны).')
+            return 0
+        cfg['hubSecret'] = secrets.token_hex(32)  # в чат и в журнал не выводится
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.hubSecret', 'config', 'hubSecret', None, {'rotated': len(argv) == 2})
+        print('Секрет hub создан в config.json (права 0600). Скопируйте файл config.json на сервер hub тем же способом, что и ключи; в чат его не присылайте.')
+        return 0
     if cmd == 'open-rooms' and len(argv) == 2 and argv[1] in ('on', 'off'):
         cfg = load_config()
         old = cfg['openRooms']
@@ -2598,7 +2647,7 @@ class H(BaseHTTPRequestHandler):
 
     def cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Key, Authorization')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Key, Authorization, X-Sig, X-Ts')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Max-Age', '86400')
 
@@ -2673,6 +2722,8 @@ class H(BaseHTTPRequestHandler):
             return self.asset_get()
         if self.path.startswith('/api/auth/'):
             return self.auth_api('GET')
+        if self.path.startswith('/api/session/') or self.path.startswith('/api/hub/'):
+            return self.net_api('GET')
         if self.path.startswith('/api/options') or self.path.startswith('/api/accounts') or self.path.startswith('/api/history'):
             return self.query_api()
         self.reply(404, {'error': 'not found'})
@@ -2739,6 +2790,83 @@ class H(BaseHTTPRequestHandler):
         if route == '/api/auth/activate' and method == 'POST':
             return self.do_activate(body, ip)
         self.reply(404, {'error': 'not found'})
+
+    def net_api(self, method):
+        """Сеть живых уроков (config net=true, иначе 404): билеты входа, живые сессии школы, игровая, отчёты hub. Логика — server/netapi.py.
+        Ответ уходит после выхода из `with db()` (транзакция уже зафиксирована). Тело: билеты ≤ 1 КБ, отчёт ≤ 64 КБ."""
+        if not load_config()['net']:
+            return self.reply(404, {'error': 'not found'})
+        A, N = sys.modules[__name__], net_module()
+        route = self.path.split('?')[0]
+        ip = client_ip(self)
+        now = int(time.time() * 1000)
+        raw = b''
+        if method == 'POST':
+            n = num(self.headers.get('Content-Length'))
+            if n <= 0 or n > (N.REPORT_MAX if route == '/api/hub/report' else 1024):
+                return self.reply(413, {'error': 'body size'})
+            raw = self.rfile.read(n)
+        if route.startswith('/api/hub/'):  # hub ↔ app: подпись HMAC ключом k_report
+            sig = self.headers.get('X-Sig') or ''
+            if route == '/api/hub/report' and method == 'POST':
+                if not N.sig_ok(A, raw, sig):
+                    time.sleep(1)
+                    return self.reply(401, {'error': 'bad signature'})
+                with lock, db() as c:
+                    out = N.report(A, c, raw, ip, now)
+                return self.reply(*out)
+            if route == '/api/hub/sessions' and method == 'GET':
+                ts = self.headers.get('X-Ts') or ''
+                if not ts.isdigit() or abs(now - int(ts)) > N.SIG_SKEW_MS or not N.sig_ok(A, ('sessions:' + ts).encode(), sig):
+                    time.sleep(1)
+                    return self.reply(401, {'error': 'bad signature'})
+                with lock, db() as c:
+                    out = N.hub_sessions(A, c)
+                return self.reply(200, out)
+            return self.reply(404, {'error': 'not found'})
+        body = {}
+        if method == 'POST':
+            try:
+                body = json.loads(raw.decode('utf-8'))
+                if not isinstance(body, dict):
+                    raise ValueError
+            except ValueError:
+                return self.reply(400, {'error': 'bad json'})
+        cfg = load_config()
+        tok = self.bearer()
+        dev = user = None
+        if tok and cfg['accounts']:
+            with lock, db() as c:
+                u = session_user(c, tok)
+                roles = principal_roles(c, u['id']) if u else []
+            if not u or not roles:
+                return self.reply(401 if not u else 403, {'error': 'no session' if not u else 'no roles'})
+            user = {'kind': 'user', 'id': u['id'], 'login': u['login'], 'roles': roles, 'ip': ip}
+        elif self.headers.get('X-Key'):
+            dv = device_by_key(self.headers.get('X-Key'))
+            if not dv:
+                time.sleep(1)
+                return self.reply(401, {'error': 'bad key'})
+            dev = dv
+        if route == '/api/session/live' and method == 'GET':
+            if not dev:
+                return self.reply(403, {'error': 'device only'})
+            with lock, db() as c:
+                out = N.live(A, c, dev['school'])
+            return self.reply(200, out)
+        if method != 'POST' or route not in ('/api/room/ticket', '/api/play/join'):
+            return self.reply(404, {'error': 'not found'})
+        if route == '/api/play/join':
+            if not dev:
+                return self.reply(403, {'error': 'device only'})
+            with lock, db() as c:
+                out = N.play_join(A, c, dev, body, ip, now)
+            return self.reply(*out)
+        if user is None and dev is None and not body.get('code'):
+            return self.reply(401, {'error': 'no credentials'})
+        with lock, db() as c:
+            out = N.ticket(A, c, dev, user, body, ip, now)
+        self.reply(*out)
 
     def code_gate(self, kind, body, ip, now):
         """Общая защита публичных «кодовых» входов: лимит по IP и пауза после ошибок. Возвращает секунды ожидания."""
@@ -2953,6 +3081,8 @@ class H(BaseHTTPRequestHandler):
         ip = client_ip(self)
         if self.path.split('?')[0] in ('/api/admin/purge', '/api/admin/purge.preview') and not cfg['purge']:
             return self.reply(404, {'error': 'not found'})
+        if self.path.startswith('/api/admin/session.') and not cfg['net']:
+            return self.reply(404, {'error': 'not found'})
         n = num(self.headers.get('Content-Length'))
         if n <= 0 or n > (70000 if self.path.endswith('/room.publish') else 8192 if self.path.split('?')[0].endswith('/purge') else 4096):
             return self.reply(413, {'error': 'body size'})
@@ -3068,6 +3198,8 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path.startswith('/api/auth/'):
             return self.auth_api('POST')
+        if self.path.startswith('/api/room/') or self.path.startswith('/api/play/') or self.path.startswith('/api/hub/'):
+            return self.net_api('POST')
         if self.path.startswith('/api/admin/'):
             return self.admin_api()
         if self.path.startswith('/api/ai/'):

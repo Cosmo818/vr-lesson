@@ -24,7 +24,7 @@ DEF = {
     'tick_hz': 20, 'away_s': 3.0, 'hold_s': 120.0, 'report_s': 60.0, 'text_max': 2048, 'near': 12, 'far_every': 4, 'phys_m': 3.0,
     'ctl_cap': 20, 'ctl_rate': 10.0, 'pose_cap': 30, 'pose_rate': 30.0, 'point_cap': 12, 'point_rate': 12.0, 'react_s': 2.0,
     'flood_s': 10.0, 'slow1': 32 << 10, 'slow2': 128 << 10, 'slow3': 512 << 10, 'slow_s': 5.0, 'hard': 2 << 20,
-    'max_seats': 60, 'aud': 'center', 'kid': None,
+    'max_seats': 60, 'aud': 'center', 'kid': None, 'poll_s': 10.0,
 }
 SESS_DEF = {'chat': 'off', 'mode': 'seat', 'maxSeats': 60, 'pointers': True}
 
@@ -77,11 +77,12 @@ class Session:
 class Core:
     """Все сессии одного hub. reporter(dict) → dict|None (ответ app.py: closed/banned/settings) — §4.6."""
 
-    def __init__(self, keys, limits=None, reporter=None, clock=time.monotonic, wall=time.time):
+    def __init__(self, keys, limits=None, reporter=None, clock=time.monotonic, wall=time.time, poller=None):
         self.K = keys
         self.L = dict(DEF)
         self.L.update(limits or {})
-        self.reporter, self.clock, self.wall = reporter, clock, wall
+        self.reporter, self.clock, self.wall, self.poller = reporter, clock, wall, poller
+        self.last_poll = clock()
         self.sessions, self.closed, self.used, self.live, self.resumes = {}, {}, {}, {}, {}
         self.t0 = clock()
         self.last_rep = self.t0
@@ -397,6 +398,14 @@ class Core:
         HT.prune_used(self.used, int(self.wall()))
         for sid in [k for k, t in self.closed.items() if now - t > 86400]:
             del self.closed[sid]
+        if self.poller and self.sessions and now - self.last_poll >= L['poll_s']:   # запасной путь узнать о закрытии из кабинета (§4.6)
+            self.last_poll = now
+            try:
+                resp = self.poller()
+            except Exception:
+                resp = None
+            if isinstance(resp, dict):
+                self.apply(resp)
         if now - self.last_rep >= L['report_s']:
             self.last_rep = now
             for sess in list(self.sessions.values()):

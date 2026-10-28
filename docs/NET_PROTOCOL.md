@@ -63,3 +63,22 @@ Hub → клиент сам: `away {slot, on}` (нет поз > 3 с или об
 
 ### Отчёт hub → app.py (шаг Н4)
 Раз в 60 с, при закрытии и когда сессия опустела: `{sid, attend:[{uid,role,first,last,joins}], chat:[], kicked:[uid], final?, ended?}`, подпись `sign_report(k_report, тело)`. Ответ app.py: `{closed:[sid], banned:{sid:[uid]}, settings:{sid:{chat,mode,maxSeats,pointers}}}` — hub закрывает сессии (4011), удаляет (4012), рассылает `sess`. Позы, координаты и ходы в отчёт не идут.
+
+## HTTP-интерфейс сервера (шаг Н4, `server/netapi.py`, всё под `config.json` → `net: true`, иначе 404)
+Ответы — после фиксации транзакции. Секреты (`hubSecret`) только в `config.json` (0600); `python3 server/app.py hub-secret` создаёт (`--rotate` — заменяет), `net on|off` включает (без секрета не включится). Таблицы миграции v7: `room_sessions`, `room_attend`, `net_chat` (уникально по сессия+ts+uid), `broadcasts`, `hub_nodes` (последние две пока пусты).
+
+| Запрос | Кто | Что |
+|---|---|---|
+| `POST /api/admin/session.open {class_id, room?, settings?}` | учитель этого класса, директор школы, выше (`class_in_scope`) | один открытый `lesson` на класс (409); при `settings.remote` — ответ содержит `code` (один раз, в базе хэш) |
+| `session.close / settings / kick / unkick {id, …}`, `session.list {class_id?}`, `session.chat {id}` | те же | закрытие не удаляет; `kick` добавляет `uid` ученика в `banned` (≤ 200); `chat` пишет просмотр в журнал. Эксперт — 403, чужая школа/класс — 404 |
+| `GET /api/session/live` (ключ шлема) | шлем школы | открытые сессии школы: `id, class_id, kind, room, created` |
+| `POST /api/room/ticket {session_id, student_id, pin_hash}` (ключ шлема) | шлем | сервер сверяет: ученик активен, школа и класс, `pinHash` (`compare_digest`), не в `banned`; ученик без кода — только если `settings.noPin`; пауза по ученику после 5 ошибок (30 с, растёт вдвое до 15 мин — как у входа), общего лимита по IP нет (класс входит пачкой), лимит шлема 120 билетов/мин. На любую причину отказа — одинаковый 403 `denied` |
+| `POST /api/room/ticket {session_id}` (Bearer) | учитель класса → `t`; директор и выше, эксперт школы → `a`; остальные 403 | uid в билете `u:<id пользователя>` |
+| `POST /api/room/ticket {code, student_id, pin_hash}` | удалённый ученик | только `settings.remote`; 10 запросов/мин и пауза после ошибок по IP |
+| `POST /api/play/join {class_id, student_id, pin_hash}` (ключ шлема) | шлем | класс должен иметь `playAllowed: true`; находит или открывает единственную `play`-сессию класса (чат `phrases`) и выдаёт билет. Окно времени школы — шаг Н12 |
+| `POST /api/hub/report` | hub | тело ≤ 64 КБ, заголовок `X-Sig = HMAC-SHA256(k_report, тело)`; идемпотентно (`first` — min, `last` — max, `joins` — max; чат по сессия+ts+uid); `kicked` → `banned`; ответ `{closed, banned, settings}` |
+| `GET /api/hub/sessions` | hub | `X-Ts` (мс, ±60 с) и `X-Sig = HMAC(k_report, 'sessions:' + ts)`; открытые и закрытые за сутки |
+Билет: `{aud: hubId||'center', sid, k, sch, cls, uid, r, n, exp, j}` (+`kid`, если задан `hubKid`); ответ `{ticket, exp, role, hubs:[{url, kind:'center'}], sess:{id, kind, room, chat, mode}}` — `url` берётся из `hubUrl` в `config.json` и приходит только с сервера (А14).
+В журнал аудита: `session.open/close/settings/kick/unkick/ticket`, `session.chat.view`, `play.open`, `config.net`, `config.hubSecret` (без значения); отчёты hub пишутся как `cli` / `hub:center`.
+
+Запуск hub против app.py: `python3 server/hub.py --config /data/config.json` (нужны `hubSecret`, `hubOrigins`; `hubAppUrl` — адрес app.py, по умолчанию отчёты пишутся только если задан `--report-file`). Раз в 60 с — отчёт, раз в 10 с — опрос закрытых сессий (`--report_s`, `--poll_s` для тестов).
