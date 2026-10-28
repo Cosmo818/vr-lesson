@@ -189,6 +189,9 @@ try:
     st, b = adm('tA1', 'student.device.code', {'student_id': 'st1'})
     ok(st == 400 and 'предел' in b['error'], 'код при трёх активных устройствах не выдаётся (лимит 3)')
     ok(adm('tSub', 'student.device.revoke', {'id': 'sd-aaaaaaaaaaaa'})[0] == 403 and adm('tA2', 'student.device.revoke', {'id': 'sd-aaaaaaaaaaaa'})[0] == 403, 'отвязать устройство: предметник и чужой учитель → 403')
+    ok(dbq("select status from student_devices where id = 'sd-aaaaaaaaaaaa'")[0][0] == 'active' and dbq('select count(*) from student_pair_codes where created_by = ?', UID['tSub'])[0][0] == 0
+       and dbq("select count(*) from audit_log where action = 'admin.denied' and actor_id = ?", UID['tSub'])[0][0] >= 2,
+       'предметник: после отказов устройство осталось активным, кодов привязки от его имени в базе нет')
     ok(adm('tA1', 'student.device.revoke', {'id': 'sd-aaaaaaaaaaaa'})[0] == 200 and dbq("select status, revoked_by from student_devices where id = 'sd-aaaaaaaaaaaa'")[0] == ('revoked', UID['tA1']), 'владелец класса отвязывает устройство')
     st, b = pair(codeB)
     key3 = b.get('key', '')

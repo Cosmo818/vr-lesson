@@ -931,6 +931,20 @@ def studev_module():
     return _STUDEV['m']
 
 
+_EINRANK = {}
+
+
+def einrank_module():
+    """Зачётные решения и рейтинг «Эйнштейна» (server/einrank.py) — загрузка по пути рядом с app.py, как studev."""
+    if 'm' not in _EINRANK:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('vr_einrank', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'einrank.py'))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _EINRANK['m'] = m
+    return _EINRANK['m']
+
+
 def load_config():
     """/data/config.json: accounts (по умолчанию false — новые эндпоинты отвечают 404), legacyTeacher (true), sessionMinutes (15). Читается на каждый запрос: выключатель действует без перезапуска.
     Это НЕ settings.flags: те синхронизируются и меняются ключом teacher, а флаг безопасности старым ключом включаться не должен."""
@@ -1453,6 +1467,8 @@ def admin_action(c, p, act, b, ip):
         return net_module().admin(sys.modules[__name__], c, p, act, b, ip)
     if act.startswith('student.device.'):
         return studev_module().admin(sys.modules[__name__], c, p, act, b, ip)
+    if act.startswith('ein.'):
+        return einrank_module().admin(sys.modules[__name__], c, p, act, b, ip)
     who = ('user', p['id'], ip)
     now = int(time.time() * 1000)
     rank = my_rank(p)
@@ -1816,7 +1832,12 @@ def admin_action(c, p, act, b, ip):
             sd = load_doc(raw) or {}
             sd['school'], sd['updated'] = sch, now
             c.execute('UPDATE students SET school = ?, doc = ?, updated = ? WHERE id = ?', (sch, json.dumps(sd, ensure_ascii=False), now, sid))
+            if c.execute("SELECT 1 FROM ein_stats WHERE pk = 's' AND pid = ?", (sid,)).fetchone():
+                einrank_module().restat(c, 's', sid)   # рейтинг идёт за учеником вместе с классом
             moved += 1
+        if src[0] != sch:
+            einrank_module().drop_cache(c, src[0])
+            einrank_module().drop_cache(c, sch)
         audit(c, who, 'class.move', 'class', cid, sch, {'from': src[0], 'to': sch, 'students': moved})
         return {'ok': True, 'students': moved}
     if act in ('student.move', 'student.pin'):
@@ -1840,12 +1861,19 @@ def admin_action(c, p, act, b, ip):
             audit(c, who, 'admin.denied', 'class', S('class_id', 60), None, {'why': 'scope', 'action': act})
             raise AdminError(403, 'Нельзя перенести в этот класс.')
         old_cl = d.get('classId')
+        old_sch = d.get('school')
         if d.get('school') != ncl[0]:
             studev_module().revoke_all(c, S('student_id', 60), now, p['id'])  # другая школа: устройства отозваны, сеансы удалены
         d['classId'] = S('class_id', 60)
         d['school'] = ncl[0]
         d['updated'] = now
         c.execute('UPDATE students SET doc = ?, updated = ?, school = ? WHERE id = ?', (json.dumps(d, ensure_ascii=False), now, ncl[0], S('student_id', 60)))
+        if old_sch != ncl[0]:
+            E = einrank_module()  # рейтинг идёт за учеником: строка ein_stats (если она есть) получает новую школу, кэш обеих школ сбрасывается
+            if c.execute("SELECT 1 FROM ein_stats WHERE pk = 's' AND pid = ?", (S('student_id', 60),)).fetchone():
+                E.restat(c, 's', S('student_id', 60))
+            E.drop_cache(c, old_sch)
+            E.drop_cache(c, ncl[0])
         audit(c, who, 'student.move', 'student', S('student_id', 60), ncl[0], {'from': old_cl, 'to': S('class_id', 60)})
         return {'ok': True}
     if act in ('student.archive', 'student.restore'):
@@ -1863,6 +1891,8 @@ def admin_action(c, p, act, b, ip):
             d['status'], d['updated'] = want, max(now, num(d.get('updated')) + 1)
             c.execute('UPDATE students SET status = ?, updated = ?, doc = ? WHERE id = ?', (want, d['updated'], json.dumps(d, ensure_ascii=False), sid))
             audit(c, who, act, 'student', sid, d.get('school') if ok_school(d.get('school')) else None, {'via': 'admin'})
+        if d.get('school'):
+            einrank_module().drop_cache(c, d.get('school'))  # в архиве ученика нет в рейтинге, после возврата есть: кэш школы сбрасывается в обе стороны
         if want == 'archived':
             studev_module().drop_sessions(c, sid)  # устройства остаются привязанными (не работают, пока ученик в архиве); старые сеансы после возврата не оживают
         if want == 'active' and d.get('classId'):
@@ -2031,8 +2061,12 @@ def purge_info(c, kind, oid):
 
 
 def purge_student_counts(c, sid):
-    return {'results': c.execute('SELECT COUNT(*) FROM results WHERE sid = ?', (sid,)).fetchone()[0], 'disc': c.execute('SELECT COUNT(*) FROM disc WHERE sid = ?', (sid,)).fetchone()[0],
-            'feedback_anonymized': c.execute("SELECT COUNT(*) FROM feedback WHERE json_extract(doc, '$.sid') = ?", (sid,)).fetchone()[0]}
+    out = {'results': c.execute('SELECT COUNT(*) FROM results WHERE sid = ?', (sid,)).fetchone()[0], 'disc': c.execute('SELECT COUNT(*) FROM disc WHERE sid = ?', (sid,)).fetchone()[0],
+           'feedback_anonymized': c.execute("SELECT COUNT(*) FROM feedback WHERE json_extract(doc, '$.sid') = ?", (sid,)).fetchone()[0]}
+    ein = studev_module().ein_count(c, sid) if c.execute("SELECT 1 FROM sqlite_master WHERE name = 'ein_stats'").fetchone() else 0
+    if ein:
+        out['ein'] = ein   # строки «Эйнштейна» (выданные + решения + сводка); ключ есть только когда они есть
+    return out
 
 
 def purge_plan(c, b, now, hold_days):
@@ -2143,7 +2177,13 @@ def purge_erase_student(c, sid, now):
         d = load_doc(raw) or {}
         d.pop('sid', None)
         c.execute('UPDATE trash SET doc = ? WHERE kind = ? AND id = ?', (json.dumps(d, ensure_ascii=False), tk, tid))
-    studev_module().erase_student(c, sid)  # устройства, сеансы, коды привязки и «Эйнштейн» ученика
+    S_ = studev_module()
+    ein = S_.ein_count(c, sid)
+    sch_ = (c.execute('SELECT school FROM students WHERE id = ?', (sid,)).fetchone() or [None])[0]
+    S_.erase_student(c, sid)  # устройства, сеансы, коды привязки и «Эйнштейн» ученика
+    if ein:
+        out['ein'] = ein
+        einrank_module().drop_cache(c, sch_)
     c.execute('DELETE FROM students WHERE id = ?', (sid,))
     purge_hard(c, sid, 'student', now)
     c.execute("DELETE FROM purge_marks WHERE kind = 'student' AND id = ?", (sid,))
@@ -3045,6 +3085,26 @@ class H(BaseHTTPRequestHandler):
                 out = S.me(A, c, sp) if sp else (401, {'error': 'no session'})
         return self.reply(*out)
 
+    def ein_api(self):
+        """Зачётные решения и рейтинг «Эйнштейна» (config accounts=true и einRating=true, иначе 404): /api/ein/seed, solve, top, places — все POST, тело ≤ 2 КБ. Логика — server/einrank.py.
+        Кто пришёл — Bearer учётки, X-Student+X-Stoken (сеанс ученика) или X-Key шлема + student_id + pin_hash. Ответ уходит после выхода из `with db()`; ключи и токены в журнал не попадают."""
+        cfg = load_config()
+        route = self.path.split('?')[0]
+        if not cfg['accounts'] or not cfg['einRating'] or route not in ('/api/ein/seed', '/api/ein/solve', '/api/ein/top', '/api/ein/places'):
+            return self.reply(404, {'error': 'not found'})
+        n = num(self.headers.get('Content-Length'))
+        if n <= 0 or n > 2048:
+            return self.reply(413, {'error': 'body size'})
+        try:
+            body = json.loads(self.rfile.read(n).decode('utf-8'))
+            if not isinstance(body, dict):
+                raise ValueError
+        except ValueError:
+            return self.reply(400, {'error': 'bad json'})
+        with lock, db() as c:
+            out = einrank_module().handle(sys.modules[__name__], c, self.headers, route, body, client_ip(self), int(time.time() * 1000))
+        return self.reply(*out)
+
     def net_api(self, method):
         """Сеть живых уроков (config net=true, иначе 404): билеты входа, живые сессии школы, игровая, отчёты hub. Логика — server/netapi.py.
         Ответ уходит после выхода из `with db()` (транзакция уже зафиксирована). Тело: билеты ≤ 1 КБ, отчёт ≤ 64 КБ."""
@@ -3339,6 +3399,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply(404, {'error': 'not found'})
         if self.path.startswith('/api/admin/student.device.') and not cfg['studentDevices']:
             return self.reply(404, {'error': 'not found'})
+        if self.path.startswith('/api/admin/ein.') and not cfg['einRating']:
+            return self.reply(404, {'error': 'not found'})
         n = num(self.headers.get('Content-Length'))
         if n <= 0 or n > (70000 if self.path.endswith('/room.publish') else 8192 if self.path.split('?')[0].endswith('/purge') else 4096):
             return self.reply(413, {'error': 'body size'})
@@ -3456,6 +3518,8 @@ class H(BaseHTTPRequestHandler):
             return self.student_api('POST')
         if self.path.startswith('/api/auth/'):
             return self.auth_api('POST')
+        if self.path.startswith('/api/ein/'):
+            return self.ein_api()
         if self.path.startswith('/api/room/') or self.path.startswith('/api/play/') or self.path.startswith('/api/hub/'):
             return self.net_api('POST')
         if self.path.startswith('/api/admin/'):

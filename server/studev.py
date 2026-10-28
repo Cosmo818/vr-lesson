@@ -45,7 +45,10 @@ def migrate_v9(A, c):
             expires INTEGER)''')
         c.execute('CREATE INDEX IF NOT EXISTS student_sessions_dev ON student_sessions(device_id)')
         c.execute('''CREATE TABLE IF NOT EXISTS ein_issued(pk TEXT NOT NULL DEFAULT 's', pid TEXT NOT NULL, seed INTEGER NOT NULL, issued INTEGER NOT NULL, src TEXT,
-            PRIMARY KEY(pk, pid, seed))''')
+            status TEXT NOT NULL DEFAULT 'active', PRIMARY KEY(pk, pid, seed))''')
+        if 'status' not in [x[1] for x in c.execute('PRAGMA table_info(ein_issued)')]:   # база с прежним видом таблицы (без статуса): строки остаются действующими
+            c.execute("ALTER TABLE ein_issued ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+        c.execute('CREATE INDEX IF NOT EXISTS ein_issued_act ON ein_issued(pk, pid, status)')
         c.execute('''CREATE TABLE IF NOT EXISTS ein_solves(pk TEXT NOT NULL DEFAULT 's', pid TEXT NOT NULL, seed INTEGER NOT NULL, school TEXT NOT NULL, t INTEGER NOT NULL,
             moves INTEGER NOT NULL DEFAULT 0, helped INTEGER NOT NULL DEFAULT 0, void INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL, src TEXT, PRIMARY KEY(pk, pid, seed))''')
         c.execute('''CREATE TABLE IF NOT EXISTS ein_stats(pk TEXT NOT NULL DEFAULT 's', pid TEXT NOT NULL, school TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
@@ -58,6 +61,11 @@ def migrate_v9(A, c):
         if c.in_transaction:
             c.execute('ROLLBACK')
         raise
+
+
+def ein_count(c, sid):
+    """Сколько строк «Эйнштейна» у ученика (выданные, решения, сводка) — для счётчиков предпросмотра и журнала стирания."""
+    return sum(c.execute('SELECT count(*) FROM %s WHERE pk = ? AND pid = ?' % t, ('s', sid)).fetchone()[0] for t in ('ein_issued', 'ein_solves', 'ein_stats'))
 
 
 def erase_student(c, sid):

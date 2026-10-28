@@ -285,7 +285,8 @@ const Store=VR.Store={
       key=String(key||'').replace(/[\u200B-\u200D\uFEFF\u00A0]/g,'').trim();
       const m=/"(?:teacher|device)"\s*:\s*"([^"]+)"/.exec(key);if(m)key=m[1];
       key=key.replace(/^[\s"'`,{}:]+|[\s"'`,{}]+$/g,'');
-      localStorage.setItem(SKEY,JSON.stringify({url,key}));}catch(e){}
+      localStorage.setItem(SKEY,JSON.stringify({url,key}));
+      if(key)Store._stuForget();}catch(e){}   /* ключ школы = школьный шлем: привязка личного устройства ученика (vrlesson.student) и токен сеанса здесь не живут */
   },
   /* вход по учётной записи (шаг 9): токен только в sessionStorage — закрыл вкладку, и сессии на устройстве нет */
   account:{
@@ -372,12 +373,15 @@ const Store=VR.Store={
   },
   admin(act,body){return Store.call('POST','/api/admin/'+encodeURIComponent(act),body||{});},
   /* живые уроки (сеть, PLAN-network.md §5.4): все запросы к серверу — только здесь (закон А2); js/net.js держит само соединение и fetch не делает.
-     auth: 'dev' — ключ шлема (X-Key), 'user' — токен учётной записи, 'none' — без входа (удалённый ученик по коду урока) */
+     auth: 'dev' — ключ шлема (X-Key), 'user' — токен учётной записи, 'none' — без входа (удалённый ученик по коду урока),
+           'stu' — личное устройство ученика: X-Student (ключ устройства) + X-Stoken (токен сеанса после входа по коду),
+           'stukey' — только X-Student, без токена (вход, отвязка: токена ещё нет или он не нужен) */
   async netCall(method,path,body,auth){
     const base=Store.base();if(!base)return{status:0,data:{error:'Сервер не указан. Откройте страницу с вашего сервера.'}};
     const sv=Store.server(),h={};if(body!==undefined)h['Content-Type']='application/json';
     if(auth==='dev'&&sv&&sv.key)h['X-Key']=sv.key;
     else if(auth==='user'){const t=Store.account.token();if(t)h.Authorization='Bearer '+t;}
+    else if(auth==='stu'||auth==='stukey'){const o=Store._stuRec();if(o)h['X-Student']=o.key;const t=auth==='stu'?Store._stuTok():'';if(t)h['X-Stoken']=t;}  /* ученик: ключ устройства (+ сеанс) */
     try{
       const ctl=typeof AbortController!=='undefined'?new AbortController():null;const tm=setTimeout(()=>ctl&&ctl.abort(),15000);
       const r=await fetch(base+path,{method,headers:h,body:body===undefined?undefined:JSON.stringify(body),signal:ctl?ctl.signal:undefined});clearTimeout(tm);
@@ -419,6 +423,53 @@ const Store=VR.Store={
     if(!r.ok||!d.key)return{ok:false,msg:d.error||'Код не подходит.'};
     Store.setServer(url,d.key);return{ok:true,school:d.school};
   },
+  /* привязка личного устройства к ученику (PLAN-einstein.md Э2): ключ устройства — localStorage['vrlesson.student'], токен сеанса — sessionStorage['vrl.stoken'].
+     На школьном шлеме (есть ключ школы) привязка запрещена. Код ученика не хранится, на сервер уходит только хэш (как pinHash). */
+  _stuRec(){try{const o=JSON.parse(localStorage.getItem('vrlesson.student')||'null');return o&&typeof o.key==='string'&&o.key.length>=16&&o.key.length<=80&&typeof o.sid==='string'?o:null;}catch(e){return null;}},
+  _stuTok(){try{return sessionStorage.getItem('vrl.stoken')||'';}catch(e){return '';}},
+  _stuForget(){try{localStorage.removeItem('vrlesson.student');sessionStorage.removeItem('vrl.stoken');}catch(e){}},
+  studentPair(code,name){
+    const sv=Store.server();if(sv&&sv.key)return Promise.resolve({status:0,data:{error:'На школьном шлеме привязка не нужна: ученик входит со своим кодом.'}});
+    code=String(code||'').trim();if(!code)return Promise.resolve({status:0,data:{error:'Введите код привязки.'}});
+    return Store.netCall('POST','/api/student/pair',{code,name:String(name||'').slice(0,40)},'none').then(r=>{
+      const d=r.data||{},s=d.student;
+      if(r.status===200&&typeof d.key==='string'&&d.key.length>=16&&d.key.length<=80&&s&&typeof s.id==='string'){
+        try{localStorage.setItem('vrlesson.student',JSON.stringify({key:d.key,sid:s.id,name:String(s.name||'').slice(0,40),grade:+s.grade||0,cls:String(s.cls||'').slice(0,20),schoolName:String(s.schoolName||'').slice(0,80)}));sessionStorage.removeItem('vrl.stoken');}catch(e){}
+        return{status:200,data:{student:Store.studentSelf()}};
+      }
+      return{status:r.status,data:{error:d.error==='denied'?'Код не подходит или устарел.':(d.error||'Не удалось привязать.'),retry:d.retry}};
+    });
+  },
+  studentSelf(){const o=Store._stuRec();if(!o)return null;return{sid:o.sid,name:String(o.name||'').slice(0,40),grade:+o.grade||0,cls:String(o.cls||'').slice(0,20),schoolName:String(o.schoolName||'').slice(0,80)};},
+  async studentLogin(pin){
+    const o=Store._stuRec();if(!o)return{status:0,data:{error:'Устройство не привязано.'}};
+    const ph=await Store.pinHash(o.sid,String(pin||'').trim());
+    const r=await Store.netCall('POST','/api/student/login',{pin_hash:ph},'stukey');
+    if(r.status===200&&r.data&&typeof r.data.token==='string'){try{sessionStorage.setItem('vrl.stoken',r.data.token);}catch(e){}return{status:200,data:{ok:true}};}
+    if(r.status===401)Store._stuForget();
+    return{status:r.status,data:{error:r.status===403?'Неверный код.':r.status===429?'Слишком много попыток. Подождите.':(r.data&&r.data.error)||'Не удалось войти.',retry:r.data&&r.data.retry}};
+  },
+  async studentLogout(){
+    if(Store._stuTok())await Store.netCall('POST','/api/student/logout',undefined,'stu');
+    try{sessionStorage.removeItem('vrl.stoken');}catch(e){}
+  },
+  async studentMe(){
+    const r=await Store.netCall('GET','/api/student/me',undefined,'stu');
+    if(r.status===401){try{sessionStorage.removeItem('vrl.stoken');}catch(e){}  /* сервер одинаково отвечает на «сеанс кончился» и «ключ отозван»: токен сбрасываем, ключ стирает следующий вход (login → 401) */
+      r.data=Object.assign({},r.data,{relogin:true});}
+    return r;
+  },
+  async studentUnpair(pin){
+    const o=Store._stuRec();if(!o)return{status:0,data:{error:'Устройство не привязано.'}};
+    const ph=await Store.pinHash(o.sid,String(pin||'').trim());
+    const r=await Store.netCall('POST','/api/student/unpair',{pin_hash:ph},'stukey');
+    if(r.status===200||r.status===401||r.status===0)Store._stuForget();  /* без связи локальная запись стирается всё равно */
+    if(r.status===0)r.data=Object.assign({},r.data,{offline:true,hint:'Устройство на этом экране отвязано, но на сервере привязка осталась: попросите учителя отвязать его.'});  /* признак «сервер не узнал»: показать подсказку */
+    return r;
+  },
+  studentDevices(sid){return Store.admin('student.device.list',{student_id:sid});},
+  studentDeviceCode(sid){return Store.admin('student.device.code',{student_id:sid});},
+  studentDeviceRevoke(id){return Store.admin('student.device.revoke',{id});},
   /* файл ресурса (модель, звук): только из папки assets/ этого же сайта, с ограничением размера (Б51) */
   async getAsset(url,max){
     const up=/^up:([0-9a-f]{12})$/.exec(String(url));

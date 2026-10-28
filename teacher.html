@@ -555,7 +555,7 @@ function renderStudents(){
    ${addOpen?`<div class="card" style="background:#0e1730"><b>Список учеников</b> <span class="muted small">— по одному в строке: «Фамилия Имя». Пароли создадутся сами, пол определится по имени (в таблице его можно поправить).</span><div class="row"><textarea id="bulk" placeholder="Иванов Пётр&#10;Смирнова Анна" style="min-height:120px;font-family:inherit;font-size:15px"></textarea></div><div class="row"><button class="btn" id="bulkAdd">Добавить и выдать пароли</button><button class="btn ghost" id="addCancel">Отмена</button></div></div>`:''}
    ${shareOpen?`<div class="card" style="background:#0e1730"><b>Ссылка для класса ${esc(clsName(k))}</b> <span class="muted small">— отправьте её ученикам или родителям: класс уже выбран, останется найти себя в списке и ввести пароль.</span><div class="row"><input id="shareUrl" readonly value="${esc(new URL('index.html?class='+k.id,location.href).href)}" style="width:100%"></div><div class="row"><button class="btn" id="shareCopy">Скопировать ссылку</button><button class="btn ghost" id="shareClose">Закрыть</button></div></div>`:''}`:''}
    ${Object.keys(newCodes).length?`<div class="card" id="codes" style="background:#0e1730"><b>Новые коды входа — раздайте ученикам.</b> Позже их можно посмотреть кнопкой 👁 в таблице; список для раздачи — кнопка «Печать кодов».<div id="codesList">${Object.keys(newCodes).map(id=>{const s=S.student(id);return s?`<div class="row" style="margin:4px 0"><span style="min-width:220px">${esc(s.name)}</span><b style="font-size:20px;letter-spacing:3px">${newCodes[id]}</b></div>`:'';}).join('')}</div></div>`:''}
-   <div class="scroll"><table><tr><th title="Номер в классе — логин ученика при входе">№ (логин)</th><th>Фамилия и имя</th><th>Пол</th><th>Активность</th><th>Класс</th><th>Пароль</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><b>${S.numOf(s)}</b></td><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="gn">${genOpts(s.gender)}</select></td><td class="small">${ago(S.lastActive(s.id))}</td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${codeCell(s)} <button class="btn ghost pin">Новый пароль</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> <button class="btn red del">В архив</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
+   <div class="scroll"><table><tr><th title="Номер в классе — логин ученика при входе">№ (логин)</th><th>Фамилия и имя</th><th>Пол</th><th>Активность</th><th>Класс</th><th>Пароль</th><th>Баллы</th><th></th></tr>${L.map(s=>`<tr data-id="${s.id}"><td><b>${S.numOf(s)}</b></td><td><input class="nm" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td><select class="gn">${genOpts(s.gender)}</select></td><td class="small">${ago(S.lastActive(s.id))}</td><td><select class="cl">${clsOpts(s.classId)}</select></td><td>${codeCell(s)} <button class="btn ghost pin">Новый пароль</button></td><td>${S.points(s.id).total}</td><td style="white-space:nowrap"><button class="btn sv">Сохранить</button> ${S.account.token()?'<button class="btn ghost dev" title="Личные устройства ученика">Устройства</button> ':''}<button class="btn red del">В архив</button></td></tr>`).join('')||'<tr><td class="muted">В классе пока нет учеников.</td></tr>'}</table></div></div>`;
   if(bulkWas&&$('bulk'))$('bulk').value=bulkWas; // перерисовка не стирает недописанный список
   if(k&&S.account.token())subPanel(k);
   renderClassRank();
@@ -564,7 +564,7 @@ function renderStudents(){
 function subCard(k,L,st){
   return `<div class="card"><h2 style="margin:0">${esc(clsName(k))} <span class="muted small">· учеников: ${L.length}${st&&st.rating!=null?' · рейтинг '+st.rating.toFixed(1):''}</span></h2>
    <p class="muted small">Вы ведёте уроки в этом классе (учитель-предметник): видны ученики и их результаты. Имена, пароли и состав класса меняет классный руководитель.</p>
-   <div class="scroll"><table><tr><th>№ (логин)</th><th>Фамилия и имя</th><th>Активность</th><th>Баллы</th><th>Сдано предметов</th></tr>${L.map(s=>{const p=S.points(s.id);return `<tr><td><b>${S.numOf(s)}</b></td><td>${esc(s.name)}</td><td class="small">${ago(S.lastActive(s.id))}</td><td>${p.total}</td><td>${p.passed}</td></tr>`;}).join('')}</table></div></div>`;
+   <div class="scroll"><table><tr><th>№ (логин)</th><th>Фамилия и имя</th><th>Активность</th><th>Баллы</th><th>Сдано предметов</th><th></th></tr>${L.map(s=>{const p=S.points(s.id);return `<tr data-id="${s.id}"><td><b>${S.numOf(s)}</b></td><td>${esc(s.name)}</td><td class="small">${ago(S.lastActive(s.id))}</td><td>${p.total}</td><td>${p.passed}</td><td>${S.account.token()?'<button class="btn ghost dev">Устройства</button>':''}</td></tr>`;}).join('')}</table></div></div>`;
 }
 /* владелец класса или директор: кто ещё ведёт уроки в классе (предметники) — назначить и снять */
 async function subPanel(k){
@@ -584,6 +584,37 @@ function renderClassRank(){
   const R=S.classStats().rows;
   $('cRank').innerHTML=R.length?'<tr><th>#</th><th>Класс</th><th>Рейтинг</th><th>Средний балл</th><th>Активных</th><th>Верных ответов</th></tr>'+R.map((r,i)=>`<tr><td>${r.rating!=null?i+1:'—'}</td><td><b>${clsName(r.c.id?r.c:null)}</b></td><td><b>${r.rating!=null?r.rating.toFixed(1):'—'}</b></td><td>${r.active?r.mean.toFixed(1):'—'}</td><td>${r.active} из ${r.n}</td><td>${r.acc!=null?Math.round(r.acc*100)+'%':'—'}</td></tr>`).join(''):'<tr><td class="muted">Классов пока нет.</td></tr>';
 }
+/* «Устройства» ученика (Э2): окно с кодом привязки (показ один раз), списком устройств и «Отвязать»; предметнику — только список. Всё выводится через textContent */
+function openDevices(stu,ro){
+  const old=document.getElementById('devWin');if(old)old.remove();
+  const ov=document.createElement('div');ov.id='devWin';ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:flex;align-items:center;justify-content:center;padding:12px';
+  const bx=document.createElement('div');bx.className='card';bx.style.cssText='max-width:560px;width:100%;max-height:90vh;overflow:auto;background:#0e1730';ov.appendChild(bx);
+  const mk=(tag,txt,css)=>{const n=document.createElement(tag);if(txt!=null)n.textContent=txt;if(css)n.className=css;return n;};
+  const close=mk('button','Закрыть','btn ghost');close.id='devClose';close.onclick=()=>ov.remove();
+  const hd=mk('h2',null);hd.style.margin='0 0 8px';hd.textContent='Устройства: '+stu.name;
+  const codeBox=mk('div',null);codeBox.id='devCode';const msg=mk('div',null,'warn small');msg.id='devMsg';const list=mk('div',null);list.id='devList';
+  bx.append(hd,codeBox,msg,list,close);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);
+  const fmt=ts=>ts?new Date(ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+  const err=r=>(r.data&&r.data.error)||(r.status===0?'Нет связи с сервером.':'Ошибка '+r.status);
+  async function paint(){
+    const r=await S.studentDevices(stu.id);list.textContent='';
+    if(r.status!==200){msg.textContent=r.status===404?'Нужен вход на сервер учётной записью.':err(r);return;}
+    const it=(r.data.items||[]).filter(x=>x.status==='active');
+    if(!ro){const gb=mk('button','Выдать код привязки','btn');gb.id='devGive';gb.disabled=it.length>=(r.data.limit||3);
+      gb.onclick=async()=>{msg.textContent='';const g=await S.studentDeviceCode(stu.id);codeBox.textContent='';
+        if(g.status!==200){msg.textContent=err(g);return;}
+        const big=mk('b',g.data.code);big.id='devCodeVal';big.style.cssText='font-size:28px;letter-spacing:4px';
+        codeBox.append(mk('div','Код привязки (виден один раз, сохранить его нельзя):','small muted'),big,mk('div','действует до '+new Date(g.data.expires).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}),'small'));paint();};
+      list.appendChild(gb);if(gb.disabled)list.appendChild(mk('div','Достигнут предел устройств ('+(r.data.limit||3)+'): отвяжите старое.','small warn'));}
+    if(!it.length)list.appendChild(mk('div','Привязанных устройств нет.','muted small'));
+    for(const d of it){const row=mk('div',null,'row');row.style.margin='4px 0';row.dataset.dev=d.id;
+      row.appendChild(mk('span',(d.name||'Устройство')+' · привязано '+fmt(d.created)+' · был '+fmt(d.lastSeen)));
+      if(!ro){const rb=mk('button','Отвязать','btn ghost');rb.onclick=async()=>{if(!confirm('Отвязать устройство «'+(d.name||'Устройство')+'»? Ученик не сможет с него войти, пока не получит новый код.'))return;
+        const x=await S.studentDeviceRevoke(d.id);msg.textContent=x.status===200?'':err(x);paint();};row.appendChild(rb);}
+      list.appendChild(row);}
+  }
+  paint();
+}
 $('cCard').onclick=async e=>{
   const t=e.target;
   if(t.id==='cDel'){const k=S.klass(curClass);if(k&&confirm(`Перенести класс ${clsName(k)} в архив? Ученики и результаты сохранятся, класс скроется из списков.`)){S.archiveClass(k.id);curClass=null;renderStudents();}return;}
@@ -598,6 +629,7 @@ $('cCard').onclick=async e=>{
   if(t.id==='printAll'){const gs=S.classes().map(c=>({title:clsName(c),list:S.studentsOf(c.id)}));const lo=S.studentsOf(null);if(lo.length)gs.push({title:'Без класса',list:lo});printCodes(gs);return;}
   const tr=t.closest('[data-id]');if(!tr)return;const id=tr.dataset.id,s=S.student(id);if(!s)return;
   if(t.closest('.eye')){if(!t.closest('.eye').disabled){showCode(id,!shown[id]);paintCode(id);}return;}
+  if(t.classList.contains('dev')){openDevices(s,S.isSub(curClass));return;}
   if(t.classList.contains('pin')){newCodes[id]=await S.setStudentPin(id);showCode(id,true);renderStudents();return;}
   if(t.classList.contains('sv')){S.updateStudent(id,{name:tr.querySelector('.nm').value,classId:tr.querySelector('.cl').value||null,gender:tr.querySelector('.gn').value});renderStudents();return;}
   if(t.classList.contains('del')&&confirm(`Перенести ученика «${s.name}» в архив? Результаты сохранятся.`)){S.archiveStudent(id);delete newCodes[id];if(sel===id)sel=null;renderStudents();}
