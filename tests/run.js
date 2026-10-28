@@ -202,8 +202,8 @@ function makeCtx(xr){
   // все панели нарисованы
   run(20);
   ok(E.panels.every(p=>!p.dirty),'все панели холла отрисованы ('+E.panels.length+')');
-  const welcome=E.panels.find(p=>p.btns.length===9);
-  ok(!!welcome,'на приветственной панели 9 кнопок комнат');
+  const welcome=E.panels.find(p=>p.btns.length===12);
+  ok(!!welcome,'на приветственной панели 9 кнопок комнат и 3 кнопки игр');
   // луч из камеры попадает в кнопку «Математика»
   const b0=welcome.btns[0];
   const lx=(b0.x+b0.w/2)/welcome.W-.5,ly=.5-(b0.y+b0.h/2)/welcome.H;
