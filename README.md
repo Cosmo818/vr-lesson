@@ -44,9 +44,9 @@
 
 ### Живые уроки (hub) на VPS
 
-Отдельный контейнер `vr-lesson-hub` (тот же образ и сеть, что у API; код и данные только для чтения), Caddy отдаёт его по `/ws`. Порядок, каждая команда — одна строка на VPS:
-1. `docker exec vr-lesson-api python3 /app/server/app.py hub-secret` — секрет hub (в чат не присылать).
-2. `docker exec vr-lesson-api python3 /app/server/app.py hub-setup vrklass.ru https://cosmo818.github.io` — адрес `wss://vrklass.ru/ws`, разрешённые сайты, адрес API для отчётов.
+Отдельный контейнер `vr-lesson-hub` (тот же образ и сеть, что у API; код и данные только для чтения), Caddy отдаёт его по `/ws`. Порядок, каждая команда — одна строка на VPS (команды сервера — через `deploy/vr-cli.sh`: в `vr-lesson-api` код смонтирован не в `/app`):
+1. `sh /opt/vr-lesson-app/deploy/vr-cli.sh hub-secret` — секрет hub (в чат не присылать).
+2. `sh /opt/vr-lesson-app/deploy/vr-cli.sh hub-setup vrklass.ru https://cosmo818.github.io` — адрес `wss://vrklass.ru/ws`, разрешённые сайты, адрес API для отчётов.
 3. `sh /opt/vr-lesson-app/deploy/hub.sh` — запуск (повторный запуск пересоздаёт контейнер); в конце печатает `/health`.
 4. `docker exec vrklass-web caddy reload --config /etc/caddy/Caddyfile` — Caddy узнаёт `/ws`.
 5. Выдача билетов (`net on`) — только по решению владельца, после пилота.
