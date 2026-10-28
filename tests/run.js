@@ -539,6 +539,12 @@ function makeCtx(xr){
     const g3=X.newGame(a);let last='';for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g3.P.defined(c,r)&&g3.status==='play')last=X.click(g3,c,r,a.sol[r][c],1);
     ok(g3.status==='win'&&last==='win','эйнштейн: верные ходы ведут к победе');
   }
+  { let bad=0,tot=0;for(let sd=1;sd<=40;sd++)for(const r of VR.einstein.generate(sd).rules)if(r.t==='under'){tot++;if(!(r.a[0]<r.b[0]))bad++;}
+    ok(tot>0&&bad===0,'эйнштейн: в вертикальной подсказке сверху фишка верхней строки ('+tot+' подсказок)'); }
+  { const X=VR.einstein;let bad=0;for(let sd=1;sd<=120;sd++){const pz=X.generate(sd),col=(r,v)=>pz.sol[r].indexOf(v);for(const s of pz.rules){
+      if(s.t==='near'&&Math.abs(col(...s.a)-col(...s.b))!==1)bad++;if(s.t==='dir'&&!(col(...s.a)<col(...s.b)))bad++;if(s.t==='under'&&col(...s.a)!==col(...s.b))bad++;
+      if(s.t==='btw'){const a=col(...s.a),b=col(...s.b),m=col(...s.c);if(!(Math.abs(a-m)===1&&Math.abs(b-m)===1&&a!==b))bad++;}if(s.t==='open'&&pz.sol[s.row][s.col]!==s.thing)bad++;}}
+    ok(bad===0,'эйнштейн: все подсказки 120 головоломок верны для решения'); }
   E.goRoom('ein');run(25);
   { const Z=E.S,X=VR.einstein;
     ok(Z.g&&Z.g.status==='play'&&Z.field&&Z.hints&&Z.ctl&&Z.favs,'эйнштейн-комната: четыре панели и приготовленная партия');

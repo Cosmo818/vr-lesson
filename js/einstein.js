@@ -87,7 +87,9 @@ const R={
   },
   under:{
     gen(sol,rn){
-      const c=rn(N),r1=rn(N);let r2;do{r2=rn(N);}while(r2===r1);
+      const c=rn(N);let r1=rn(N),r2;do{r2=rn(N);}while(r2===r1);
+      /* верхняя фишка подсказки — из верхней строки поля (как в оригинале: картинка совпадает с полем) */
+      if(r1>r2){const t=r1;r1=r2;r2=t;}
       return{t:'under',a:[r1,sol[r1][c]],b:[r2,sol[r2][c]]};
     },
     apply(s,P){

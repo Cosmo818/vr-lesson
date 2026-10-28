@@ -71,7 +71,7 @@ function fieldDraw(E,S,c,p){
           const k=e-1,tx=x+8+(k%3)*100,ty=y+16+((k/3)|0)*104;
           if(!P.can(col,r,e))continue;
           const hov=p.area(tx,ty,100,100,h=>applyClick(E,S,h,col,r,e),over||g.status!=='play'||S.phase!=='play');
-          if(hov){c.fillStyle='#334e8a';c.fillRect(tx+2,ty+2,96,96);}
+          if(hov){/* цвет подсветки = что сделает курок: красный — убрать фишку, зелёный — выбрать её */c.fillStyle=S.mode==='pick'?'#166534':'#991b1b';c.fillRect(tx+2,ty+2,96,96);}
           E1.drawTile(c,r,e,tx+2,ty+2,96,hov?'#fde68a':'#cbd5e1');
         }
       }
@@ -136,7 +136,7 @@ function ctlDraw(E,S,c,p){
     if(VR.ROOMS.arena)p.button(X+bw+14,440,bw,64,'В зал',()=>E.goRoom('arena'),{size:26,bg:'#475569'});
     p.text('Головоломка № '+g.pz.seed,X,520,{size:22,color:'#64748b',maxW:W});return;
   }
-  p.button(X,206,W,64,'Курок: '+(S.mode==='pick'?'выбирать фишку':'исключать фишку'),()=>{S.mode=S.mode==='pick'?'excl':'pick';S.ctl.dirty=true;},{size:30,bg:'#334155'});
+  p.button(X,206,W,64,'Курок: '+(S.mode==='pick'?'ВЫБРАТЬ фишку':'УБРАТЬ фишку'),()=>{S.mode=S.mode==='pick'?'excl':'pick';S.ctl.dirty=true;},{size:30,bg:S.mode==='pick'?'#166534':'#991b1b'});
   p.button(X,284,bw,64,'Сначала',()=>start(E,S,0,true),{size:30,bg:'#475569',disabled:!!S.tid});
   p.button(X+bw+14,284,bw,64,'Новая',()=>start(E,S),{size:30,bg:'#b45309',disabled:!!S.tid});
   p.button(X,362,W,64,'Открыть одну клетку (без зачёта)',()=>{if(g.status!=='play'||S.tid)return;S.helped=true;E1.hint(g);S.field.dirty=true;if(g.status==='win')won(E,S);S.ctl.dirty=true;},{size:26,bg:'#1e293b',disabled:g.status!=='play'||!!S.tid});
