@@ -424,7 +424,7 @@ function makeCtx(xr){
     const has=i=>ids().indexOf(i)>=0;
     setG(6);go('hall');
     ok(VR.entryOf('chem')==='chem-hub'&&VR.entryOf('math')==='math'&&has('door-chem-hub')&&!has('door-chem'),'дерево: дверь холла «Химия» ведёт в узел');
-    {const w=E.panels.find(p=>p.btns.length===9),i=VR.openRooms(6).indexOf('chem');w.btns[i].fn();run(4);ok(E.roomId==='chem-hub','дерево: кнопка «Химия» на панели холла ведёт в узел');}
+    {const w=E.panels.find(p=>p.btns.length===12),i=VR.openRooms(6).indexOf('chem');w.btns[i].fn();run(4);ok(E.roomId==='chem-hub','дерево: кнопка «Химия» на панели холла ведёт в узел');}
     VR.flags.set('chemTree',false);go('hall');
     ok(VR.entryOf('chem')==='chem'&&has('door-chem')&&!has('door-chem-hub'),'дерево: флаг chemTree выключен — дверь холла ведёт в химию');
     go('chem');ok(has('door-hall')&&!has('door-chem-hub'),'дерево: флаг выключен — из химии дверь назад в холл');
