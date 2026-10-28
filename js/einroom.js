@@ -16,18 +16,17 @@ function start(E,S,seed,again,begin){
   S.phase=begin===false?'idle':'play';S.showRules=false;
   S.msg='';S.field.dirty=S.hints.dirty=S.ctl.dirty=true;if(S.favs)S.favs.dirty=true;
 }
-const HK=[.7,1,1.35];/* ступени размера подсказок */
+const HK=[.9,1.2,1.5];/* ступени размера подсказок */
 const RULES=[
-  'Поле 6×6: шесть строк A–F, шесть колонок 1–6. В каждой строке свой набор из шести фишек (цифры, буквы, римские цифры, кости, фигуры, знаки).',
-  'В строке каждая фишка стоит ровно один раз. Нужно понять, какая фишка в какой колонке, и открыть все 36 клеток.',
-  'В каждой клетке сначала лежат все шесть фишек своей строки. Лишние убирай (режим «исключать»), верную выбирай (режим «выбирать»).',
-  'Подсказки справа: ↔ фишки в соседних колонках; → первая левее второй (не обязательно рядом); три фишки — средняя стоит между двумя вплотную; две друг под другом — в одной колонке; «открыто» — фишка уже на месте.',
-  'Ошибка (убрал верную или выбрал неверную фишку) — проигрыш. Можно начать ту же головоломку сначала или взять новую.',
-  'Нажми подсказку, чтобы пометить её использованной. Кнопка «Открыть одну клетку» помогает, но партия не идёт в зачёт.',
-  'Понравившуюся головоломку сохрани кнопкой «★ Сохранить» справа: её номер останется на этом устройстве, и её можно сыграть снова.'];
+  'Цель: открыть все карточки поля 6×6. В каждой из шести строк (A–F) свой набор из шести фишек, и каждая стоит в строке один раз.',
+  'В клетке лежат все возможные фишки её строки. Лишнюю убери (режим «исключать»), верную выбери (режим «выбирать») — клетка откроется.',
+  'Подсказки по горизонтали: зелёная стрелка ↔ — фишки в соседних колонках; оранжевая стрелка → — левая стоит левее правой; три фишки — средняя стоит ровно между крайними.',
+  'Подсказки по вертикали: две фишки одна под другой стоят в одной колонке.',
+  'Ошибка — проигрыш: можно начать ту же головоломку сначала или взять новую. Нажми подсказку, чтобы пометить её использованной.',
+  'Кнопка «Открыть одну клетку» помогает, но партия не идёт в зачёт. Понравившуюся головоломку сохрани справа.'];
 function rulesDraw(E,S,c,p){
-  p.text('Правила игры «Эйнштейн»',30,14,{size:50,bold:true,maxW:p.W-60});
-  let y=96;for(const t of RULES){y=p.text('• '+t,30,y,{size:30,color:'#e2e8f0',maxW:p.W-60,lh:38})+16||y+120;}
+  p.text('Правила игры «Эйнштейн»',30,14,{size:58,bold:true,maxW:p.W-60});
+  let y=110;for(const t of RULES){y=p.text('• '+t,30,y,{size:42,color:'#f1f5f9',maxW:p.W-60,lh:52})+20;}
 }
 function applyClick(E,S,h,c,r,e){
   const g=S.g;if(g.status!=='play'||S.phase!=='play')return;
@@ -102,21 +101,23 @@ function hintDraw(E,S,c,p){
   rules.forEach((s,i)=>{const k=E1.showOf(s);if(k==='horiz')horiz.push(i);else if(k==='vert')vert.push(i);});
   const dim=i=>S.used.has(i),col=i=>dim(i)?'#475569':'#e5e7eb';
   const toggle=i=>()=>{if(S.used.has(i))S.used.delete(i);else S.used.add(i);S.hints.dirty=true;};
-  let y=130,cw=sc(360),ch=T+30;const perH=Math.max(1,Math.floor((p.W-30)/cw)),perV=Math.max(1,Math.floor((p.W-30)/sc(180)));
+  let y=130,cw=3*T+8+44,ch=T+34;const BW=3*T+8,perH=Math.max(1,Math.floor((p.W-30)/cw)),vstep=T+40,perV=Math.max(1,Math.floor((p.W-30)/vstep));
   c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('Рядом, левее, между (по горизонтали):',30,y+8);y+=48;
   horiz.forEach((i,k)=>{
     const s=rules[i],x=30+(k%perH)*cw,yy=y+((k/perH)|0)*ch,cc=col(i);
-    p.area(x-6,yy-4,cw-24,T+8,toggle(i));
-    if(s.t==='near'){tile(s.a[0],s.a[1],x,yy,cc);c.fillStyle=cc;c.font='bold 44px sans-serif';c.textAlign='center';c.fillText('↔',x+T+sc(30),yy+T/2);tile(s.b[0],s.b[1],x+T+sc(60),yy,cc);}
-    else if(s.t==='dir'){tile(s.a[0],s.a[1],x,yy,cc);c.fillStyle=cc;c.font='bold 44px sans-serif';c.textAlign='center';c.fillText('→',x+T+sc(30),yy+T/2);tile(s.b[0],s.b[1],x+T+sc(60),yy,cc);}
-    else{tile(s.a[0],s.a[1],x,yy,cc);tile(s.c[0],s.c[1],x+T+4,yy,dim(i)?'#475569':'#fde68a');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);}
+    p.area(x-6,yy-4,BW+12,T+8,toggle(i));
+    /* все блоки одной ширины: [фишка][знак или фишка][фишка] */
+    const sym=(ch1,colr)=>{c.fillStyle=colr;c.font='bold '+Math.round(T*.7)+'px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText(ch1,x+T+4+T/2,yy+T/2);c.textBaseline='alphabetic';};
+    if(s.t==='near'){tile(s.a[0],s.a[1],x,yy,cc);sym('↔',dim(i)?'#475569':'#4ade80');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);}
+    else if(s.t==='dir'){tile(s.a[0],s.a[1],x,yy,cc);sym('→',dim(i)?'#475569':'#fb923c');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);}
+    else{tile(s.a[0],s.a[1],x,yy,cc);tile(s.c[0],s.c[1],x+T+4,yy,dim(i)?'#475569':'#fde68a');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);if(!dim(i)){c.strokeStyle='#fbbf24';c.lineWidth=4;c.strokeRect(x+T+4,yy,T,T);}}
   });
   y+=Math.ceil(horiz.length/perH)*ch+20;
   c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('В одной колонке (по вертикали):',30,y+8);y+=48;
   vert.forEach((i,k)=>{
-    const s=rules[i],x=30+(k%perV)*sc(180),yy=y+((k/perV)|0)*(2*T+30),cc=col(i);
+    const s=rules[i],x=30+(k%perV)*vstep,yy=y+((k/perV)|0)*(2*T+30),cc=col(i);
     p.area(x-4,yy-4,T+8,2*T+8,toggle(i));
-    tile(s.a[0],s.a[1],x,yy,cc);tile(s.b[0],s.b[1],x,yy+T,cc);
+    tile(s.a[0],s.a[1],x,yy,cc);tile(s.b[0],s.b[1],x,yy+T,cc);c.fillStyle=dim(i)?'#475569':'#60a5fa';c.fillRect(x+T/2-3,yy+T-9,6,18);
   });
   const open=rules.filter(s=>s.t==='open');
   if(open.length&&p.H>0)p.text('Сразу открыто фишек: '+open.length,30,p.H-60,{size:28,color:'#94a3b8',maxW:700});
