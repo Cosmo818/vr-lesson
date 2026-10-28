@@ -9,7 +9,7 @@ FAIL = []
 
 
 def check(name, ok, info=''):
-    print(('ok   ' if ok else 'FAIL ') + name + ('' if ok else '  ' + str(info)))
+    print(('ok  : ' if ok else 'FAIL: ') + name + ('' if ok else '  ' + str(info)))
     if not ok:
         FAIL.append(name)
 

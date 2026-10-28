@@ -19,7 +19,7 @@ GUID = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 OP_CONT, OP_TEXT, OP_BIN, OP_CLOSE, OP_PING, OP_PONG = 0, 1, 2, 8, 9, 10
 DEFAULT_LIMITS = {
     'handshake_s': 5.0, 'hello_s': 5.0, 'head_max': 8192, 'frame_max': 4096, 'max_conns': 400, 'max_unauth_ip': 60,
-    'ping_s': 10.0, 'idle_s': 35.0, 'origins': [],
+    'max_unauth': 300, 'ping_s': 10.0, 'idle_s': 35.0, 'origins': [], 'trusted': ['127.0.0.1', '::1'], 'hard_buf': 2 << 20,
 }
 
 
@@ -42,7 +42,7 @@ def _http(writer, code, text, extra=b'', body=b''):
     writer.write(head + extra + b'\r\n' + body)
 
 
-async def ws_handshake(reader, writer, limits, health=None):
+async def ws_handshake(reader, writer, limits, health=None, gate=None):
     """→ (path, headers) после ответа 101, либо None (ответ об ошибке уже отправлен, сокет закрывает вызывающий).
     Обычный GET /health без Upgrade отвечает JSON и тоже даёт None."""
     try:
@@ -92,6 +92,9 @@ async def ws_handshake(reader, writer, limits, health=None):
         return None
     if hd.get('sec-websocket-version') != '13':
         _http(writer, 426, 'Upgrade Required', b'Sec-WebSocket-Version: 13\r\n')
+        return None
+    if gate and not gate(hd):
+        _http(writer, 429, 'Too Many Requests')
         return None
     writer.write(('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n'
                   % ws_accept_key(key)).encode('ascii'))
@@ -184,87 +187,162 @@ def ws_close(writer, code, reason=''):
 
 # ---------------------------------------------------------------- сервер
 
+class Conn:
+    """Одно соединение; сессионный слой (server/hubsess.py) работает только через эти методы."""
+
+    def __init__(self, writer, ip):
+        self.writer, self.ip, self.seat, self.authed, self.closed = writer, ip, None, False, False
+        self.flood_t = self.drop_t = None
+
+    def buf(self):
+        try:
+            return self.writer.transport.get_write_buffer_size()
+        except Exception:
+            return 0
+
+    def text(self, obj):
+        if not self.closed:
+            ws_send(self.writer, OP_TEXT, obj if isinstance(obj, bytes) else json.dumps(obj, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+
+    def bin(self, b):
+        if not self.closed:
+            ws_send(self.writer, OP_BIN, b)
+
+    def close(self, code, reason='', abort=False):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            if abort:
+                self.writer.transport.abort()
+            else:
+                ws_close(self.writer, code, reason)
+                self.writer.close()
+        except Exception:
+            pass
+
+
 class Hub:
-    def __init__(self, limits, test=False, on_message=None):
+    def __init__(self, limits, test=False, core=None):
         self.L = dict(DEFAULT_LIMITS)
-        self.L.update(limits)
-        self.test = test
-        self.on_message = on_message
-        self.conns = 0
-        self.unauth = {}
-        self.sessions = {}
+        self.L.update(limits or {})
+        self.test, self.core = test, core
+        self.conns, self.pending, self.unauth = 0, 0, {}
         self.t0 = time.time()
 
     def health(self):
-        return {'ok': True, 'sessions': len(self.sessions), 'conns': self.conns, 'up': int(time.time() - self.t0)}
+        h = {'ok': True, 'sessions': 0, 'conns': self.conns, 'up': int(time.time() - self.t0)}
+        if self.core:
+            h.update(self.core.health())
+        return h
+
+    def real_ip(self, peer, hd):
+        """За Caddy все приходят с одного адреса: настоящий берём из X-Forwarded-For, но только от доверенного прокси (последний адрес)."""
+        if peer in (self.L.get('trusted') or []):
+            xff = hd.get('x-forwarded-for', '')
+            if xff:
+                return xff.split(',')[-1].strip()[:64] or peer
+        return peer
+
+    def _auth(self, conn, counted):
+        if counted[0]:
+            counted[0] = False
+            self.pending -= 1
+            if counted[1]:
+                n = self.unauth.get(conn.ip, 1) - 1
+                if n > 0:
+                    self.unauth[conn.ip] = n
+                else:
+                    self.unauth.pop(conn.ip, None)
 
     async def handle(self, reader, writer):
-        ip = (writer.get_extra_info('peername') or ('?',))[0]
-        if self.conns >= self.L['max_conns'] or self.unauth.get(ip, 0) >= self.L['max_unauth_ip']:
+        L = self.L
+        peer = (writer.get_extra_info('peername') or ('?',))[0]
+        if self.conns >= L['max_conns'] or self.pending >= L['max_unauth']:
             _http(writer, 429, 'Too Many Requests')
             await self._shut(writer)
             return
         self.conns += 1
-        self.unauth[ip] = self.unauth.get(ip, 0) + 1
-        authed = False
+        self.pending += 1
+        counted = [True, False]          # [в pending, в unauth по IP]
+        conn = Conn(writer, peer)
+
+        def gate(hd):
+            ip = conn.ip = self.real_ip(peer, hd)
+            if self.unauth.get(ip, 0) >= L['max_unauth_ip']:
+                return False
+            self.unauth[ip] = self.unauth.get(ip, 0) + 1
+            counted[1] = True
+            return True
+
         try:
-            hs = await ws_handshake(reader, writer, self.L, self.health)
+            hs = await ws_handshake(reader, writer, L, self.health, gate)
             if not hs:
                 return
-            last = time.time()
-            first = True
+            deadline = time.monotonic() + L['hello_s']
+            last = time.monotonic()
             fst = {}
-            while True:
-                tmo = self.L['hello_s'] if first else self.L['ping_s']
-                try:
-                    op, data = await asyncio.wait_for(ws_read(reader, self.L['frame_max'], fst), tmo)
-                except asyncio.TimeoutError:
-                    if first:
+            while not conn.closed:
+                if conn.authed:
+                    tmo = L['ping_s']
+                else:
+                    tmo = deadline - time.monotonic()
+                    if tmo <= 0:
                         ws_close(writer, 4009, 'hello')
                         return
-                    if time.time() - last > self.L['idle_s']:
+                try:
+                    op, data = await asyncio.wait_for(ws_read(reader, L['frame_max'], fst), tmo)
+                except asyncio.TimeoutError:
+                    if not conn.authed:
+                        ws_close(writer, 4009, 'hello')
+                        return
+                    if time.monotonic() - last > L['idle_s']:
                         ws_close(writer, 1001, 'idle')
                         return
                     ws_send(writer, OP_PING, b'')
-                    await writer.drain()
                     continue
-                last = time.time()
+                last = time.monotonic()
                 if op == OP_PING:
                     ws_send(writer, OP_PONG, data)
                 elif op == OP_PONG:
                     pass
                 elif op == OP_CLOSE:
                     ws_close(writer, 1000)
-                    await writer.drain()
                     return
-                else:
-                    if first:
-                        first = False
-                        authed = True
-                        self.unauth[ip] = max(0, self.unauth.get(ip, 1) - 1)
-                    if self.test:
-                        ws_send(writer, op, data)
-                    elif self.on_message:
-                        await self.on_message(self, writer, op, data)
-                    else:
-                        ws_close(writer, 4003, 'нет сессий')
-                        await writer.drain()
+                elif self.test:
+                    conn.authed = True
+                    ws_send(writer, op, data)
+                    try:
+                        await asyncio.wait_for(writer.drain(), 5)
+                    except asyncio.TimeoutError:
+                        ws_close(writer, 4008, 'slow')
                         return
-                await writer.drain()
+                elif self.core:
+                    try:
+                        (self.core.on_text if op == OP_TEXT else self.core.on_bin)(conn, data)
+                    except Exception as e:
+                        print('core:', repr(e)[:200], file=sys.stderr)
+                        conn.close(1011, 'internal')
+                else:
+                    ws_close(writer, 4003, 'нет сессий')
+                    return
+                if conn.authed:
+                    self._auth(conn, counted)
+                if conn.buf() > L['hard_buf']:
+                    conn.close(4008, 'slow', abort=True)
         except WSClose as e:
             ws_close(writer, e.code, e.reason)
-            try:
-                await writer.drain()
-            except Exception:
-                pass
         except (asyncio.IncompleteReadError, ConnectionError, asyncio.CancelledError):
             pass
         finally:
             self.conns -= 1
-            if not authed:
-                self.unauth[ip] = max(0, self.unauth.get(ip, 1) - 1)
-            if not self.unauth.get(ip):
-                self.unauth.pop(ip, None)
+            self._auth(conn, counted)
+            if self.core:
+                try:
+                    self.core.on_close(conn)
+                except Exception as e:
+                    print('on_close:', repr(e), file=sys.stderr)
+            conn.closed = True
             await self._shut(writer)
 
     @staticmethod
@@ -276,28 +354,61 @@ class Hub:
             pass
 
 
-async def serve(host, port, limits, test=False):
-    hub = Hub(limits, test)
-    srv = await asyncio.start_server(hub.handle, host, port, limit=limits.get('head_max', 8192) + 1024 if limits else 9216)
+async def run_loops(core):
+    """Такт рассылки поз (tick_hz) и обслуживание (away, удержание мест, отчёт) раз в 0,5 с. Ошибка такта не роняет hub."""
+    loop = asyncio.get_running_loop()
+    dt = 1.0 / core.L['tick_hz']
+    nxt = loop.time()
+    hk = loop.time()
+    while True:
+        nxt += dt
+        try:
+            core.tick_all()
+            if loop.time() - hk >= 0.5:
+                hk = loop.time()
+                core.housekeep()
+        except Exception as e:
+            print('tick:', repr(e), file=sys.stderr)
+        wait = nxt - loop.time()
+        if wait < -1:
+            nxt = loop.time()
+            wait = 0
+        await asyncio.sleep(max(0.0, wait))
+
+
+async def serve(host, port, limits, test=False, core=None):
+    hub = Hub(limits, test, core)
+    srv = await asyncio.start_server(hub.handle, host, port, limit=hub.L['head_max'] + 1024)
+    hub.loop_task = asyncio.ensure_future(run_loops(core)) if core else None
     return hub, srv
 
 
-def load_limits(args):
-    L = {}
+def file_reporter(path):
+    def rep(body):
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(body, ensure_ascii=False) + '\n')
+        return None
+    return rep
+
+
+def load_config(args):
+    L, cfg = {}, {}
     if args.config and os.path.exists(args.config):
         try:
             cfg = json.load(open(args.config, encoding='utf-8'))
-            if isinstance(cfg.get('hubOrigins'), list):
-                L['origins'] = [str(x) for x in cfg['hubOrigins']][:20]
         except Exception as e:
             print('config.json не прочитан:', e, file=sys.stderr)
+    if isinstance(cfg.get('hubOrigins'), list):
+        L['origins'] = [str(x) for x in cfg['hubOrigins']][:20]
+    if isinstance(cfg.get('hubTrusted'), list):
+        L['trusted'] = [str(x) for x in cfg['hubTrusted']][:20]
     if args.origins:
         L['origins'] = [x for x in args.origins.split(',') if x]
     for k in ('handshake_s', 'hello_s', 'max_unauth_ip', 'max_conns', 'ping_s', 'idle_s'):
         v = getattr(args, k)
         if v is not None:
             L[k] = v
-    return L
+    return L, cfg
 
 
 def main():
@@ -306,6 +417,7 @@ def main():
     ap.add_argument('--port', type=int, default=8788)
     ap.add_argument('--config', default='')
     ap.add_argument('--origins', default='')
+    ap.add_argument('--report-file', default='', help='отчёты посещаемости в файл (пока нет /api/hub/report — шаг Н4)')
     ap.add_argument('--test', action='store_true', help='эхо-канал для тестов (в рабочем режиме не включать)')
     ap.add_argument('--handshake_s', type=float)
     ap.add_argument('--hello_s', type=float)
@@ -314,9 +426,22 @@ def main():
     ap.add_argument('--ping_s', type=float)
     ap.add_argument('--idle_s', type=float)
     a = ap.parse_args()
+    L, cfg = load_config(a)
+    core = None
+    if not a.test:
+        if not L.get('origins'):
+            sys.exit('hub: не задан hubOrigins (config.json) — без списка разрешённых сайтов не запускаюсь')
+        try:
+            import hubticket
+            import hubsess
+            keys = hubticket.derive(cfg.get('hubSecret'))
+        except ValueError as e:
+            sys.exit('hub: hubSecret не задан или короток (%s); создать: python3 server/app.py hub-secret' % e)
+        core = hubsess.Core(keys, {'aud': str(cfg.get('hubId') or 'center'), 'kid': cfg.get('hubKid')},
+                            reporter=file_reporter(a.report_file) if a.report_file else None)
 
     async def run():
-        hub, srv = await serve(a.host, a.port, load_limits(a), a.test)
+        hub, srv = await serve(a.host, a.port, L, a.test, core)
         print('hub слушает %s:%d%s' % (a.host, a.port, ' (тестовый режим)' if a.test else ''), flush=True)
         async with srv:
             await srv.serve_forever()
@@ -328,4 +453,5 @@ def main():
 
 
 if __name__ == '__main__':
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     main()
