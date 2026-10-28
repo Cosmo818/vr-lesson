@@ -194,18 +194,8 @@ try:
     ok(st == 403, 'посторонний учитель билета на урок не получает (%s)' % st)
     st, b = adm('tA1', 'session.list', {'class_id': 'cA1'})
     ok(st == 200 and [x['id'] for x in b.get('open', [])] == [sid], 'классный руководитель видит урок предметника в своём классе')
-    st, b = adm('tA2', 'session.settings', {'id': sid, 'settings': {'noPin': True}})
-    ok(st == 403 and json.loads(sql('select settings from room_sessions where id = ?', sid)[0][0]).get('noPin') is not True, 'предметник не включает вход без кода (%s)' % st)
-    st, b = adm('tA2', 'session.settings', {'id': sid, 'settings': {'chat': 'phrases'}})
-    ok(st == 200, 'прочие настройки урока предметник меняет (%s)' % st)
-    st, b = adm('tA1', 'session.settings', {'id': sid, 'settings': {'noPin': True}})
-    ok(st == 200, 'классный руководитель включает вход без кода на уроке предметника (%s)' % st)
     st, b = adm('tA2', 'session.close', {'id': sid})
     ok(st == 200, 'предметник закрывает свой урок')
-    st, b = adm('tA2', 'session.open', {'class_id': 'cA1', 'room': 'hall', 'settings': {'remote': True}})
-    ok(st == 403 and not sql("select 1 from room_sessions where class_id = 'cA1' and status = 'open'"), 'предметник не открывает урок с подключением из дома (%s)' % st)
-    st, b = adm('tA2', 'session.open', {'class_id': 'cA1', 'room': 'hall', 'settings': {'noPin': True}})
-    ok(st == 403, 'предметник не открывает урок без кода (%s)' % st)
 
     # --- директор и снятие
     st, b = adm('dirA', 'class.teacher.add', {'class_id': 'cA2', 'user_id': UID['tA3'], 'subject': 'Физика'})

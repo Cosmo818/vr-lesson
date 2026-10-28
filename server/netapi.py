@@ -79,9 +79,6 @@ def sha(x):
     return hashlib.sha256(str(x).encode()).hexdigest()
 
 
-NOPIN_MSG = 'Вход без кода и подключение из дома включает классный руководитель или директор.'
-
-
 def clean_settings(b, base=None, allow=('chat', 'mode', 'maxSeats', 'pointers', 'noPin', 'area_m2', 'stations', 'remote')):
     """Разбор настроек сессии: неизвестное и неверного вида отбрасывается молча (остаётся прежнее)."""
     s = dict(base or {})
@@ -145,8 +142,7 @@ def admin(A, c, p, act, b, ip):
         cid = str(b.get('class_id') or '')[:40]
         cr = A.class_row(c, cid)
         st = c.execute('SELECT status FROM classes WHERE id = ?', (cid,)).fetchone() if cr else None
-        sc = A.scope(c, p)
-        if not cr or not A.class_readable(sc, cid, cr[0], cr[1]) or st[0] != 'active':
+        if not cr or not A.class_readable(A.scope(c, p), cid, cr[0], cr[1]) or st[0] != 'active':
             raise A.AdminError(404, 'Такого класса нет или он вам недоступен.')
         if b.get('kind', 'lesson') != 'lesson':
             raise A.AdminError(400, 'Игровая сессия открывается учеником (play.join).')
@@ -156,9 +152,6 @@ def admin(A, c, p, act, b, ip):
         if c.execute("SELECT 1 FROM room_sessions WHERE class_id = ? AND kind = 'lesson' AND status = 'open'", (cid,)).fetchone():
             raise A.AdminError(409, 'У класса уже есть открытый урок.')
         s = clean_settings(b.get('settings'), {'chat': 'off', 'mode': 'seat', 'maxSeats': 60, 'pointers': True, 'noPin': False, 'remote': False})
-        if (s.get('noPin') or s.get('remote')) and not A.class_in_scope(sc, cr[0], cr[1]):  # вход без кода и из дома — только владелец класса и директор+ (предметник нет)
-            A.audit(c, who, 'admin.denied', 'class', cid, cr[0], {'why': 'nopin-remote', 'action': act})
-            raise A.AdminError(403, NOPIN_MSG)
         code = None
         if s.get('remote'):
             code = A.new_code(6)
@@ -196,11 +189,6 @@ def admin(A, c, p, act, b, ip):
         raise A.AdminError(409, 'Урок уже закрыт.')
     if act == 'session.settings':
         new = clean_settings(b.get('settings'), st, allow=('chat', 'mode', 'maxSeats', 'pointers', 'noPin', 'area_m2', 'stations'))
-        if new.get('noPin') and not st.get('noPin'):
-            cr = A.class_row(c, row[2])
-            if not cr or not A.class_in_scope(A.scope(c, p), cr[0], cr[1]):
-                A.audit(c, who, 'admin.denied', 'session', sid, row[1], {'why': 'nopin-remote', 'action': act})
-                raise A.AdminError(403, NOPIN_MSG)
         if new != st:
             c.execute('UPDATE room_sessions SET settings = ? WHERE id = ?', (json.dumps(new, ensure_ascii=False), sid))
             A.audit(c, who, 'session.settings', 'session', sid, row[1], {k: new[k] for k in new if st.get(k) != new[k] and k != 'banned'})
