@@ -370,9 +370,15 @@ void main(){
   };
   const menu=E.addUi({w:1.25,h:1.4,res:900,show:false,accent:'#38bdf8',draw:(c,p)=>{if(E.hooks.menuDraw)E.hooks.menuDraw(c,p);}});
   E.menu=menu;
+  /* в шлеме меню 1,25×1,4 м ставится на 1,55 м (около 48° по высоте — целиком в поле зрения); у стены — ближе, но не ближе 0,8 м, чтобы не уйти в стену */
+  const menuDist=()=>{
+    try{const h=E.headPose(),B=E.open?5.3:(E.bound||5.9)-.15;let t=1.55;
+      for(const ax of[0,1]){const d=h.f[ax],p=h.pos[ax===0?0:2];if(Math.abs(d)>1e-4){const k=((d>0?B:-B)-p)/d;if(k>0&&k<t)t=k;}}
+      return Math.max(.8,t);}catch(e){return 1.2;}
+  };
   E.toggleMenu=v=>{
     E.menuOpen=v===undefined?!E.menuOpen:!!v;menu.show=E.menuOpen;menu.dirty=true;
-    if(E.menuOpen){placeFront(menu,1.0,-.12);E.beep(520,.06);}
+    if(E.menuOpen){placeFront(menu,E.session?menuDist():1.0,E.session?-.18:-.12);E.beep(520,.06);}
   };
   /* лазерная указка учителя: включается кнопкой на контроллере (нажатие стика) или в меню-планшете; красный луч с точкой.
      Кто учитель — решает E.hooks.isTeacher (app.js); для показа ученикам по сети — E.laserState() (начало и направление луча) и E.hooks.onLaser */

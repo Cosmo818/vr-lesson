@@ -111,7 +111,8 @@ function startSession(){
   E.student={id:st.id||null,name:st.name,grade:st.grade};if(st.role==='teacher'){E.student.role='teacher';E.student.classId=st.classId||null;E.student.className=st.className||'';}
   E.resetGuest();
   const set=S.settings();
-  sess={t0:performance.now(),limit:Math.max(1,set.minutes)*60,up:false,startPts:st.id?S.points(st.id).total:0,startPassed:st.id?S.points(st.id).passed:0,tests:0};
+  sess={t0:performance.now(),limit:st.role==='teacher'?Infinity:Math.max(1,set.minutes)*60,   /* у учителя таймера нет */
+    up:false,startPts:st.id?S.points(st.id).total:0,startPassed:st.id?S.points(st.id).passed:0,tests:0};
   E.loadRoom('hall');
 }
 async function go(){
@@ -159,6 +160,7 @@ function hooks(){
     const dot=netDot();
     if(!sess||!E.student)return{a:'',b:'',dot};
     const l=left(),pts=E.student.id?S.points(E.student.id).total:0;
+    if(!isFinite(l))return{a:'Учитель',b:E.student.name.split(' ')[0],dot};
     return{a:(l>0?mmss(l):'Время!'),b:E.student.name.split(' ')[0]+' · '+pts+' б.',alert:l<=0,dot};
   };
   E.hooks.onFrame=()=>{
@@ -252,7 +254,7 @@ function hooks(){
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
-    p.text((st.className?st.className+' класс · ':st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
+    p.text((st.className?st.className+' класс · ':st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(!isFinite(l)?'без ограничения времени':l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
     const tch=E.isTeacher(),kc=tch&&st.classId?S.klass(st.classId):null;
     const me=!tch&&st.id;
     p.button(36,150,tch?170:me?(netLive()?(W-108)/3:(W-90)/2):W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});

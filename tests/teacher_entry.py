@@ -19,6 +19,7 @@ try:
     t(not pg.is_visible('#tClassP'),'без классов на устройстве выбора класса нет, есть выбор параллели')
     pg.click('#go');pg.wait_for_timeout(1500)
     t(pg.evaluate("VR.app.E.student.role")=='teacher','в сессии роль учителя')
+    t(pg.evaluate("VR.app.E.hooks.hud().a")=='Учитель' and not pg.evaluate("!!VR.app.E.hooks.hud().alert"),'у учителя нет таймера сессии')
     # классы на устройстве (после входа в кабинет): выбор класса урока, параллель берётся из класса
     pg.goto(u+'index.html');pg.evaluate("""()=>{const n=Date.now();localStorage.setItem('vrlesson.v1',JSON.stringify({v:5,classes:[{id:'k7a',grade:7,letter:'А',created:n,updated:n},{id:'k9b',grade:9,letter:'Б',created:n,updated:n}],students:[{id:'s1',name:'Петров Пётр',grade:9,classId:'k9b',created:n,updated:n},{id:'s2',name:'Смирнова Анна',grade:9,classId:'k9b',created:n,updated:n},{id:'s3',name:'Чужой Ученик',grade:7,classId:'k7a',created:n,updated:n}],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{}}));localStorage.setItem('vrl.sub',JSON.stringify(['k9b']));sessionStorage.setItem('vrl.laser',String(Date.now()+1e7));}""")
     pg.goto(u+'index.html?as=teacher');pg.wait_for_timeout(1500)
