@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/games.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/games.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -1337,7 +1337,7 @@ except RuntimeError:
     }
   }
   /* учётки (шаги 4–7…): отдельные Python-файлы с живым сервером; их строки ok/FAIL входят в общий счёт */
-  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы'],['open.py','открытые'],['hierarchy.py','иерархия'],['ai.py','помощник'],['history.py','история'],['purge.py','стирание'],['net_bots.py','hub-сессии'],['hub_ws.py','hub-WebSocket'],['net_sessions.py','сеть-сессии']]){
+  for(const [file,label] of [['accounts.py','учётки'],['scope.py','права'],['admin.py','админ'],['uploads.py','файлы'],['open.py','открытые'],['hierarchy.py','иерархия'],['ai.py','помощник'],['history.py','история'],['purge.py','стирание'],['net_bots.py','hub-сессии'],['hub_ws.py','hub-WebSocket'],['net_sessions.py','сеть-сессии'],['teacher_entry.py','вход учителя']]){
     if(!fs.existsSync(path.join(ROOT,'tests',file)))continue;
     let out='';
     try{out=cp.execFileSync('python3',['-I',path.join(ROOT,'tests',file)],{encoding:'utf-8',timeout:240000});}
@@ -1347,6 +1347,11 @@ except RuntimeError:
       else if(ln.startsWith('FAIL: '))ok(false,label+': '+ln.slice(6));
     }
   }
+  /* клиент сети js/net.js: отдельный процесс с поддельными WebSocket и временем */
+  {let out='';
+   try{out=cp.execFileSync('node',[path.join(ROOT,'tests','net_client.js')],{encoding:'utf-8',timeout:120000});}
+   catch(e){out=(e.stdout||'')+'\nFAIL: tests/net_client.js завершился с ошибкой '+String(e.stderr||e.message).slice(-300);}
+   for(const ln of out.split('\n')){if(ln.startsWith('ok  : '))ok(true,'клиент сети: '+ln.slice(6));else if(ln.startsWith('FAIL: '))ok(false,'клиент сети: '+ln.slice(6));}}
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');
   process.exit(fails?1:0);
 })().catch(e=>{console.log('EXCEPTION',e&&e.stack||e);process.exit(2);});

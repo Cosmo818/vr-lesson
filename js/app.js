@@ -42,9 +42,10 @@ async function tryEnter(e){
 let openPick=null;
 function choose(st){
   chosen=st;
-  $('who').textContent=st.id?st.name:'Гость';
+  $('who').textContent=st.id?st.name:(st.role==='teacher'?'Учитель':'Гость');
   $('guestGrade').hidden=!!st.id;
   if(st.id){const p=S.points(st.id),k=S.klass(st.classId);$('whoInfo').textContent=(k?S.className(k):st.grade)+' класс · '+D.bands[S.band(st.grade)]+' задания · '+p.total+' баллов';}
+  else if(st.role==='teacher')$('whoInfo').textContent='Вы входите как учитель: указка включена, результаты не записываются. Выберите класс для заданий:';
   else $('whoInfo').textContent='Результаты гостя не сохраняются. Выбери класс для заданий:';
   $('go').textContent=xrOk?'Войти в VR':'Начать на экране';
   showSection('ready');
@@ -53,7 +54,7 @@ function startSession(){
   if(!chosen)return;
   if(!chosen.id)chosen.grade=parseInt($('gg').value,10)||5;
   const st=chosen.id?S.student(chosen.id):chosen;
-  E.student={id:st.id||null,name:st.name,grade:st.grade};
+  E.student={id:st.id||null,name:st.name,grade:st.grade};if(st.role==='teacher')E.student.role='teacher';
   E.resetGuest();
   const set=S.settings();
   sess={t0:performance.now(),limit:Math.max(1,set.minutes)*60,up:false,startPts:st.id?S.points(st.id).total:0,startPassed:st.id?S.points(st.id).passed:0,tests:0};
@@ -185,6 +186,11 @@ function bind(){
       $('openErr').textContent='';const sp=await S.openRoom(it.id);if(!sp){$('openErr').textContent='Комната недоступна.';return;}
       openPick=sp.id;choose({id:null,name:'Гость',grade:5});};L.appendChild(b);}
   };}}).catch(()=>{});
+  /* вход учителя: если в этой вкладке уже открыт кабинет (флаг указки) — сразу к кнопке «Войти в VR», иначе в кабинет на вход */
+  const teacherIn=()=>{let ok=false;try{ok=+sessionStorage.getItem('vrl.laser')>Date.now();}catch(e){}
+    if(!ok){location.href='teacher.html?vr=1';return;}choose({id:null,name:'Учитель',grade:5,role:'teacher'});};
+  $('teachBtn').onclick=teacherIn;
+  VR.teacherIn=teacherIn;
   $('back').onclick=()=>{chosen=null;showSection('pick');};
   $('go').onclick=go;
   $('deskExit').onclick=endSession;
@@ -215,6 +221,7 @@ async function init(){
   E.rooms=VR.ROOMS;hooks();bind();
   E.loadRoom('hall');E.startDesk();
   renderList();showSection('pick');
+  try{if(new URLSearchParams(location.search).get('as')==='teacher')VR.teacherIn();}catch(e){}
   xrOk=await E.xrSupported();
   $('mode').textContent=xrOk?'':'Шлем не найден — откроется режим экрана.';
   try{if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});}catch(e){}

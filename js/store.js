@@ -365,6 +365,36 @@ const Store=VR.Store={
     }catch(e){return{status:0,data:{error:'нет связи с сервером'}};}
   },
   admin(act,body){return Store.call('POST','/api/admin/'+encodeURIComponent(act),body||{});},
+  /* живые уроки (сеть, PLAN-network.md §5.4): все запросы к серверу — только здесь (закон А2); js/net.js держит само соединение и fetch не делает.
+     auth: 'dev' — ключ шлема (X-Key), 'user' — токен учётной записи, 'none' — без входа (удалённый ученик по коду урока) */
+  async netCall(method,path,body,auth){
+    const base=Store.base();if(!base)return{status:0,data:{error:'Сервер не указан. Откройте страницу с вашего сервера.'}};
+    const sv=Store.server(),h={};if(body!==undefined)h['Content-Type']='application/json';
+    if(auth==='dev'&&sv&&sv.key)h['X-Key']=sv.key;
+    else if(auth==='user'){const t=Store.account.token();if(t)h.Authorization='Bearer '+t;}
+    try{
+      const ctl=typeof AbortController!=='undefined'?new AbortController():null;const tm=setTimeout(()=>ctl&&ctl.abort(),15000);
+      const r=await fetch(base+path,{method,headers:h,body:body===undefined?undefined:JSON.stringify(body),signal:ctl?ctl.signal:undefined});clearTimeout(tm);
+      let d={};try{d=await r.json();}catch(e){}
+      if(auth==='user'&&r.status===401){Store.account.clear();d.expired=true;}
+      return{status:r.status,data:d};
+    }catch(e){return{status:0,data:{error:'нет связи с сервером'}};}
+  },
+  sessionLive(){return Store.netCall('GET','/api/session/live',undefined,'dev');},                                   /* → data.sessions:[{id,class_id,kind,room,created}] */
+  async sessionTicket(sid,studentId,pin){                                                                          /* ученик: ключ шлема + код; учитель: токен учётки (studentId пуст) */
+    if(!studentId)return Store.netCall('POST','/api/room/ticket',{session_id:sid},'user');
+    const ph=await Store.pinHash(studentId,String(pin||'').trim());
+    return Store.netCall('POST','/api/room/ticket',{session_id:sid,student_id:studentId,pin_hash:ph},'dev');
+  },
+  async remoteTicket(code,studentId,pin){                                                                          /* удалённый ученик: код урока */
+    const ph=await Store.pinHash(studentId,String(pin||'').trim());
+    return Store.netCall('POST','/api/room/ticket',{code:String(code||'').trim(),student_id:studentId,pin_hash:ph},'none');
+  },
+  async playJoin(classId,studentId,pin){
+    const ph=await Store.pinHash(studentId,String(pin||'').trim());
+    return Store.netCall('POST','/api/play/join',{class_id:classId,student_id:studentId,pin_hash:ph},'dev');
+  },
+  sessionAdmin(act,body){return Store.admin('session.'+act,body);},                                                  /* open, close, settings, kick, unkick, list, chat */
   qs(o){return Object.keys(o||{}).filter(k=>o[k]!==undefined&&o[k]!==''&&o[k]!==null).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(o[k])).join('&');},
   options(q){return Store.call('GET','/api/options?'+Store.qs(q));},
   accounts(q){return Store.call('GET','/api/accounts?'+Store.qs(q));},

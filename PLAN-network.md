@@ -502,7 +502,7 @@ Hub проверяет роль: `gather/freeze/room/follow/hall/kick` — то�
 
 **Н5. Развёртывание hub на VPS.** `deploy/Caddyfile` (`reverse_proxy /ws vr-lesson-hub:8788`, `/ws` вне `@hidden`), `deploy/autoupdate.sh` (отложенный перезапуск hub §4.7), `README.md` — команды запуска контейнера (для Айрата по `homebrain-cmd`: одной строкой, ПК/Pi пометки). Без включения флага. Ревью Sonnet.
 
-**Н6. `js/net.js` + `Store.session*`.** Контракт §6.1, часы §6.2, переподключение со случайным разбросом, список адресов и таймаут. `js/store.js`: `sessionLive/sessionTicket/playJoin/sessionAdmin/watchTicket`. `index.html`, `sw.js`. `tests/net_client.js` (поддельный WebSocket в Node: обрыв, `resume`, просроченный билет → новый, очередь управления).
+**Н6. `js/net.js` + `Store.session*`.** Контракт §6.1, часы §6.2, переподключение со случайным разбросом, список адресов и таймаут. `js/store.js`: `sessionLive/sessionTicket/playJoin/sessionAdmin/watchTicket`. `index.html`, `sw.js`. `tests/net_client.js` (поддельный WebSocket в Node: обрыв, `resume`, просроченный билет → новый, очередь управления). ✅
 
 **Н7. Аватары и присутствие в движке.** `js/engine.js` — только хуки §6.4 (`E.peers`, `E.rigInfo`, `E.toBase/fromBase`, `E.gripBase`, `E.hooks.onRefReset`, `E.extraDraw`); `js/netplay.js` — отправка позы из кадра, буфер и интерполяция §6.3, полные/упрощённые, подписи, бледнение; `js/app.js` — на стартовом экране «Урок идёт — войти» (выбран ученик → код → билет), значок связи в HUD. `tests/e2e_net.py` (две вкладки), рендер. Риск: кадры Quest 1 — замер на пилоте.
 

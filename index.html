@@ -16,7 +16,7 @@
   <div class="card">
     <header>
       <h1>VR-урок</h1>
-      <span class="links"><a class="link" href="help.html">Справка</a><a class="link" href="teacher.html">Учителю</a></span>
+      <span class="links"><a class="link" href="help.html">Справка</a><a class="link" href="teacher.html">Кабинет учителя</a></span>
     </header>
     <p id="status" class="warn"></p>
     <p id="summary" class="ok" hidden></p>
@@ -30,6 +30,7 @@
         <button id="enterBtn" class="btn">Дальше</button>
       </form>
       <p id="pickErr" class="warn"></p>
+      <button type="button" id="teachBtn" class="btn ghost">Я учитель — войти в VR</button>
       <p class="muted small">Номер и пароль выдаёт учитель. Забыл — подойди к учителю. <button type="button" id="guestBtn" class="linkbtn">Войти гостем</button> <button type="button" id="openBtn" class="linkbtn" hidden>Открытые комнаты</button></p>
       <div id="openBox" hidden><h3>Открытые комнаты</h3><p class="muted small">Без входа: можно смотреть и пробовать. Результаты не сохраняются.</p><div id="openList"></div><p id="openErr" class="warn"></p></div>
     </section>
@@ -40,7 +41,7 @@
       <p id="guestGrade" hidden><select id="gg"></select></p>
       <button id="go" class="btn big">Войти в VR</button>
       <p id="err" class="warn"></p>
-      <button id="back" class="btn ghost">← Другой ученик</button>
+      <button id="back" class="btn ghost">← Назад</button>
     </section>
 
     <section id="fb" hidden>
@@ -130,6 +131,7 @@
 <script src="js/play.js"></script>
 <script src="js/einstein.js"></script>
 <script src="js/netproto.js"></script>
+<script src="js/net.js"></script>
 <script src="js/games.js"></script>
 <script src="js/einroom.js"></script>
 <script src="js/arena.js"></script>
