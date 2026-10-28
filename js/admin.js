@@ -138,11 +138,26 @@ async function loadInvites(){
     if(!r.data.items.length){const tr=el('tr'),td=el('td','Действующих приглашений нет.',{colspan:'4',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
   });
 }
+/* приглашение: последовательный выбор «регион → район → школа» по списку школ (schoolsCache); keep — сохранить выбранное */
+function invGeo(keep){
+  const uniq=a=>[...new Set(a.filter(Boolean))].sort((x,y)=>x.localeCompare(y,'ru')).map(r=>({id:r,name:r}));
+  const rs=$('invRegion'),ds=$('invDistrict'),ss=$('invSchool');
+  VR.regions.fill(rs,uniq(schoolsCache.map(s=>s.region)),'— все регионы —',keep);
+  const inR=schoolsCache.filter(s=>!rs.value||s.region===rs.value);
+  VR.regions.fill(ds,uniq(inR.map(s=>s.district)),'— все районы —',keep);
+  const list=inR.filter(s=>!ds.value||s.district===ds.value);
+  VR.regions.fill(ss,list,'— выберите школу —',keep);
+  if(list.length===1)ss.value=list[0].id;
+  const role=$('invRole').value;$('invSchoolL').hidden=role==='region_admin'||role==='district_admin';
+  ds.parentNode.hidden=role==='region_admin';
+}
 async function makeInvite(){
   await safe('Приглашения','invErr',async()=>{
     secErr('invErr','');
     const role=$('invRole').value;let school=$('invSchool').value;const body={role};
-    if(role==='region_admin'||role==='district_admin'){
+    if((role==='region_admin'&&$('invRegion').value)||(role==='district_admin'&&$('invRegion').value&&$('invDistrict').value)){
+      const R=$('invRegion').value,D=$('invDistrict').value;body.region=R;school=role==='region_admin'?'r:'+R:'d:'+R+'|'+D;if(role==='district_admin')body.district=D;}
+    else if(role==='region_admin'||role==='district_admin'){
       const rs=el('select'),ds=el('select'),box=el('div'),uniq=a=>[...new Set(a.filter(Boolean))].map(r=>({id:r,name:r}));
       VR.regions.fill(rs,uniq(schoolsCache.map(s=>s.region)),'— регион —');VR.regions.fill(ds,[],'— район —');
       rs.onchange=()=>VR.regions.fill(ds,uniq(schoolsCache.filter(s=>s.region===rs.value).map(s=>s.district)),'— район —');
@@ -192,8 +207,9 @@ async function loadSchools(){
         else{actions(td,[['Изменить',()=>editSchool(it)]]);if(it.id!=='school-default')actions(td,[['В архив',()=>setSchoolStatus(it,'archived'),'red']]);}
       }tr.appendChild(td);t.appendChild(tr);}
     if(!shown.length){const tr=el('tr'),td=el('td',shView==='archived'?'В архиве пусто.':'Школ нет.',{colspan:'5',class:'muted'});tr.appendChild(td);t.appendChild(tr);}
-    for(const id of['invSchool','devSchool'])VR.regions.fill($(id),o.data.items,'— выберите школу —',true);
-    if(o.data.items.length===1){for(const id of['invSchool','devSchool'])$(id).value=o.data.items[0].id;}
+    VR.regions.fill($('devSchool'),o.data.items,'— выберите школу —',true);
+    if(o.data.items.length===1)$('devSchool').value=o.data.items[0].id;
+    invGeo(true);
     if(!$('app').hidden){fillClosedSchools();fillHistSchools();}
   });
 }
@@ -435,7 +451,7 @@ function bind(){
   switchBar('stSw',()=>view,v=>{view=v;page=1;loadPeople();});switchBar('shSw',()=>shView,v=>{shView=v;loadSchools();});
   $('mkMore').onclick=()=>loadMarks(true);$('trKind').onchange=$('trSchool').onchange=()=>loadTrash();$('trMore').onclick=()=>loadTrash(true);
   $('hiSchool').onchange=$('hiKind').onchange=$('hiPeriod').onchange=()=>loadHistory();$('hiMore').onclick=()=>loadHistory(true);
-  $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
+  $('clGo').onclick=loadClosed;$('invGo').onclick=makeInvite;$('invRegion').onchange=()=>{$('invDistrict').value='';invGeo(true);};$('invDistrict').onchange=()=>invGeo(true);$('invRole').onchange=()=>invGeo(true);$('devCode').onclick=deviceCode;$('shGo').onclick=addSchool;$('devSchool').onchange=loadDevices;
   $('devLimGo').onclick=async()=>{const r=await S.admin('school.update',{id:$('devSchool').value,device_limit:$('devLim').value});if(!bad(r,'devErr')){say('Лимит сохранён.');loadDevices();}};
   casc=VR.regions.cascade({region:$('fRegion'),district:$('fDistrict'),school:$('fSchool'),cls:$('fClass'),teacher:$('fTeacher')},()=>{page=1;loadPeople();});
 }
