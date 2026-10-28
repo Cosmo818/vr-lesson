@@ -109,6 +109,32 @@ try:
             peers = pg.evaluate("VR.app.E.peers.map(p=>({name:p.name,desk:p.desk}))")
             ok(any(q['name'].startswith(other) and q['desk'] is True for q in peers), '%s видит аватар «%s» с desk=true (%s)' % (sid, other, peers))
             ok(pg.evaluate("VR.net.status().state") == 'on', '%s: связь с hub установлена' % sid)
+        # кабинет учителя: вкладка «Урок» видит участников, закрывает и снова открывает урок с кодом для дома
+        tp = br.new_context(service_workers='block', viewport={'width': 1200, 'height': 800}).new_page()
+        tp.on('pageerror', lambda e: errs.append('teacher: ' + str(e)))
+        tp.goto(WEB + '/teacher.html'); tp.wait_for_timeout(500)
+        tp.evaluate("""([url,tok,studs])=>{const n=Date.now();localStorage.setItem('vrlesson.server',JSON.stringify({url,key:''}));sessionStorage.setItem('vrl.token',tok);
+          localStorage.setItem('vrlesson.v1',JSON.stringify({v:5,classes:[{id:'cA1',grade:5,letter:'А',created:n,updated:n}],students:studs,results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{}}));}""",
+                    [API, tok, [{'id': s['id'], 'name': s['name'], 'grade': 5, 'classId': 'cA1', 'created': NOW, 'updated': NOW} for s in studs]])
+        tp.goto(WEB + '/teacher.html'); tp.wait_for_timeout(1500)
+        tp.click('[data-t=lesson]')
+        try:
+            tp.wait_for_function("document.querySelectorAll('#lsTab tr').length>=3&&document.getElementById('lsTab').textContent.indexOf('Иван П.')>=0", timeout=20000)
+        except Exception:
+            pass
+        txt = tp.inner_text('#lsBox')
+        ok('Урок идёт' in txt and 'Иван П.' in txt and 'Мария С.' in txt, 'кабинет: вкладка «Урок» показывает идущий урок и обоих учеников (%s)' % txt[:160].replace('\n', ' '))
+        ok('в сети' in txt and 'ученик' in txt, 'кабинет: у участников видны роль и связь')
+        tp.fill('#lsArea', '30'); tp.select_option('#lsMode', 'stand'); tp.fill('#lsSt', 'Лаб 1, Лаб 2'); tp.click('#lsSave'); tp.wait_for_timeout(800)
+        st, lst = req('POST', '/api/admin/session.list', {'class_id': 'cA1'}, {'Authorization': 'Bearer ' + tok})
+        o = (lst.get('open') or [{}])[0].get('settings', {})
+        ok(o.get('area_m2') == 30 and o.get('mode') == 'stand' and o.get('stations') == ['Лаб 1', 'Лаб 2'], 'кабинет: настройки сохранены на сервере (%s)' % o)
+        tp.click('#lsClose'); tp.wait_for_timeout(300); tp.click('#lsClose'); tp.wait_for_selector('#lsOpen', timeout=10000)
+        st, lst = req('POST', '/api/admin/session.list', {'class_id': 'cA1'}, {'Authorization': 'Bearer ' + tok})
+        ok(not lst.get('open'), 'кабинет: урок закрыт после двойного нажатия')
+        tp.check('#lsRemote'); tp.click('#lsOpen'); tp.wait_for_selector('#lsClose', timeout=10000)
+        code = tp.evaluate("(document.querySelector('#lsBox span[style*=letter-spacing]')||{}).textContent||''")
+        ok(len(code) >= 4, 'кабинет: урок открыт заново, код для дома показан (%d зн.)' % len(code))
         ok(not errs, 'ошибок JS нет %s' % errs[:3])
         br.close()
 except Exception as e:  # noqa: BLE001
