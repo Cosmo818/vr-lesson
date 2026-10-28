@@ -555,6 +555,8 @@ function makeCtx(xr){
     { const w0=Z.hints.btns.length;for(const k of [0,2,1]){Z.hk=k;Z.hints.dirty=true;run(4);ok(!Z.hints.over.length&&Z.hints.btns.length>=w0-1,'эйнштейн: размер подсказок '+k+': области на месте, за край не выходят');}
       const ab=Z.hints.btns.filter(b=>b.y===10);ok(ab.length===2,'эйнштейн: кнопки A− / A+');Z.hk=1;ab[1].fn();run(2);ok(Z.hk===2,'эйнштейн: A+ увеличивает подсказки');Z.hints.dirty=true;run(4);Z.hints.btns.find(b=>b.y===10).fn();run(2);ok(Z.hk===1,'эйнштейн: A− уменьшает');Z.hints.dirty=true;run(4); }
     Z.field.dirty=true;Z.hints.dirty=true;Z.ctl.dirty=true;run(4);
+    { const cv=Z.hints.cv,fake={n:0};const calls=[];const cx={fillRect:(x,y,w,h)=>calls.push([x,y,w,h]),strokeRect(){},beginPath(){},moveTo(){},lineTo(){},closePath(){},fill(){},stroke(){},arc(){},fillText(){},save(){},restore(){},measureText:()=>({width:10})};
+      const ug=VR.einstein;void ug;const R0={t:'under',a:[1,2],b:[5,1]};if(VR.einroomDrawHint){VR.einroomDrawHint(cx,R0,0,0,50,false);ok(calls.some(c=>c[1]===0&&c[2]===50)&&calls.some(c=>c[1]===50&&c[2]===50),'эйнштейн: вертикальная подсказка рисует обе фишки');} }
     ok(Z.field.btns.length>=100&&Z.hints.btns.length>=15,'эйнштейн-комната: у поля и подсказок есть области нажатия ('+Z.field.btns.length+' / '+Z.hints.btns.length+')');
     ok(!Z.field.over.length&&!Z.hints.over.length&&!Z.ctl.over.length,'эйнштейн-комната: ничего не за краем панели');
     const g=Z.g,sol=g.pz.sol;let done=false;

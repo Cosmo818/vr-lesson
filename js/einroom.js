@@ -17,16 +17,23 @@ function start(E,S,seed,again,begin){
   S.msg='';S.field.dirty=S.hints.dirty=S.ctl.dirty=true;if(S.favs)S.favs.dirty=true;
 }
 const HK=[.9,1.2,1.5];/* ступени размера подсказок */
+/* правила — по тексту оригинала Einstein 2.0 (res/rules_ru.txt), мышь заменена курком; ex — пример подсказки */
 const RULES=[
-  'Цель: открыть все карточки поля 6×6. В каждой из шести строк (A–F) свой набор из шести фишек, и каждая стоит в строке один раз.',
-  'В клетке лежат все возможные фишки её строки. Лишнюю убери (режим «исключать»), верную выбери (режим «выбирать») — клетка откроется.',
-  'Подсказки по горизонтали: зелёная стрелка ↔ — фишки в соседних колонках; оранжевая стрелка → — левая стоит левее правой; три фишки — средняя стоит ровно между крайними.',
-  'Подсказки по вертикали: две фишки одна под другой стоят в одной колонке.',
-  'Ошибка — проигрыш: можно начать ту же головоломку сначала или взять новую. Нажми подсказку, чтобы пометить её использованной.',
-  'Кнопка «Открыть одну клетку» помогает, но партия не идёт в зачёт. Понравившуюся головоломку сохрани справа.'];
+  {t:'Надо открыть все фишки в квадрате 6×6. В каждой строке фишки одного типа: в первой — арабские цифры, во второй — латинские буквы, в третьей — римские цифры, в четвёртой — игральные кости, в пятой — геометрические фигуры, в шестой — математические символы.'},
+  {t:'Открывать фишки надо методом исключения. Пока фишка не открыта, на её месте показаны все возможные варианты. Курок в режиме «выбрать» открывает фишку, в режиме «убрать» исключает её (хват во время курка — наоборот).'},
+  {t:'Вертикальная подсказка: эти две фишки находятся в одной колонке.',ex:{t:'under',a:[1,2],b:[5,1]}},
+  {t:'Красная двойная стрелка: фишки в соседних колонках, какая левее, а какая правее — неизвестно.',ex:{t:'near',a:[3,6],b:[5,5]}},
+  {t:'Три красные точки: левая фишка находится в колонке левее правой, на любом расстоянии.',ex:{t:'dir',a:[3,3],b:[2,2]}},
+  {t:'Синяя стрелка над тремя фишками: средняя стоит между двумя другими, все три в соседних колонках; какая из крайних левее — неизвестно.',ex:{t:'btw',a:[5,5],c:[4,4],b:[0,5]}},
+  {t:'Использованную подсказку нажми — она потускнеет. Ошибка (убрана верная фишка или выбрана неверная) — проигрыш.'}];
 function rulesDraw(E,S,c,p){
-  p.text('Правила игры «Эйнштейн»',30,14,{size:58,bold:true,maxW:p.W-60});
-  let y=110;for(const t of RULES){y=p.text('• '+t,30,y,{size:42,color:'#f1f5f9',maxW:p.W-60,lh:52})+20;}
+  p.text('Правила игры «Эйнштейн»',30,14,{size:56,bold:true,maxW:p.W-60});
+  let y=100;const T=76;
+  for(const r of RULES){
+    if(r.ex){const w=r.ex.t==='under'?T:3*T,h=r.ex.t==='under'?2*T:T;drawHint(c,r.ex,30,y,T,false);
+      y=Math.max(p.text(r.t,30+w+24,y,{size:38,color:'#f1f5f9',maxW:p.W-84-w,lh:46}),y+h)+18;}
+    else y=p.text(r.t,30,y,{size:38,color:'#f1f5f9',maxW:p.W-60,lh:46})+18;
+  }
 }
 function applyClick(E,S,h,c,r,e){
   const g=S.g;if(g.status!=='play'||S.phase!=='play')return;
@@ -88,6 +95,30 @@ function fieldDraw(E,S,c,p){
     c.fillStyle='#cbd5e1';c.font='36px sans-serif';c.fillText('Правила — на панели справа. Партия № '+g.pz.seed,FX+N*CW/2,FY+N*CH/2+50);
   }
 }
+/* рисунок подсказки как в оригинале Einstein 2.0: светлые фишки с чёрными знаками;
+   «рядом» — красная двойная стрелка на синем квадрате, «левее» — три красные точки на синем квадрате,
+   «между» — три фишки и синяя двойная стрелка над средней; вертикальная — две фишки одна над другой */
+/* градиент с запасным сплошным цветом (на случай урезанного canvas) */
+function grad(c,x,y,T,a,b){const g=c.createLinearGradient&&c.createLinearGradient(x,y,x+T,y+T);if(!g||!g.addColorStop)return b;g.addColorStop(0,a);g.addColorStop(1,b);return g;}
+function hintTile(c,row,n,x,y,T,dim){
+  const g=grad(c,x,y,T,dim?'#6b7280':'#cfc8c4',dim?'#9ca3af':'#f3eeea');
+  c.fillStyle=g;c.fillRect(x,y,T,T);c.strokeStyle='#111';c.lineWidth=Math.max(2,T*.03);c.strokeRect(x+1,y+1,T-2,T-2);
+  E1.drawTile(c,row,n,x,y,T,dim?'#374151':'#111');
+}
+function dArrow(c,x1,x2,y,h,col){/* двойная стрелка ↔ толщиной h */
+  const a=h*1.6;c.fillStyle=col;c.beginPath();
+  c.moveTo(x1,y);c.lineTo(x1+a,y-a*.75);c.lineTo(x1+a,y-h/2);c.lineTo(x2-a,y-h/2);c.lineTo(x2-a,y-a*.75);c.lineTo(x2,y);
+  c.lineTo(x2-a,y+a*.75);c.lineTo(x2-a,y+h/2);c.lineTo(x1+a,y+h/2);c.lineTo(x1+a,y+a*.75);c.closePath();c.fill();
+}
+function blueSq(c,x,y,T,dim){c.fillStyle=grad(c,x,y,T,dim?'#6b7280':'#8f8ff0',dim?'#d1d5db':'#ffffff');c.fillRect(x,y,T,T);}
+function drawHint(c,s,x,y,T,dim){
+  const red=dim?'#4b5563':'#ef1111',blue=dim?'#4b5563':'#1630f0';
+  if(s.t==='under'){hintTile(c,s.a[0],s.a[1],x,y,T,dim);hintTile(c,s.b[0],s.b[1],x,y+T,T,dim);return;}
+  hintTile(c,s.a[0],s.a[1],x,y,T,dim);hintTile(c,s.b[0],s.b[1],x+2*T,y,T,dim);
+  if(s.t==='near'){blueSq(c,x+T,y,T,dim);dArrow(c,x+T+T*.08,x+2*T-T*.08,y+T/2,T*.13,red);}
+  else if(s.t==='dir'){blueSq(c,x+T,y,T,dim);c.fillStyle=red;for(let k=-1;k<=1;k++){c.beginPath();c.arc(x+1.5*T+k*T*.3,y+T/2,T*.1,0,6.283);c.fill();}}
+  else if(s.t==='btw'){hintTile(c,s.c[0],s.c[1],x+T,y,T,dim);dArrow(c,x+T*.75,x+2.25*T,y+T*.14,T*.1,blue);}
+}
 function hintDraw(E,S,c,p){
   if(S.phase==='idle'||S.showRules)return rulesDraw(E,S,c,p);
   const g=S.g,rules=g.pz.rules,K=HK[S.hk===undefined?1:S.hk],T=Math.round(84*K),sc=v=>Math.round(v*K);
@@ -96,29 +127,17 @@ function hintDraw(E,S,c,p){
   p.button(p.W-30-230,10,104,60,'A−',()=>{S.hk=Math.max(0,(S.hk===undefined?1:S.hk)-1);S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)<=0});
   p.button(p.W-30-110,10,104,60,'A+',()=>{S.hk=Math.min(HK.length-1,(S.hk===undefined?1:S.hk)+1);S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)>=HK.length-1});
   p.text('Нажми подсказку, чтобы отметить её как использованную',30,72,{size:26,color:'#94a3b8',maxW:p.W-60});
-  const tile=(r,t,x,y,col)=>{c.fillStyle='#1e293b';c.fillRect(x,y,T,T);E1.drawTile(c,r,t,x,y,T,col);};
   const horiz=[],vert=[];
   rules.forEach((s,i)=>{const k=E1.showOf(s);if(k==='horiz')horiz.push(i);else if(k==='vert')vert.push(i);});
-  const dim=i=>S.used.has(i),col=i=>dim(i)?'#475569':'#e5e7eb';
+  const dim=i=>S.used.has(i);
   const toggle=i=>()=>{if(S.used.has(i))S.used.delete(i);else S.used.add(i);S.hints.dirty=true;};
-  let y=130,cw=3*T+8+44,ch=T+34;const BW=3*T+8,perH=Math.max(1,Math.floor((p.W-30)/cw)),vstep=T+40,perV=Math.max(1,Math.floor((p.W-30)/vstep));
-  c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('Рядом, левее, между (по горизонтали):',30,y+8);y+=48;
-  horiz.forEach((i,k)=>{
-    const s=rules[i],x=30+(k%perH)*cw,yy=y+((k/perH)|0)*ch,cc=col(i);
-    p.area(x-6,yy-4,BW+12,T+8,toggle(i));
-    /* все блоки одной ширины: [фишка][знак или фишка][фишка] */
-    const sym=(ch1,colr)=>{c.fillStyle=colr;c.font='bold '+Math.round(T*.7)+'px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText(ch1,x+T+4+T/2,yy+T/2);c.textBaseline='alphabetic';};
-    if(s.t==='near'){tile(s.a[0],s.a[1],x,yy,cc);sym('↔',dim(i)?'#475569':'#4ade80');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);}
-    else if(s.t==='dir'){tile(s.a[0],s.a[1],x,yy,cc);sym('→',dim(i)?'#475569':'#fb923c');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);}
-    else{tile(s.a[0],s.a[1],x,yy,cc);tile(s.c[0],s.c[1],x+T+4,yy,dim(i)?'#475569':'#fde68a');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);if(!dim(i)){c.strokeStyle='#fbbf24';c.lineWidth=4;c.strokeRect(x+T+4,yy,T,T);}}
-  });
+  const BW=3*T,cw=BW+sc(40),ch=T+sc(26),perH=Math.max(1,Math.floor((p.W-30)/cw)),vstep=T+sc(36),perV=Math.max(1,Math.floor((p.W-30)/vstep));
+  let y=130;
+  c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('По горизонтали:',30,y+8);y+=48;
+  horiz.forEach((i,k)=>{const x=30+(k%perH)*cw,yy=y+((k/perH)|0)*ch;p.area(x-6,yy-6,BW+12,T+12,toggle(i));drawHint(c,rules[i],x,yy,T,dim(i));});
   y+=Math.ceil(horiz.length/perH)*ch+20;
-  c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('В одной колонке (по вертикали):',30,y+8);y+=48;
-  vert.forEach((i,k)=>{
-    const s=rules[i],x=30+(k%perV)*vstep,yy=y+((k/perV)|0)*(2*T+30),cc=col(i);
-    p.area(x-4,yy-4,T+8,2*T+8,toggle(i));
-    tile(s.a[0],s.a[1],x,yy,cc);tile(s.b[0],s.b[1],x,yy+T,cc);c.fillStyle=dim(i)?'#475569':'#60a5fa';c.fillRect(x+T/2-3,yy+T-9,6,18);
-  });
+  c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('По вертикали (в одной колонке):',30,y+8);y+=48;
+  vert.forEach((i,k)=>{const x=30+(k%perV)*vstep,yy=y+((k/perV)|0)*(2*T+sc(26));p.area(x-4,yy-4,T+8,2*T+8,toggle(i));drawHint(c,rules[i],x,yy,T,dim(i));});
   const open=rules.filter(s=>s.t==='open');
   if(open.length&&p.H>0)p.text('Сразу открыто фишек: '+open.length,30,p.H-60,{size:28,color:'#94a3b8',maxW:700});
 }
@@ -155,6 +174,7 @@ function favDraw(E,S,c,p){
     p.button(W-X-72,y,72,80,'✕',()=>{VR.games.favToggle('einstein',sd);S.favs.dirty=true;},{size:30,bg:'#7f1d1d'});});
   if(F.length>9)p.text('и ещё '+(F.length-9),X,176+9*92,{size:24,color:'#94a3b8'});
 }
+VR.einroomDrawHint=drawHint;
 ROOMS.ein={
   title:'Эйнштейн',env:{floor:[.06,.07,.14],wall:[.12,.14,.3],trim:[.55,.5,1],grid:[.35,.3,.8]},spawn:{x:0,z:-.4},
   hint:'Эйнштейн: открой все фишки 6×6 по подсказкам. Курок на фишку — выбрать её (режим «убрать» переключается кнопкой).',
