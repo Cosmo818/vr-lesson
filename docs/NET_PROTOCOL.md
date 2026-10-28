@@ -74,11 +74,16 @@ Hub → клиент сам: `away {slot, on}` (нет поз > 3 с или об
 | `GET /api/session/live` (ключ шлема) | шлем школы | открытые сессии школы: `id, class_id, kind, room, created` |
 | `POST /api/room/ticket {session_id, student_id, pin_hash}` (ключ шлема) | шлем | сервер сверяет: ученик активен, школа и класс, `pinHash` (`compare_digest`), не в `banned`; ученик без кода — только если `settings.noPin`; пауза по ученику после 5 ошибок (30 с, растёт вдвое до 15 мин — как у входа), общего лимита по IP нет (класс входит пачкой), лимит шлема 120 билетов/мин. На любую причину отказа — одинаковый 403 `denied` |
 | `POST /api/room/ticket {session_id}` (Bearer) | учитель класса → `t`; директор и выше, эксперт школы → `a`; остальные 403 | uid в билете `u:<id пользователя>` |
-| `POST /api/room/ticket {code, student_id, pin_hash}` | удалённый ученик | только `settings.remote`; 10 запросов/мин и пауза после ошибок по IP |
+| `POST /api/room/ticket {code, student_id, pin_hash}` | удалённый ученик | только `settings.remote`; 10 запросов/мин и пауза после ошибок по IP; ошибки кода ученика считаются отдельно от шлема (чужой с кодом урока не ставит на паузу ученика в классе) |
 | `POST /api/play/join {class_id, student_id, pin_hash}` (ключ шлема) | шлем | класс должен иметь `playAllowed: true`; находит или открывает единственную `play`-сессию класса (чат `phrases`) и выдаёт билет. Окно времени школы — шаг Н12 |
-| `POST /api/hub/report` | hub | тело ≤ 64 КБ, заголовок `X-Sig = HMAC-SHA256(k_report, тело)`; идемпотентно (`first` — min, `last` — max, `joins` — max; чат по сессия+ts+uid); `kicked` → `banned`; ответ `{closed, banned, settings}` |
+| `POST /api/hub/report` | hub | тело ≤ 64 КБ, заголовок `X-Sig = HMAC-SHA256(k_report, тело)`, в теле `ts` (мс) — старше 5 мин отказ 400; последний отчёт (`final`) опустевшей **игровой** закрывает её (урок закрывает только учитель); идемпотентно (`first` — min, `last` — max, `joins` — max; чат по сессия+ts+uid); `kicked` → `banned`; ответ `{closed, banned, settings}` |
 | `GET /api/hub/sessions` | hub | `X-Ts` (мс, ±60 с) и `X-Sig = HMAC(k_report, 'sessions:' + ts)`; открытые и закрытые за сутки |
 Билет: `{aud: hubId||'center', sid, k, sch, cls, uid, r, n, exp, j}` (+`kid`, если задан `hubKid`); ответ `{ticket, exp, role, hubs:[{url, kind:'center'}], sess:{id, kind, room, chat, mode}}` — `url` берётся из `hubUrl` в `config.json` и приходит только с сервера (А14).
 В журнал аудита: `session.open/close/settings/kick/unkick/ticket`, `session.chat.view`, `play.open`, `config.net`, `config.hubSecret` (без значения); отчёты hub пишутся как `cli` / `hub:center`.
 
 Запуск hub против app.py: `python3 server/hub.py --config /data/config.json` (нужны `hubSecret`, `hubOrigins`; `hubAppUrl` — адрес app.py, по умолчанию отчёты пишутся только если задан `--report-file`). Раз в 60 с — отчёт, раз в 10 с — опрос закрытых сессий (`--report_s`, `--poll_s` для тестов).
+
+### Остаточные риски (ревью Opus Н4, 28.10.2026)
+- Сервер сверяет `pinHash`, а не сам код: шлем школы хранит хэши кодов своих учеников (так работает вход без сети), значит украденный ключ шлема даёт войти в урок за любого ученика этой школы. Это не шире, чем уже есть (тот же ключ пишет результаты за учеников); защита — отзыв шлема в кабинете.
+- Отчёт hub можно повторить в течение 5 мин, если перехватить его во внутренней сети между hub и app.py; все действия отчёта монотонны, кроме `kicked` (повтор снова удалит ученика, которого учитель только что вернул). Канал hub↔app — только внутри Docker/localhost.
+- Эксперт школы получает билет наблюдателя в любую сессию школы, включая игровую (так в плане §5.2).

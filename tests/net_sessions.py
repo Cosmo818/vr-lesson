@@ -4,7 +4,7 @@ import base64, glob, hashlib, hmac, json, os, secrets, socket, sqlite3, struct, 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 tmp = tempfile.mkdtemp()
-PORT, HPORT = 8801, 8802
+PORT, HPORT = 8811, 8812
 fails = 0
 os.environ.update(DATA_DIR=tmp)
 sys.path.insert(0, os.path.join(ROOT, 'server'))
@@ -104,7 +104,8 @@ def sig(raw):
     return HT.sign_report(K['report'], raw)
 
 
-def report(body, good=True):
+def report(body, good=True, ts=None):
+    body = dict(body, ts=int(time.time() * 1000) if ts is None else ts)
     raw = json.dumps(body).encode()
     return req('POST', '/api/hub/report', headers={'X-Sig': sig(raw) if good else '0' * 64}, raw=raw)
 
@@ -213,6 +214,11 @@ try:
     ok(st == 429 and b.get('retry', 0) >= 1, 'после 5 ошибок по ученику — пауза, даже верный код → 429')
     ok(T({'session_id': S1, 'student_id': 'st1', 'pin_hash': 'h-st1'})[0] == 200, 'пауза у одного ученика другим не мешает')
     dbq('delete from login_fail')
+    for _ in range(6):
+        dbq('delete from login_fail where k like "rt:%" or k like "u:code:%"')
+        req('POST', '/api/room/ticket', {'code': CODE, 'student_id': 'st4', 'pin_hash': 'h-bad'})
+    ok(req('POST', '/api/room/ticket', {'session_id': S2, 'student_id': 'st4', 'pin_hash': 'h-st4'}, DA)[0] == 200, 'ошибки удалённого входа не ставят на паузу ученика в классе (шлем)')
+    dbq('delete from login_fail')
     ok(T({'session_id': S1, 'student_id': 'st2', 'pin_hash': 'h-st2'})[0] == 200, 'после паузы вход работает (сброс при успехе)')
     # 30 учеников подряд с одного адреса — класс входит пачкой
     codes = [req('POST', '/api/room/ticket', {'session_id': S1, 'student_id': 'st%d' % (6 + i % 10), 'pin_hash': 'h-st%d' % (6 + i % 10)}, DA)[0] for i in range(30)]
@@ -251,6 +257,9 @@ try:
     ok(req('POST', '/api/play/join', {'class_id': 'cA1', 'student_id': 'st1', 'pin_hash': 'h-st1'}, DA)[0] == 403, 'play.join: класс не разрешил игровую → 403')
     dbq("update classes set doc = json_set(doc, '$.playAllowed', json('true')) where id = 'cA1'")
     PJ = lambda cls, sid, pin, h=DA: (dbq('delete from login_fail where k like "rt:%"'), req('POST', '/api/play/join', {'class_id': cls, 'student_id': sid, 'pin_hash': pin}, h))[1]  # noqa: E731
+    dbq('delete from login_fail')
+    ok(PJ('cA1', 'st1', 'h-wrong')[0] == 403 and dbq("select count(*) from room_sessions where kind='play'")[0][0] == 0, 'play.join с неверным кодом сессию не открывает')
+    dbq('delete from login_fail')
     st, b = PJ('cA1', 'st1', 'h-st1')
     pl = dec(b['ticket']) if st == 200 else {}
     ok(st == 200 and pl.get('k') == 'play' and pl.get('r') == 's' and pl.get('cls') == 'cA1' and b['sess']['chat'] == 'phrases', 'play.join: открыта игровая сессия класса, билет ученика')
@@ -266,6 +275,7 @@ try:
     day = int(time.time())
     rb = {'sid': S1, 'attend': [{'uid': 'st1', 'role': 's', 'first': 1000, 'last': 5000, 'joins': 2}, {'uid': 'u:' + UID['tA1'], 'role': 't', 'first': 900, 'last': 6000, 'joins': 1}],
           'chat': [{'ts': 111, 'uid': 'st1', 'kind': 'phrase', 'code': 'hello'}, {'ts': 112, 'uid': 'st2', 'kind': 'text', 'text': 'привет', 'flag': True}], 'kicked': []}
+    ok(report(rb, ts=int(time.time() * 1000) - 600000)[0] == 400 and report({'sid': S1, 'attend': []}, ts='x')[0] == 400, 'отчёт старше 5 мин или без метки времени → 400 (повтор перехваченного)')
     ok(report(rb, good=False)[0] == 401 and report(rb, good=False)[0] == 401, 'отчёт с плохой подписью → 401, в базу не попадает')
     ok(dbq('select count(*) from room_attend')[0][0] == 0, 'после плохой подписи посещаемости нет')
     st, b = report(rb)
@@ -300,6 +310,9 @@ try:
     ok(req('GET', '/api/hub/sessions', None, {'X-Ts': old, 'X-Sig': sig(('sessions:' + old).encode())})[0] == 401, 'опрос со старой меткой времени → 401 (повтор перехваченного запроса)')
     ok(req('GET', '/api/hub/sessions', None, {'X-Ts': ts, 'X-Sig': '0' * 64})[0] == 401 and req('GET', '/api/hub/sessions')[0] == 401, 'опрос без подписи → 401')
 
+    ok(report({'sid': PS, 'attend': [], 'final': True})[0] == 200 and dbq('select status, closed_by from room_sessions where id=?', PS)[0] == ('closed', 'hub'), 'опустевшая игровая закрывается по последнему отчёту hub')
+    ok(report({'sid': S1, 'attend': [], 'final': True})[0] == 200 and dbq('select status from room_sessions where id=?', S1)[0][0] == 'open', 'урок по последнему отчёту не закрывается (только учитель)')
+
     # ---- чтение чата
     ok(len(adm('tA1', 'session.chat', {'id': S1})[1]['chat']) == 2 and cnt('session.chat.view') == 1, 'учитель читает чат своего урока; просмотр записан в журнал')
     ok(adm('tA2', 'session.chat', {'id': S1})[0] == 404 and adm('exA', 'session.chat', {'id': S1})[0] == 403 and adm('dirB', 'session.chat', {'id': S1})[0] == 404, 'чужой учитель, эксперт, директор другой школы чат не читают')
@@ -308,7 +321,7 @@ try:
     ok(adm('tA2', 'session.close', {'id': S1})[0] == 404, 'чужой учитель урок не закрывает')
     ok(adm('tA1', 'session.close', {'id': S1})[0] == 200 and adm('tA1', 'session.close', {'id': S1})[0] == 200, 'учитель закрывает урок (повтор безопасен)')
     r = dbq('select status, closed_at, closed_by from room_sessions where id=?', S1)[0]
-    ok(r[0] == 'closed' and r[1] and r[2] == UID['tA1'] and dbq('select count(*) from room_sessions where id=?', S1)[0][0] == 1 and cnt('session.close') == 1, 'закрыт, а не удалён; записано кем; в журнале один раз')
+    ok(r[0] == 'closed' and r[1] and r[2] == UID['tA1'] and dbq('select count(*) from room_sessions where id=?', S1)[0][0] == 1 and dbq("select count(*) from audit_log where action='session.close' and actor_kind='user'")[0][0] == 1, 'закрыт, а не удалён; записано кем; в журнале один раз')
     ok(T({'session_id': S1, 'student_id': 'st1', 'pin_hash': 'h-st1'})[0] == 404 and TU('tA1', S1)[0] == 404, 'в закрытый урок билеты не выдаются')
     ok(S1 not in [x['id'] for x in req('GET', '/api/session/live', None, DA)[1]['sessions']], 'закрытый урок пропал из live')
     st, b = report(dict(rb, attend=[], chat=[]))

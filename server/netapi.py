@@ -23,6 +23,7 @@ MAX_SEATS_HI = 200
 BANNED_MAX = 200
 REPORT_MAX = 64 * 1024
 SIG_SKEW_MS = 60000
+REPORT_SKEW_MS = 300000
 CHAT_BODY_MAX = 500
 
 
@@ -252,14 +253,14 @@ def issue(A, c, row, uid, role, name, now, cfg, k):
     return out
 
 
-def student_check(A, c, row, student_id, pin_hash, ip, now):
+def student_check(A, c, row, student_id, pin_hash, ip, now, pfx='pin:'):
     """Ученик допускается в сессию: активен, школа и класс совпадают, код верный (или сессия «без кода»), не удалён. → (None, имя) или (ответ-ошибка, None).
     Общее «denied» на любую причину — чтобы не подсказывать, какого ученика нет в классе. Пауза после ошибок — как у входа (register_fail по ключу pin:<id>)."""
     sid = str(student_id or '')[:40]
     ph = str(pin_hash or '')[:128]
     if not HT._ID.match(sid):
         return (403, {'error': 'denied'}), None
-    lock = locked(c, 'pin:' + sid, now)      # пауза по ученику; общего счётчика по IP нет: класс из 30 детей входит за одним адресом школы
+    lock = locked(c, pfx + sid, now)      # пауза по ученику; общего счётчика по IP нет: класс из 30 детей входит за одним адресом школы
     if lock:
         return (429, {'error': 'too many attempts', 'retry': lock}), None
     r = c.execute('SELECT name, school, status, doc FROM students WHERE id = ?', (sid,)).fetchone()
@@ -272,9 +273,9 @@ def student_check(A, c, row, student_id, pin_hash, ip, now):
     elif good:
         good = bool(st.get('noPin'))
     if not good:
-        A.register_fail(c, 'pin:' + sid, ip, now)
+        A.register_fail(c, pfx + sid, ip, now)
         return (403, {'error': 'denied'}), None
-    c.execute('DELETE FROM login_fail WHERE k = ?', ('u:pin:' + sid,))
+    c.execute('DELETE FROM login_fail WHERE k = ?', ('u:' + pfx + sid,))
     return None, r[0]
 
 
@@ -318,7 +319,8 @@ def ticket(A, c, dev, user, b, ip, now):
         row = sess_row(c, sid) if SID_RE.match(sid) else None
         if not row or row[10] != 'open' or row[1] != dev['school']:
             return 404, {'error': 'no session'}
-    err, name = student_check(A, c, row, b.get('student_id'), b.get('pin_hash'), ip, now)
+    # удалённый вход считает ошибки отдельно: чужой с кодом урока не должен ставить на паузу ученика в классе
+    err, name = student_check(A, c, row, b.get('student_id'), b.get('pin_hash'), ip, now, 'rpin:' if remote else 'pin:')
     if err:
         return err
     return 200, issue(A, c, row, str(b['student_id']), 's', name, now, cfg, k)
@@ -338,6 +340,12 @@ def play_join(A, c, dev, b, ip, now):
         return 403, {'error': 'play off'}
     row = c.execute("SELECT id, school, class_id, kind, room, host_kind, host_id, created, closed_at, closed_by, status, hub, settings, code_hash FROM room_sessions WHERE class_id = ? AND kind = 'play' AND status = 'open'", (cid,)).fetchone()
     if not row:
+        probe = (None, r[0], cid, 'play', 'play', None, None, None, None, None, 'open', 'center', '{}', None)   # проверка ученика до открытия сессии
+        if rate(c, 'rt:dev:' + dev['id'], RATE_TICKET, now):
+            return 429, {'error': 'too many attempts'}
+        err, _ = student_check(A, c, probe, b.get('student_id'), b.get('pin_hash'), ip, now)
+        if err:
+            return err
         sid = 'rs-' + secrets.token_hex(6)
         s = {'chat': 'phrases', 'mode': 'seat', 'maxSeats': 60, 'pointers': False, 'noPin': False, 'remote': False, 'banned': []}
         c.execute('INSERT INTO room_sessions(id, school, class_id, kind, room, host_kind, host_id, created, status, hub, settings) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -379,6 +387,9 @@ def report(A, c, raw, ip, now):
     except ValueError:
         return 400, {'error': 'bad json'}
     sid = str(b.get('sid') or '') if isinstance(b, dict) else ''
+    ts = b.get('ts') if isinstance(b, dict) else None
+    if not isinstance(ts, int) or isinstance(ts, bool) or abs(now - ts) > REPORT_SKEW_MS:   # перехваченный старый отчёт повторно не принимается
+        return 400, {'error': 'stale report'}
     row = sess_row(c, sid) if SID_RE.match(sid) else None
     if not row:
         return 404, {'error': 'no session'}
@@ -408,6 +419,9 @@ def report(A, c, raw, ip, now):
             st['banned'] = ban + new
             c.execute('UPDATE room_sessions SET settings = ? WHERE id = ?', (json.dumps(st, ensure_ascii=False), sid))
             A.audit(c, ('cli', 'hub:center', ip), 'session.kick', 'session', sid, row[1], {'uids': new, 'via': 'hub'})
+    if b.get('final') and row[3] == 'play' and row[10] == 'open':   # игровая опустела (hub её забыл) — закрываем; урок закрывает только учитель
+        c.execute("UPDATE room_sessions SET status = 'closed', closed_at = ?, closed_by = 'hub' WHERE id = ?", (now, sid))
+        A.audit(c, ('cli', 'hub:center', ip), 'session.close', 'session', sid, row[1], {'why': 'empty', 'kind': 'play'})
     return 200, control(A, c, [sid])
 
 

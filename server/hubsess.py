@@ -418,7 +418,7 @@ class Core:
         for s in sess.seats.values():
             if s.conn:
                 self.touch(sess, s)
-        body = {'sid': sess.id, 'attend': list(sess.attend.values()), 'chat': [], 'kicked': list(sess.kicked)}
+        body = {'sid': sess.id, 'ts': int(self.wall() * 1000), 'attend': list(sess.attend.values()), 'chat': [], 'kicked': list(sess.kicked)}
         if final:
             body['final'] = True
         if ended:
