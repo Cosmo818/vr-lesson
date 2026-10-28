@@ -490,7 +490,7 @@ void main(){
     respawn();
     if(E.hooks.onRoom)E.hooks.onRoom(id);
   };
-  E.goRoom=id=>{E.beep(440,.08);E.beep(660,.12);E.loadRoom(id);const R=E.rooms[id];if(R&&R.hint)E.toast(R.hint);};
+  E.goRoom=id=>{if(E.frozen){E.toast('Учитель просит внимания','#facc15');return;}E.beep(440,.08);E.beep(660,.12);E.loadRoom(id);const R=E.rooms[id];if(R&&R.hint)E.toast(R.hint);};
   function buildEnv(env){
     const S=E.envStatics,fl=env.floor||[.07,.1,.18];
     if(env.open){

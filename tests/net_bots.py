@@ -252,6 +252,18 @@ check('реакция не чаще раза в 2 с', len([m for m in s2.of('ev
 core.on_text(s1, b'{"t":"p","c":123.5}')
 check('часы: P {c,s}', s1.of('P') and s1.of('P')[0]['c'] == 123.5 and isinstance(s1.of('P')[0]['s'], int))
 
+t2 = join('t-09', 't', n='Борис В.')
+core.on_text(t2, b'{"t":"ev","k":"freeze","on":true}')
+core.on_text(t2, b'{"t":"bye"}')
+check('Н10: ушёл один из учителей — «внимание» остаётся', core.sessions['rs-aaa'].freeze is True)
+tseats = [x for x in core.sessions['rs-aaa'].seats.values() if x.role == 't']
+for x in tseats:
+    x.role = 'x'
+t3 = join('t-08', 't', n='Вера Г.')
+core.on_text(t3, b'{"t":"bye"}')
+for x in tseats:
+    x.role = 't'
+check('Н10: ушёл последний учитель — «внимание» снято, всем freeze off', core.sessions['rs-aaa'].freeze is False and any(m.get('k') == 'freeze' and m.get('on') is False for m in s2.of('ev')))
 print('--- удаление, второе подключение, away, удержание')
 core.on_text(s1, json.dumps({'t': 'ev', 'k': 'kick', 'slot': 3}).encode())
 check('ученик не может удалить', s2.code is None and s1.of('err')[-1]['code'] == 'role')
@@ -259,6 +271,7 @@ core.on_text(teacher, json.dumps({'t': 'ev', 'k': 'kick', 'slot': 1}).encode())
 check('учитель не удаляет учителя', teacher.code is None)
 core.on_text(teacher, json.dumps({'t': 'ev', 'k': 'kick', 'slot': 3}).encode())
 check('удалённый учителем → 4012', s2.code == 4012)
+check('Н10: удаление — серверу сразу отдельным отчётом', any('s-02' in x['kicked'] for x in REP if x['sid'] == 'rs-aaa'))
 check('всем — roster- why kick', any(m.get('slot') == 3 and m.get('why') == 'kick' for m in s1.of('roster-')))
 back = join('s-02')
 check('удалённый с новым билетом → 4012', back.code == 4012)

@@ -401,7 +401,8 @@ def control(A, c, sids):
         if r[10] == 'closed':
             out['closed'].append(sid)
             continue
-        out['banned'][sid] = list(st.get('banned') or [])   # всегда, и пустой: hub заменяет свой список (возврат удалённого)
+        if isinstance(st.get('banned'), list):   # и пустой: hub заменяет свой список (возврат удалённого); нет поля (настройки испорчены) — не шлём, hub держит свой
+            out['banned'][sid] = [u for u in st['banned'] if isinstance(u, str)]
         out['settings'][sid] = {k: st[k] for k in ('chat', 'mode', 'maxSeats', 'pointers', 'stations') if k in st}
     return out
 

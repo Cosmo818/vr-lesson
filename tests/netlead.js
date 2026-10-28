@@ -72,6 +72,9 @@ ok(!E.frozen,'«внимание» снято');
 E.tick();
 ok(gone.at(-1)==='phys','после снятия «внимания» отложенный переход выполняется');
 
+E.isTeacher=()=>true;fire('ev',{t:'ev',k:'freeze',slot:1,on:true});
+ok(!E.frozen,'учителя в шлеме «внимание» не останавливает');
+fire('ev',{t:'ev',k:'freeze',slot:1,on:false});E.isTeacher=()=>false;
 /* ---- переход по табличке ---- */
 E.roomId='hall';gone.length=0;
 fire('ev',{t:'ev',k:'room',slot:1,id:'chem'});
@@ -102,9 +105,9 @@ fire('ev',{t:'ev',k:'gather',slot:1});ok(poses.length===n1,'учитель в ш
 /* ---- за ведущим ---- */
 E.roomId='phys';gone.length=0;
 fire('ev',{t:'ev',k:'follow',slot:1,on:true});ok(NL.following(),'«за мной» включено');
-fire('roster',{op:'~',slot:1,room:'chem'});T+=3100;E.tick();
+fire('roster',{t:'room',op:'room',slot:1,id:'chem'});T+=3100;E.tick();   /* как net.js из {t:'room',slot,id} hub */
 ok(gone.at(-1)==='chem-hub','ведущий перешёл — ученик за ним (через табличку)');
-fire('ev',{t:'ev',k:'follow',slot:1,on:false});fire('roster',{op:'~',slot:1,room:'hall'});T+=3100;E.tick();
+fire('ev',{t:'ev',k:'follow',slot:1,on:false});fire('roster',{t:'room',op:'room',slot:1,id:'hall'});T+=3100;E.tick();
 ok(gone.at(-1)==='chem-hub'&&!NL.following(),'«за мной» выключено — дальше не ведёт');
 
 /* ---- указки соседей и своя указка ---- */

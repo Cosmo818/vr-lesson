@@ -311,6 +311,7 @@ class Core:
             if c:
                 c.seat = None
                 c.close(4012, 'removed')
+            self.report_one(sess)     # удаление — серверу сразу, не ждать минуты (перезапуск hub не потеряет запрет)
             return
         if k == 'st':   # статус безопасности (Н9): только учителю и наблюдателям, во всех комнатах
             v = {}
@@ -352,6 +353,9 @@ class Core:
             del self.live[s.uid]
         s.conn = None
         self.bcast(sess, {'t': 'roster-', 'slot': s.slot, 'why': why})
+        if s.role == 't' and sess.freeze and not any(x.role == 't' for x in sess.seats.values()):
+            sess.freeze = False      # ведущий ушёл — «внимание» не остаётся навсегда (Н10)
+            self.bcast(sess, {'t': 'ev', 'k': 'freeze', 'slot': s.slot, 'on': False})
 
     def touch(self, sess, s):
         if sess and s.uid in sess.attend:

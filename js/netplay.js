@@ -127,6 +127,7 @@ function onRoster(m){
   const s=m.slot;
   if(m.op==='-'){delete S.roster[s];delete S.bufs[s];delete S.alpha[s];delete S.react[s];return;}
   if(m.op==='away'){const r=S.roster[s];if(r)r.away=m.on===undefined?true:!!m.on;return;}
+  if(m.op==='room'){const r=S.roster[s];if(r&&typeof m.id==='string')r.room=m.id;return;}   /* hub: {t:'room',slot,id} — участник сменил комнату */
   const o=Object.assign({},S.roster[s]||{},m);delete o.op;delete o.t;
   if(m.op==='+'||m.op==='~')o.away=false;
   S.roster[s]=o;

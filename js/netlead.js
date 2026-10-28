@@ -77,13 +77,16 @@ function roomFor(id){
 }
 function goNow(id){
   const E=S.E,r=roomFor(id);if(!E||!r)return false;
-  if(E.roomId!==r)try{E.goRoom(r);}catch(e){return false;}
-  return true;
+  const fz=E.frozen;E.frozen=false;                                                 /* переход по команде ведущего — и при «внимании» */
+  try{if(E.roomId!==r)E.goRoom(r);}catch(e){E.frozen=fz;return false;}
+  E.frozen=fz;return true;
 }
 
 /* ---------- события ---------- */
 function setFreeze(on){
   const E=S.E;S.frozen=!!on;if(!E)return;
+  let tch=false;try{tch=E.isTeacher();}catch(e){}
+  if(tch){E.frozen=false;return;}                                                   /* учителя в шлеме «внимание» не останавливает */
   E.frozen=S.frozen;
   if(S.frozen){
     try{if(E.laser&&E.laser.on&&!E.isTeacher())E.toggleLaser(false);}catch(e){}
@@ -148,8 +151,10 @@ function onEv(m){
 function onRoster(m){
   if(!m||typeof m.slot!=='number')return;
   if(m.op==='-'){delete S.points[m.slot];if(S.follow===m.slot)S.follow=null;return;}
-  if(S.follow===m.slot&&typeof m.room==='string'&&m.room!==S.lastRoom[m.slot]){S.lastRoom[m.slot]=m.room;callTo(m.room,'Учитель перешёл');}
-  else if(typeof m.room==='string')S.lastRoom[m.slot]=m.room;
+  const rm=m.op==='room'?m.id:m.room;                                                /* смена комнаты — op 'room' с id; roster~ — с room */
+  if(typeof rm!=='string')return;
+  if(S.follow===m.slot&&rm!==S.lastRoom[m.slot]){S.lastRoom[m.slot]=rm;callTo(rm,'Учитель перешёл');}
+  else S.lastRoom[m.slot]=rm;
 }
 function onClosed(c){
   S.points={};S.follow=null;S.go=null;
