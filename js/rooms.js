@@ -94,7 +94,7 @@ ROOMS.hall={
   title:'Холл',env:{floor:[.07,.1,.18],wall:[.12,.17,.3],trim:[.2,.7,1],grid:[.25,.55,.9]},
   hint:'Холл. Наведи луч на дверь или кнопку и нажми курок. Меню: кнопка A или X.',
   build(E,S){
-    E.addPanel({w:3.4,h:2.7,pos:[0,1.5,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
+    E.addPanel({w:3.4,h:3.2,pos:[0,1.75,-5.86],yaw:0,accent:'#3b82f6',draw:(c,p)=>{
       const st=E.student;
       p.text('Привет, '+(st?st.name:'гость')+'!',50,30,{size:64,bold:true});
       p.text((st&&st.grade?st.grade+' класс  ·  ':'')+'Выбери комнату, изучи её и пройди тест.',50,112,{size:34,color:'#b8c7ea'});
@@ -104,7 +104,9 @@ ROOMS.hall={
         const b=best&&best[k].best!==null?'  ✓ '+best[k].best+'/'+best[k].total:'';
         p.button(x,y,450,92,sub.title+b,()=>E.goRoom(entryOf(k)),{bg:sub.color,fg:'#0b1020',size:40});
       });
-      p.text('Стик вперёд и отпустить — телепорт  ·  Стик вбок — поворот  ·  Кнопка A или X — меню\nТесты учителя — на стене у тебя за спиной',50,700,{size:28,color:'#cbd5e1',lh:38});
+      p.text('Игры',50,690,{size:30,color:'#94a3b8'});
+      [['ein','Эйнштейн','#818cf8'],['play','Шахматы','#fbbf24'],['arena','Турниры','#f472b6']].forEach(([id,t,col],k)=>p.button(50+k*308,730,296,86,t,()=>E.goRoom(id),{bg:col,fg:'#0b1020',size:38}));
+      p.text('Стик вперёд и отпустить — телепорт  ·  Стик вбок — поворот  ·  Кнопка A или X — меню\nТесты учителя — на стене у тебя за спиной',50,838,{size:28,color:'#cbd5e1',lh:38});
     }});
     const gr=E.student&&E.student.grade?E.student.grade:5;
     for(const [k,x,z,yaw] of DOORS)if(VR.Store.roomOn(k,gr))E.door(x,z,yaw,entryOf(k),D.subjects[k].title,D.subjects[k].color);
