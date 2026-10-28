@@ -126,7 +126,7 @@ def can_manage(A, c, p, row):
     cr = A.class_row(c, row[2])
     if not cr:
         return False
-    return A.class_in_scope(A.scope(c, p), cr[0], cr[1])
+    return A.class_readable(A.scope(c, p), row[2], cr[0], cr[1])
 
 
 # ------------------------------------------------------------------ действия кабинета: POST /api/admin/session.*
@@ -142,7 +142,7 @@ def admin(A, c, p, act, b, ip):
         cid = str(b.get('class_id') or '')[:40]
         cr = A.class_row(c, cid)
         st = c.execute('SELECT status FROM classes WHERE id = ?', (cid,)).fetchone() if cr else None
-        if not cr or not A.class_in_scope(A.scope(c, p), cr[0], cr[1]) or st[0] != 'active':
+        if not cr or not A.class_readable(A.scope(c, p), cid, cr[0], cr[1]) or st[0] != 'active':
             raise A.AdminError(404, 'Такого класса нет или он вам недоступен.')
         if b.get('kind', 'lesson') != 'lesson':
             raise A.AdminError(400, 'Игровая сессия открывается учеником (play.join).')
@@ -172,7 +172,7 @@ def admin(A, c, p, act, b, ip):
             q += ' WHERE class_id = ?'
             args.append(str(b['class_id'])[:40])
         q += ' ORDER BY created DESC LIMIT 200'
-        rows = [r for r in c.execute(q, args).fetchall() if (lambda cr: bool(cr) and A.class_in_scope(sc, cr[0], cr[1]))(A.class_row(c, r[2]))]
+        rows = [r for r in c.execute(q, args).fetchall() if (lambda cr: bool(cr) and A.class_readable(sc, r[2], cr[0], cr[1]))(A.class_row(c, r[2]))]
         op = [pub_row(r) for r in rows if r[10] == 'open']
         cl = [pub_row(r) for r in rows if r[10] == 'closed'][:20]
         return {'open': op, 'closed': cl}
@@ -292,11 +292,11 @@ def ticket(A, c, dev, user, b, ip, now):
             return 404, {'error': 'no session'}
         cr = A.class_row(c, row[2])
         sc = A.scope(c, user)
-        mine = bool(cr) and A.class_in_scope(sc, cr[0], cr[1])
+        mine = bool(cr) and A.class_readable(sc, row[2], cr[0], cr[1])
         expert = any(r['role'] == 'expert' and r['school'] == row[1] for r in user.get('roles') or [])
         if not mine and not expert:
             return 403, {'error': 'denied'}
-        lead = bool(cr) and cr[1] is not None and cr[1] == user['id']          # ведущий — учитель этого класса
+        lead = bool(cr) and ((cr[1] is not None and cr[1] == user['id']) or row[6] == user['id'])  # ведущий — учитель класса или тот, кто открыл урок (предметник)
         role = 't' if lead else 'a'
         A.audit(c, ('user', user['id'], ip), 'session.ticket', 'session', sid, row[1], {'role': role})
         name = c.execute('SELECT name, login FROM users WHERE id = ?', (user['id'],)).fetchone()

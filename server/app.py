@@ -17,7 +17,7 @@ CONFIG_PATH = os.path.join(DATA, 'config.json')
 MAX_BODY = 8 * 1024 * 1024
 VERSION = '3'
 SCHEMA = 4
-DB_VERSION = 7  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
+DB_VERSION = 8  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
 DEFAULT_SCHOOL = 'school-default'
 PURGE_HOLD_DEFAULT = 30  # дней в архиве до окончательного стирания (config purgeHoldDays, 0-3650)
 PURGE_KEEP_YEARS = 5  # копии bak-purge-* хранятся 5 лет; сервер их не удаляет, только показывает, какие устарели
@@ -93,7 +93,18 @@ def init_db():
         migrate_v4(c)
         migrate_b74(c)
         net_module().migrate_v7(sys.modules[__name__], c)  # таблицы сессий создаются всегда (пустые), работают только при config net=true
+        migrate_v8(c)
         c.execute("CREATE INDEX IF NOT EXISTS students_class ON students(json_extract(doc, '$.classId'))")  # поиск и фильтр по классу (шаг 8); старому коду индекс не мешает
+
+
+def migrate_v8(c):
+    """v8: учителя-предметники (class_teachers). Владелец класса (teacherId) — один, управляет учётками; предметник видит учеников и статистику
+    класса и ведёт с ним уроки, но не меняет учётки (закон Б41, ROLES §4.3). Повторяемо."""
+    c.execute('''CREATE TABLE IF NOT EXISTS class_teachers(class_id TEXT NOT NULL, user_id TEXT NOT NULL, subject TEXT NOT NULL DEFAULT '',
+        since INTEGER NOT NULL, by_user TEXT, PRIMARY KEY(class_id, user_id))''')
+    c.execute('CREATE INDEX IF NOT EXISTS class_teachers_user ON class_teachers(user_id)')
+    if c.execute('PRAGMA user_version').fetchone()[0] < 8:
+        c.execute('PRAGMA user_version = 8')
 
 
 def num(x, d=0):
@@ -388,14 +399,21 @@ def scope(c, p):
     """Что видит и меняет принципал. legacy-teacher и device (и вызовы без принципала) — как раньше, всё (all). Пользователь: суперадмин — всё; директор — школы,
     где у него роль director; учитель — свои классы (teacherId = он) в школах, где он учитель. Роли берутся из базы на каждом запросе (p['roles']), не из токена."""
     if p and p.get('kind') == 'device' and p.get('school'):  # шлем школы: видит и дополняет только свою школу
-        return {'all': False, 'dir': {p['school']}, 'tch': set(), 'uid': None, 'user': False, 'dev': p['school']}
+        return {'all': False, 'dir': {p['school']}, 'tch': set(), 'uid': None, 'user': False, 'dev': p['school'], 'sub': set()}
     if not p or p.get('kind') != 'user':
-        return {'all': True, 'dir': set(), 'tch': set(), 'uid': None, 'user': False}
+        return {'all': True, 'dir': set(), 'tch': set(), 'uid': None, 'user': False, 'sub': set()}
     roles = p.get('roles') or []
     if any(r['role'] == 'superadmin' for r in roles):
-        return {'all': True, 'dir': set(), 'tch': set(), 'uid': p['id'], 'user': True}
+        return {'all': True, 'dir': set(), 'tch': set(), 'uid': p['id'], 'user': True, 'sub': set()}
+    tch = {r['school'] for r in roles if r['role'] == 'teacher'}
+    sub = set()
+    if tch:  # классы, где он предметник: только действующие классы школ, где у него сейчас есть роль учителя
+        try:
+            sub = {r[0] for r in c.execute("SELECT ct.class_id, cl.school FROM class_teachers ct JOIN classes cl ON cl.id = ct.class_id WHERE ct.user_id = ? AND COALESCE(cl.status, 'active') != 'archived'", (p['id'],)) if r[1] in tch}
+        except sqlite3.OperationalError:  # база до v8 (проверки читают её напрямую)
+            sub = set()
     return {'all': False, 'dir': {r['school'] for r in roles if r['role'] == 'director'},
-            'tch': {r['school'] for r in roles if r['role'] == 'teacher'}, 'uid': p['id'], 'user': True}
+            'tch': tch, 'uid': p['id'], 'user': True, 'sub': sub}
 
 
 def can_write(sc):
@@ -404,6 +422,11 @@ def can_write(sc):
 
 def class_in_scope(sc, school, teacher_id):
     return sc['all'] or school in sc['dir'] or (school in sc['tch'] and teacher_id is not None and teacher_id == sc['uid'])
+
+
+def class_readable(sc, cid, school, teacher_id):
+    """Только чтение и ведение урока: свой класс (class_in_scope) или класс, где он предметник. Запись учёток — только class_in_scope."""
+    return class_in_scope(sc, school, teacher_id) or (cid is not None and cid in sc.get('sub', ()))
 
 
 def class_row(c, cid):
@@ -702,6 +725,7 @@ def state(c, hide_pins=False, principal=None):
         if hide_pins:
             d.pop('pinView', None)
         return d
+    sub_cls = set()
     if sc['all']:
         classes = [json.loads(r[0]) for r in c.execute('SELECT doc FROM classes')]
         students = [stud(r[0]) for r in c.execute('SELECT doc FROM students')]
@@ -714,11 +738,16 @@ def state(c, hide_pins=False, principal=None):
         # выборка по индексам школ пользователя, а не просмотр всей базы (масштаб: десятки тысяч учеников)
         mine = sorted(sc['dir'] | sc['tch'])
         classes, ok_cls, students, ok_st, results, disc = [], set(), [], set(), [], {}
+        sub_cls = set()
         if mine:
             ph = ','.join('?' * len(mine))
             for cid, school, tid, raw in c.execute('SELECT id, school, teacherId, doc FROM classes WHERE school IN (%s)' % ph, mine):
                 if class_in_scope(sc, school, tid):
                     ok_cls.add(cid)
+                    classes.append(json.loads(raw))
+                elif cid in sc.get('sub', ()):  # класс предметника: виден, но учётки (коды входа) ему не отдаём
+                    ok_cls.add(cid)
+                    sub_cls.add(cid)
                     classes.append(json.loads(raw))
             seen = set()
 
@@ -729,7 +758,11 @@ def state(c, hide_pins=False, principal=None):
                 d = json.loads(raw)
                 if (d.get('classId') in ok_cls) if d.get('classId') else (d.get('school') in sc['dir']):
                     ok_st.add(sid)
-                    students.append(stud(raw))
+                    st = stud(raw)
+                    if d.get('classId') in sub_cls:  # предметнику ни видимый код, ни хэш (4 цифры по хэшу подбираются мгновенно)
+                        st.pop('pinView', None)
+                        st.pop('pinHash', None)
+                    students.append(st)
             for sid, raw in c.execute('SELECT id, doc FROM students WHERE school IN (%s)' % ph, mine):
                 take(sid, raw)
             cl = sorted(ok_cls)
@@ -763,6 +796,7 @@ def state(c, hide_pins=False, principal=None):
         'deleted': dels,
         'purged': hardm,
         'settings': settings,
+        'sub': sorted(sub_cls),  # классы, где пользователь — предметник (только просмотр и уроки)
     }
 
 
@@ -1337,7 +1371,7 @@ def admin_action(c, p, act, b, ip):
     rank = my_rank(p)
     sc = scope(c, p)
     S = lambda k, n=80: str(b.get(k) or '')[:n]  # noqa: E731
-    need_dir = act not in ('student.archive', 'student.restore', 'class.archive', 'class.restore', 'trash.list', 'trash.restore', 'student.pin', 'student.move', 'upload.list', 'upload.delete', 'upload.restore', 'room.publish', 'room.list', 'room.unpublish', 'purge.mark', 'purge.unmark', 'purge.marks')
+    need_dir = act not in ('student.archive', 'student.restore', 'class.archive', 'class.restore', 'trash.list', 'trash.restore', 'student.pin', 'student.move', 'upload.list', 'upload.delete', 'upload.restore', 'room.publish', 'room.list', 'room.unpublish', 'purge.mark', 'purge.unmark', 'purge.marks', 'class.teacher.add', 'class.teacher.remove', 'class.teacher.list', 'class.teacher.candidates')
     if rank < (3 if need_dir else 2) and not (act == 'closed.list' and rank >= 1):
         audit(c, who, 'admin.denied', 'admin', act, None, {'why': 'rank'})
         raise AdminError(403, 'Недостаточно прав.')
@@ -1579,6 +1613,37 @@ def admin_action(c, p, act, b, ip):
         else:
             c.execute('UPDATE uploads SET status = ?, decided_by = ?, decided = ? WHERE id = ?', ('approved' if act == 'upload.approve' else 'rejected', p['id'], now, S('id', 20)))
         audit(c, who, act, 'upload', S('id', 20), row[0], {})
+        return {'ok': True}
+    if act in ('class.teacher.add', 'class.teacher.remove', 'class.teacher.list', 'class.teacher.candidates'):
+        cid = S('class_id', 60)
+        row = class_row(c, cid)
+        if not row or not class_readable(sc, cid, row[0], row[1]):
+            raise AdminError(404, 'Класса нет или он вам недоступен.')
+        if act == 'class.teacher.list':
+            items = [{'user_id': u, 'name': n or '', 'subject': sj, 'since': si} for u, n, sj, si in c.execute(
+                'SELECT ct.user_id, u.name, ct.subject, ct.since FROM class_teachers ct LEFT JOIN users u ON u.id = ct.user_id WHERE ct.class_id = ? ORDER BY ct.since', (cid,))]
+            return {'items': items, 'owner': row[1]}
+        if not class_in_scope(sc, row[0], row[1]):  # назначает и снимает только владелец класса, директор школы и выше
+            audit(c, who, 'admin.denied', 'class', cid, row[0], {'why': 'scope', 'action': act})
+            raise AdminError(403, 'Назначать предметников может классный руководитель или директор.')
+        if act == 'class.teacher.candidates':  # кого можно назначить: действующие учителя школы класса, кроме владельца (только имена)
+            rows = c.execute("SELECT u.id, u.name FROM user_roles r JOIN users u ON u.id = r.user_id WHERE r.role = 'teacher' AND r.school = ? AND r.status = 'active' AND u.status = 'active' ORDER BY u.name", (row[0],)).fetchall()
+            return {'items': [{'user_id': u, 'name': n or ''} for u, n in rows if u != row[1]]}
+        uid = S('user_id', 40)
+        if act == 'class.teacher.remove':
+            if not c.execute('DELETE FROM class_teachers WHERE class_id = ? AND user_id = ?', (cid, uid)).rowcount:
+                raise AdminError(404, 'Этот учитель не ведёт уроки в классе.')
+            audit(c, who, 'class.teacher.remove', 'class', cid, row[0], {'user': uid})
+            return {'ok': True}
+        t = user_row(c, uid)
+        if not t or t['status'] != 'active' or not c.execute("SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'teacher' AND school = ? AND status = 'active'", (uid, row[0])).fetchone():
+            raise AdminError(400, 'Этот человек не учитель школы класса.')
+        if uid == row[1]:
+            raise AdminError(400, 'Это классный руководитель класса — у него уже есть доступ.')
+        subj = ' '.join(S('subject', 40).split())
+        c.execute('INSERT INTO class_teachers(class_id, user_id, subject, since, by_user) VALUES(?, ?, ?, ?, ?) ON CONFLICT(class_id, user_id) DO UPDATE SET subject = excluded.subject',
+                  (cid, uid, subj, now, p['id']))
+        audit(c, who, 'class.teacher.add', 'class', cid, row[0], {'user': uid, 'subject': subj})
         return {'ok': True}
     if act == 'class.assign':
         row = class_row(c, S('class_id', 60))

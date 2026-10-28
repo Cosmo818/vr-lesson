@@ -32,7 +32,7 @@ ok(netapi.short_name('Иванов Пётр Сергеевич') == 'Пётр И
 ok(len(netapi.short_name('Ф' * 100 + ' ' + 'И' * 100)) <= 24 and netapi.short_name('') == 'Участник' and netapi.short_name('a\x00b c') .count('\x00') == 0, 'short_name: ≤ 24 знаков, пусто и управляющие знаки')
 
 app.init_db()
-ok(app.sqlite3.connect(os.path.join(tmp, 'vrlesson.db')).execute('PRAGMA user_version').fetchone()[0] == 7, 'миграция: база v7')
+ok(app.sqlite3.connect(os.path.join(tmp, 'vrlesson.db')).execute('PRAGMA user_version').fetchone()[0] == 8, 'миграция: база v8')
 UID = {}
 with app.db() as c:
     for sid, name in (('s-a', 'Школа А'), ('s-b', 'Школа Б')):
@@ -78,10 +78,10 @@ n_st = dbq('select count(*) from students')[0][0]
 dbq('DROP TABLE room_sessions')
 dbq('PRAGMA user_version = 6')
 app.init_db()
-ok(dbq('PRAGMA user_version')[0][0] == 7 and dbq("select count(*) from sqlite_master where name in ('room_sessions','room_attend','net_chat','broadcasts','hub_nodes')")[0][0] == 5, 'миграция v6→v7: все 5 таблиц, версия 7')
+ok(dbq('PRAGMA user_version')[0][0] == 8 and dbq("select count(*) from sqlite_master where name in ('room_sessions','room_attend','net_chat','broadcasts','hub_nodes')")[0][0] == 5, 'миграция v6→v8: все 5 таблиц сети, версия 8')
 ok(glob.glob(os.path.join(tmp, '*bak-v6*')) != [], 'миграция: копия базы bak-v6 сделана до изменений')
 app.init_db()
-ok(dbq('select count(*) from students')[0][0] == n_st and dbq('PRAGMA user_version')[0][0] == 7, 'миграция: повторный старт ничего не меняет, ученики на месте')
+ok(dbq('select count(*) from students')[0][0] == n_st and dbq('PRAGMA user_version')[0][0] == 8, 'миграция: повторный старт ничего не меняет, ученики на месте')
 
 # ------------------------------------------------------------------ сервер
 env = dict(os.environ, DATA_DIR=tmp, PORT=str(PORT), TEACHER_KEY='teach-secret', DEVICE_KEY='dev-secret')

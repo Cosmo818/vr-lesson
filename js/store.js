@@ -15,6 +15,10 @@ const clampGrade=g=>VR.schema.clampGrade(g);
 const uid=()=>now().toString(36)+Math.random().toString(36).slice(2,8);
 
 function norm(x){return VR.schema.db(x);}
+/* классы, где учитель — предметник (Б41): только просмотр и уроки; список приходит с сервера при каждой синхронизации */
+let SUB=null;
+function setSub(a){SUB=new Set(Array.isArray(a)?a.filter(x=>typeof x==='string').slice(0,500):[]);try{localStorage.setItem('vrl.sub',JSON.stringify([...SUB]));}catch(e){}}
+function subSet(){if(!SUB){let a=[];try{a=JSON.parse(localStorage.getItem('vrl.sub')||'[]');}catch(e){}SUB=new Set(Array.isArray(a)?a:[]);}return SUB;}
 function adoptServerTeachers(d,st){VR.schema.adoptTeacher(d.classes,st&&st.classes);}
 function merge(A,B){
   const SC=VR.schema;A=SC.db(A,{fill:false});B=SC.db(B,{fill:false});
@@ -49,6 +53,7 @@ function save(){saveSeq++;try{localStorage.setItem(KEY,JSON.stringify(db));}catc
 
 const Store=VR.Store={
   SUBJ,merge,norm,
+  isSub:cid=>!!cid&&subSet().has(cid), /* класс, где этот учитель — предметник (просмотр и уроки, без правки учёток) */
   band:g=>{g=clampGrade(g);return g<=4?'a':g<=6?'b':g<=8?'c':'d';},
   reload(){db=null;return load();},
   onChange(f){listeners.push(f);},
@@ -285,7 +290,7 @@ const Store=VR.Store={
   account:{
     token(){try{return sessionStorage.getItem('vrl.token')||'';}catch(e){return '';}},
     who(){try{return sessionStorage.getItem('vrl.user')||'';}catch(e){return '';}},
-    clear(){try{sessionStorage.removeItem('vrl.token');sessionStorage.removeItem('vrl.user');sessionStorage.removeItem('vrl.roles');}catch(e){}},
+    clear(){setSub([]);try{sessionStorage.removeItem('vrl.token');sessionStorage.removeItem('vrl.user');sessionStorage.removeItem('vrl.roles');}catch(e){}},
     roles(){try{return JSON.parse(sessionStorage.getItem('vrl.roles')||'[]');}catch(e){return[];}},
     /* включены ли учётки на сервере: выключено — 404, включено — 401 без токена; нет связи — null (кабинет остаётся с прежним входом) */
     async probe(url){
@@ -438,6 +443,7 @@ const Store=VR.Store={
         if(!res.ok)throw new Error('Сервер ответил '+res.status);
         const data=await res.json();
         db=merge(load(),data.state);adoptServerTeachers(db,data.state);save();
+        setSub(data.state&&data.state.sub);
         Store.status={state:'ok',at:now(),role:data.role,msg:''};
       }catch(e){
         Store.status={state:'err',at:now(),role:null,expired:!!(e&&e.expired),msg:e&&e.name==='AbortError'?'сервер не ответил за 12 секунд':(e instanceof TypeError||/fetch/i.test(e&&e.message||''))?'нет связи с сервером: сеть, VPN или сервер выключен':(e&&e.message)||'нет связи'};
