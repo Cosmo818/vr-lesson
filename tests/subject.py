@@ -94,7 +94,7 @@ try:
     sync = lambda k, body=None: req('POST', '/api/sync', body if body is not None else {}, H(k))  # noqa: E731
     adm = lambda k, act, body=None: req('POST', '/api/admin/' + act, body or {}, H(k))  # noqa: E731
 
-    ok(sql('pragma user_version')[0][0] == 8 and sql("select count(*) from sqlite_master where name = 'class_teachers'")[0][0] == 1, 'миграция v8: user_version = 8, таблица class_teachers есть')
+    ok(sql('pragma user_version')[0][0] == 9 and sql("select count(*) from sqlite_master where name = 'class_teachers'")[0][0] == 1, 'миграция v9 (включает v8): user_version = 9, таблица class_teachers есть')
 
     # --- до назначения
     st, b = sync('tA2'); S = b['state']

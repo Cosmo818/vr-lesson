@@ -63,6 +63,7 @@
 | `js/app.js` | Стартовый экран, сеанс ученика, таймер, меню VR, форма отзывов | `VR.app` |
 | `teacher.html` | Рейтинг, ученики, конструктор тестов, сложные вопросы, отзывы, сервер | — |
 | `server/app.py` | HTTP API + SQLite, ключи teacher/device, миграции v2→v3→v4, журнал аудита | `GET /api/health`, `POST /api/sync`, `GET /api/export`, `/api/auth/*` (только при `accounts=true`) |
+| `server/studev.py` | Э1: привязка устройства к ученику (код 8 знаков, ключ в sha256), сеанс ученика; отзыв при переводе в другую школу, сброс кода и архив гасят сеансы; config `studentDevices` | `/api/student/{pair,login,logout,unpair,me}`, admin `student.device.*` |
 
 ## Контракт комнаты
 ```js

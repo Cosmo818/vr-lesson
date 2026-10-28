@@ -17,7 +17,7 @@ CONFIG_PATH = os.path.join(DATA, 'config.json')
 MAX_BODY = 8 * 1024 * 1024
 VERSION = '3'
 SCHEMA = 4
-DB_VERSION = 8  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
+DB_VERSION = 9  # версия самой базы (PRAGMA user_version); SCHEMA — версия протокола для клиентов, отдельно
 DEFAULT_SCHOOL = 'school-default'
 PURGE_HOLD_DEFAULT = 30  # дней в архиве до окончательного стирания (config purgeHoldDays, 0-3650)
 PURGE_KEEP_YEARS = 5  # копии bak-purge-* хранятся 5 лет; сервер их не удаляет, только показывает, какие устарели
@@ -94,6 +94,7 @@ def init_db():
         migrate_b74(c)
         net_module().migrate_v7(sys.modules[__name__], c)  # таблицы сессий создаются всегда (пустые), работают только при config net=true
         migrate_v8(c)
+        studev_module().migrate_v9(sys.modules[__name__], c)  # привязка устройств к ученикам и «Эйнштейн»: таблицы создаются всегда (пустые), работают при config studentDevices=true
         c.execute("CREATE INDEX IF NOT EXISTS students_class ON students(json_extract(doc, '$.classId'))")  # поиск и фильтр по классу (шаг 8); старому коду индекс не мешает
 
 
@@ -916,10 +917,25 @@ def net_module():
     return _NET['m']
 
 
+_STUDEV = {}
+
+
+def studev_module():
+    """Привязка устройства к ученику (server/studev.py) — загрузка по пути рядом с app.py, как netapi."""
+    if 'm' not in _STUDEV:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('vr_studev', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'studev.py'))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _STUDEV['m'] = m
+    return _STUDEV['m']
+
+
 def load_config():
     """/data/config.json: accounts (по умолчанию false — новые эндпоинты отвечают 404), legacyTeacher (true), sessionMinutes (15). Читается на каждый запрос: выключатель действует без перезапуска.
     Это НЕ settings.flags: те синхронизируются и меняются ключом teacher, а флаг безопасности старым ключом включаться не должен."""
     cfg = {'accounts': False, 'legacyTeacher': True, 'sessionMinutes': SESSION_MIN_DEFAULT, 'openRooms': False, 'ai': False, 'aiDaily': 30, 'purge': False, 'purgeHoldDays': PURGE_HOLD_DEFAULT,
+           'studentDevices': False, 'einRating': False, 'teacherRooms': False, 'studentDeviceLimit': 3, 'einMinSec': 20, 'einMaxSec': 14400, 'einIssueTtlH': 24, 'studentSessionMin': 120,
            'net': False, 'hubSecret': '', 'hubOrigins': [], 'hubTrusted': [], 'hubUrl': '', 'hubId': '', 'hubKid': '', 'hubAppUrl': ''}
     try:
         with open(CONFIG_PATH, encoding='utf-8') as f:
@@ -933,6 +949,12 @@ def load_config():
                 cfg['purge'] = raw['purge']
             if isinstance(raw.get('net'), bool):
                 cfg['net'] = raw['net']
+            for k in ('studentDevices', 'einRating', 'teacherRooms'):
+                if isinstance(raw.get(k), bool):
+                    cfg[k] = raw[k]
+            for k, lo, hi in (('studentDeviceLimit', 1, 10), ('einMinSec', 5, 600), ('einMaxSec', 60, 86400), ('einIssueTtlH', 1, 168), ('studentSessionMin', 5, 480)):
+                if isinstance(raw.get(k), int) and not isinstance(raw.get(k), bool) and lo <= raw[k] <= hi:
+                    cfg[k] = raw[k]
             for k in ('hubSecret', 'hubUrl', 'hubId', 'hubKid', 'hubAppUrl'):  # сеть: секрет hub и адреса — только из config.json, наружу не отдаются
                 if isinstance(raw.get(k), str) and len(raw[k]) <= 300:
                     cfg[k] = raw[k]
@@ -1429,6 +1451,8 @@ def admin_action(c, p, act, b, ip):
     """Выполняет административное действие; возвращает dict-ответ или бросает AdminError. Вызывать под lock в одной транзакции."""
     if act.startswith('session.'):
         return net_module().admin(sys.modules[__name__], c, p, act, b, ip)
+    if act.startswith('student.device.'):
+        return studev_module().admin(sys.modules[__name__], c, p, act, b, ip)
     who = ('user', p['id'], ip)
     now = int(time.time() * 1000)
     rank = my_rank(p)
@@ -1808,6 +1832,7 @@ def admin_action(c, p, act, b, ip):
             d.pop('pinView', None)
             d['updated'] = now
             c.execute('UPDATE students SET doc = ?, updated = ? WHERE id = ?', (json.dumps(d, ensure_ascii=False), now, S('student_id', 60)))
+            studev_module().drop_sessions(c, S('student_id', 60))  # сеансы по старому коду входа не живут
             audit(c, who, 'student.pin_reset', 'student', S('student_id', 60), d.get('school'), {'had': had})
             return {'ok': True}
         ncl = class_row(c, S('class_id', 60))
@@ -1815,6 +1840,8 @@ def admin_action(c, p, act, b, ip):
             audit(c, who, 'admin.denied', 'class', S('class_id', 60), None, {'why': 'scope', 'action': act})
             raise AdminError(403, 'Нельзя перенести в этот класс.')
         old_cl = d.get('classId')
+        if d.get('school') != ncl[0]:
+            studev_module().revoke_all(c, S('student_id', 60), now, p['id'])  # другая школа: устройства отозваны, сеансы удалены
         d['classId'] = S('class_id', 60)
         d['school'] = ncl[0]
         d['updated'] = now
@@ -1836,6 +1863,8 @@ def admin_action(c, p, act, b, ip):
             d['status'], d['updated'] = want, max(now, num(d.get('updated')) + 1)
             c.execute('UPDATE students SET status = ?, updated = ?, doc = ? WHERE id = ?', (want, d['updated'], json.dumps(d, ensure_ascii=False), sid))
             audit(c, who, act, 'student', sid, d.get('school') if ok_school(d.get('school')) else None, {'via': 'admin'})
+        if want == 'archived':
+            studev_module().drop_sessions(c, sid)  # устройства остаются привязанными (не работают, пока ученик в архиве); старые сеансы после возврата не оживают
         if want == 'active' and d.get('classId'):
             cr = c.execute('SELECT status FROM classes WHERE id = ?', (d['classId'],)).fetchone()
             if cr and cr[0] == 'archived':
@@ -2114,6 +2143,7 @@ def purge_erase_student(c, sid, now):
         d = load_doc(raw) or {}
         d.pop('sid', None)
         c.execute('UPDATE trash SET doc = ? WHERE kind = ? AND id = ?', (json.dumps(d, ensure_ascii=False), tk, tid))
+    studev_module().erase_student(c, sid)  # устройства, сеансы, коды привязки и «Эйнштейн» ученика
     c.execute('DELETE FROM students WHERE id = ?', (sid,))
     purge_hard(c, sid, 'student', now)
     c.execute("DELETE FROM purge_marks WHERE kind = 'student' AND id = ?", (sid,))
@@ -2662,6 +2692,33 @@ def cli(argv):
             audit(c, who, 'config.net', 'config', 'net', None, {'from': old, 'to': cfg['net']})
         print('Сеть уроков %s.' % ('включена' if cfg['net'] else 'выключена'))
         return 0
+    if cmd in ('student-devices', 'ein-rating', 'teacher-rooms') and len(argv) == 2 and argv[1] in ('on', 'off'):
+        key = {'student-devices': 'studentDevices', 'ein-rating': 'einRating', 'teacher-rooms': 'teacherRooms'}[cmd]
+        cfg = load_config()
+        old = cfg[key]
+        cfg[key] = argv[1] == 'on'
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.' + key, 'config', key, None, {'from': old, 'to': cfg[key]})
+        print('%s %s.' % (key, 'включено' if cfg[key] else 'выключено') + ('' if cfg['accounts'] else ' (работает только при accounts=on)'))
+        return 0
+    if cmd in ('set-ein-min', 'set-student-devices') and len(argv) == 2:
+        key, lo, hi = ('einMinSec', 5, 600) if cmd == 'set-ein-min' else ('studentDeviceLimit', 1, 10)
+        try:
+            m = int(argv[1])
+        except ValueError:
+            m = -1
+        if not lo <= m <= hi:
+            print('Значение — от %d до %d.' % (lo, hi), file=sys.stderr)
+            return 1
+        cfg = load_config()
+        old = cfg[key]
+        cfg[key] = m
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.' + key, 'config', key, None, {'from': old, 'to': m})
+        print('%s: %d.' % (key, m))
+        return 0
     if cmd == 'hub-secret' and len(argv) in (1, 2) and (len(argv) == 1 or argv[1] == '--rotate'):
         cfg = load_config()
         if cfg['hubSecret'] and len(argv) == 1:
@@ -2787,7 +2844,7 @@ def cli(argv):
             out.close()
         print('Целостность %s, учеников %d' % (res, n))
         return 0 if res == 'ok' else 1
-    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | purge on|off | set-purge-hold <0..3650> | backup <файл> | check <файл> | ai on|off|status|limit <N> | net on|off | hub-secret [--rotate] | hub-setup <домен> [https://сайт ...]', file=sys.stderr)
+    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | purge on|off | set-purge-hold <0..3650> | backup <файл> | check <файл> | ai on|off|status|limit <N> | net on|off | student-devices on|off | ein-rating on|off | teacher-rooms on|off | set-ein-min <5..600> | set-student-devices <1..10> | hub-secret [--rotate] | hub-setup <домен> [https://сайт ...]', file=sys.stderr)
     return 2
 
 
@@ -2799,7 +2856,7 @@ class H(BaseHTTPRequestHandler):
 
     def cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Key, Authorization, X-Sig, X-Ts')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Key, Authorization, X-Sig, X-Ts, X-Student, X-Stoken')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Max-Age', '86400')
 
@@ -2841,6 +2898,9 @@ class H(BaseHTTPRequestHandler):
                 self.reply(403, {'error': 'no roles'})
                 return None
             return {'kind': 'user', 'id': u['id'], 'login': u['login'], 'roles': roles, 'ip': ip}
+        if not self.headers.get('X-Key') and (self.headers.get('X-Student') or self.headers.get('X-Stoken')):  # ключ и сеанс ученика общий сервер данных не открывают
+            self.reply(403, {'error': 'student credentials are not accepted here'})
+            return None
         r = role_of(self.headers.get('X-Key'))
         if r == 'teacher' and not cfg['legacyTeacher']:
             r = None
@@ -2874,6 +2934,8 @@ class H(BaseHTTPRequestHandler):
             return self.asset_get()
         if self.path.startswith('/api/auth/'):
             return self.auth_api('GET')
+        if self.path.startswith('/api/student/'):
+            return self.student_api('GET')
         if self.path.startswith('/api/session/') or self.path.startswith('/api/hub/'):
             return self.net_api('GET')
         if self.path.startswith('/api/options') or self.path.startswith('/api/accounts') or self.path.startswith('/api/history'):
@@ -2942,6 +3004,46 @@ class H(BaseHTTPRequestHandler):
         if route == '/api/auth/activate' and method == 'POST':
             return self.do_activate(body, ip)
         self.reply(404, {'error': 'not found'})
+
+    def student_api(self, method):
+        """Привязка устройства к ученику (config accounts=true и studentDevices=true, иначе 404). Логика — server/studev.py. Ответ уходит после выхода из `with db()`.
+        Ключ устройства — заголовок X-Student, сеанс — X-Stoken; в журнал, ошибки и ответы-ошибки они не попадают. Тело ≤ 2 КБ."""
+        cfg = load_config()
+        if not cfg['accounts'] or not cfg['studentDevices']:
+            return self.reply(404, {'error': 'not found'})
+        S = studev_module()
+        A = sys.modules[__name__]
+        route = self.path.split('?')[0]
+        ip = client_ip(self)
+        now = int(time.time() * 1000)
+        key = self.headers.get('X-Student') or ''
+        tok = self.headers.get('X-Stoken') or ''
+        body = {}
+        if method == 'POST':
+            n = num(self.headers.get('Content-Length'))
+            if n > 2048 or (n <= 0 and route != '/api/student/logout'):  # logout может прийти без тела
+                return self.reply(413, {'error': 'body size'})
+            try:
+                if n > 0:
+                    body = json.loads(self.rfile.read(n).decode('utf-8'))
+                if not isinstance(body, dict):
+                    raise ValueError
+            except ValueError:
+                return self.reply(400, {'error': 'bad json'})
+        out = (404, {'error': 'not found'})
+        with lock, db() as c:
+            if route == '/api/student/pair' and method == 'POST':
+                out = S.pair(A, c, body.get('code'), body.get('name'), ip, now)
+            elif route == '/api/student/login' and method == 'POST':
+                out = S.login(A, c, key, body.get('pin_hash'), ip, now)
+            elif route == '/api/student/unpair' and method == 'POST':
+                out = S.unpair_self(A, c, key, body.get('pin_hash'), ip, now)
+            elif route == '/api/student/logout' and method == 'POST':
+                out = S.logout(A, c, key, tok, now)
+            elif route == '/api/student/me' and method == 'GET':
+                sp = S.principal(A, c, key, tok, now)
+                out = S.me(A, c, sp) if sp else (401, {'error': 'no session'})
+        return self.reply(*out)
 
     def net_api(self, method):
         """Сеть живых уроков (config net=true, иначе 404): билеты входа, живые сессии школы, игровая, отчёты hub. Логика — server/netapi.py.
@@ -3235,6 +3337,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply(404, {'error': 'not found'})
         if self.path.startswith('/api/admin/session.') and not cfg['net']:
             return self.reply(404, {'error': 'not found'})
+        if self.path.startswith('/api/admin/student.device.') and not cfg['studentDevices']:
+            return self.reply(404, {'error': 'not found'})
         n = num(self.headers.get('Content-Length'))
         if n <= 0 or n > (70000 if self.path.endswith('/room.publish') else 8192 if self.path.split('?')[0].endswith('/purge') else 4096):
             return self.reply(413, {'error': 'body size'})
@@ -3348,6 +3452,8 @@ class H(BaseHTTPRequestHandler):
         self.reply(200, {'ok': True, 'token': token, 'expires': exp})
 
     def do_POST(self):
+        if self.path.startswith('/api/student/'):
+            return self.student_api('POST')
         if self.path.startswith('/api/auth/'):
             return self.auth_api('POST')
         if self.path.startswith('/api/room/') or self.path.startswith('/api/play/') or self.path.startswith('/api/hub/'):
