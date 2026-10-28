@@ -541,7 +541,11 @@ function makeCtx(xr){
   }
   E.goRoom('ein');run(25);
   { const Z=E.S,X=VR.einstein;
-    ok(Z.g&&Z.g.status==='play'&&Z.field&&Z.hints&&Z.ctl,'эйнштейн-комната: три панели и партия');
+    ok(Z.g&&Z.g.status==='play'&&Z.field&&Z.hints&&Z.ctl&&Z.favs,'эйнштейн-комната: четыре панели и приготовленная партия');
+    ok(Z.phase==='idle','эйнштейн-комната: при входе игра не включается (ждёт «Начать»)');
+    { const t0=Z.t;run(60);ok(Z.t===t0&&Z.field.btns.length===0,'эйнштейн-комната: до «Начать» время стоит, фишки не нажимаются'); }
+    { const sb=Z.ctl.btns.find(b=>b.y===206&&!b.disabled);ok(!!sb,'эйнштейн-комната: есть кнопка «Начать»');sb.fn({});run(4); ok(Z.phase==='play','эйнштейн-комната: «Начать» запускает партию'); }
+    { const sd=Z.g.pz.seed,V=VR.games;ok(V.favToggle('einstein',sd)===true&&V.favs('einstein').includes(sd),'эйнштейн: сид сохраняется');ok(V.favToggle('einstein',sd)===false&&!V.favs('einstein').includes(sd),'эйнштейн: сид убирается из сохранённых');V.favToggle('einstein',123456);Z.favs.dirty=true;run(4);ok(!Z.favs.over.length&&Z.favs.btns.length>=3,'эйнштейн: панель сохранённых: кнопки есть, за край не выходит');V.favToggle('einstein',123456); }
     Z.field.dirty=true;Z.hints.dirty=true;Z.ctl.dirty=true;run(4);
     ok(Z.field.btns.length>=100&&Z.hints.btns.length>=15,'эйнштейн-комната: у поля и подсказок есть области нажатия ('+Z.field.btns.length+' / '+Z.hints.btns.length+')');
     ok(!Z.field.over.length&&!Z.hints.over.length&&!Z.ctl.over.length,'эйнштейн-комната: ничего не за краем панели');
@@ -608,6 +612,7 @@ function makeCtx(xr){
     const play=Ar.ctl.btns.find(b=>!b.disabled&&b.w>1000&&b.y<Ar.ctl.H-260);
     ok(!!play,'арена: у участника есть кнопка «Играть»');
     play.fn();run(20);
+    { const sb=E.S.ctl.btns.find(b=>b.y===206&&!b.disabled);if(sb){sb.fn({});run(4);} }
     ok(E.S.tid===t4.id&&E.S.mid==='0.0'&&E.S.g&&E.S.g.pz.seed===G.matchSeed(T.get(t4.id),0,0),'арена: «Играть» открывает турнирную головоломку с сидом матча');
     const sol=E.S.g.pz.sol;E.S.mode='pick';
     for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!E.S.g.P.defined(c,r)&&E.S.g.status==='play'){E.S.field.dirty=true;run(3);const x0=100+c*316,y0=24+r*232,k=sol[r][c]-1;const bi=E.S.field.btns.findIndex(b=>b.x===x0+8+(k%3)*100&&b.y===y0+16+((k/3)|0)*104);if(bi>=0)E.S.field.btns[bi].fn({});}

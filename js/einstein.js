@@ -140,7 +140,9 @@ function canSolve(sol,rules){
   return P.solved();
 }
 function generate(seed){
-  const rn=rng(seed===undefined?(Math.random()*4294967296)>>>0:seed);
+  if(seed===undefined||seed===null)seed=(Math.random()*4294967296)>>>0;
+  seed=seed>>>0;
+  const rn=rng(seed);
   const sol=[];
   for(let r=0;r<N;r++){const a=[1,2,3,4,5,6];for(let i=N-1;i>0;i--){const j=rn(i+1),t=a[i];a[i]=a[j];a[j]=t;}sol.push(a);}
   let rules=[];const seen=new Set();

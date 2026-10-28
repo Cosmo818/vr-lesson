@@ -53,6 +53,15 @@ function load(){
 }
 function save(){mem=db;try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){}for(const f of listeners)try{f();}catch(e){}}
 const listeners=[];
+/* сохранённые (любимые) сиды головоломок: отдельный ключ, только на этом устройстве */
+const FKEY='vrl.favseeds';let fav=null;
+function favLoad(){if(fav)return fav;let x=null;try{x=JSON.parse(localStorage.getItem(FKEY)||'null');}catch(e){}
+  fav={};if(x&&typeof x==='object')for(const k of Object.keys(x)){if(!/^[a-z]{2,12}$/.test(k)||!Array.isArray(x[k]))continue;fav[k]=x[k].filter(n=>Number.isInteger(n)&&n>=0&&n<=4294967295).slice(0,60);}
+  return fav;}
+function favs(game){return(favLoad()[game]||[]).slice();}
+function favToggle(game,seed){if(!/^[a-z]{2,12}$/.test(game)||!Number.isInteger(seed)||seed<0||seed>4294967295)return false;
+  const f=favLoad(),a=f[game]||(f[game]=[]),i=a.indexOf(seed);if(i>=0)a.splice(i,1);else{a.unshift(seed);if(a.length>60)a.pop();}
+  try{localStorage.setItem(FKEY,JSON.stringify(f));}catch(e){}return i<0;}
 
 /* ---------- запись игр и статистика ---------- */
 function record(r){
@@ -169,5 +178,5 @@ function advance(t,r,i,sid){
   const n=t.rounds[r+1][i>>1];if(i%2===0)n.a=sid;else n.b=sid;
 }
 
-VR.games={KEY,load,save,clean,merge,record,finish,stats,top,history,tour:T,matchSeed,onChange:f=>{listeners.push(f);return f;},offChange:f=>{const i=listeners.indexOf(f);if(i>=0)listeners.splice(i,1);},pending:null,_reset(){db=null;mem=null;try{localStorage.removeItem(KEY);}catch(e){}}};
+VR.games={favs,favToggle,KEY,load,save,clean,merge,record,finish,stats,top,history,tour:T,matchSeed,onChange:f=>{listeners.push(f);return f;},offChange:f=>{const i=listeners.indexOf(f);if(i>=0)listeners.splice(i,1);},pending:null,_reset(){db=null;mem=null;try{localStorage.removeItem(KEY);}catch(e){}}};
 })();
