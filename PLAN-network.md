@@ -500,7 +500,7 @@ Hub проверяет роль: `gather/freeze/room/follow/hall/kick` — то�
 
 **Н4. app.py: сессии и билеты** ★ (данные и права) — ✅ 28.10.2026 (Sonnet; ревью Opus пройдено: 4 исправления, остаточные риски — `docs/NET_PROTOCOL.md`). Флаг `net`, CLI `net on|off`, `hub-secret`; `migrate_v7` (§5.1, все таблицы сразу, включая `broadcasts` и `hub_nodes`), действия §5.2, `short_name`, проверка `pinHash` на сервере с паузой, `POST /api/hub/report` (HMAC, ≤ 64 КБ, идемпотентность по `ts+uid`), аудит. Ответ — после выхода из `with db()` (CHECKLIST). `tests/net_sessions.py`, добавить в `tests/run.js`.
 
-**Н5. Развёртывание hub на VPS.** `deploy/Caddyfile` (`reverse_proxy /ws vr-lesson-hub:8788`, `/ws` вне `@hidden`), `deploy/autoupdate.sh` (отложенный перезапуск hub §4.7), `README.md` — команды запуска контейнера (для Айрата по `homebrain-cmd`: одной строкой, ПК/Pi пометки). Без включения флага. Ревью Sonnet.
+**Н5. Развёртывание hub на VPS.** — ✅ 28.10.2026 (файлы и команды; запуск на VPS — Айрат): `deploy/hub.sh`, `/ws` в Caddyfile, отложенный перезапуск в `autoupdate.sh`, CLI `hub-setup`, README «Живые уроки». `deploy/Caddyfile` (`reverse_proxy /ws vr-lesson-hub:8788`, `/ws` вне `@hidden`), `deploy/autoupdate.sh` (отложенный перезапуск hub §4.7), `README.md` — команды запуска контейнера (для Айрата по `homebrain-cmd`: одной строкой, ПК/Pi пометки). Без включения флага. Ревью Sonnet.
 
 **Н6. `js/net.js` + `Store.session*`.** Контракт §6.1, часы §6.2, переподключение со случайным разбросом, список адресов и таймаут. `js/store.js`: `sessionLive/sessionTicket/playJoin/sessionAdmin/watchTicket`. `index.html`, `sw.js`. `tests/net_client.js` (поддельный WebSocket в Node: обрыв, `resume`, просроченный билет → новый, очередь управления). ✅
 

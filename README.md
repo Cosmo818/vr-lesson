@@ -42,6 +42,17 @@
 
 Обновление сервера: `cd /opt/vr-lesson-app && git pull && docker restart vr-lesson-api`. Резервная копия — файл `/opt/vr-lesson-data/vrlesson.db`.
 
+### Живые уроки (hub) на VPS
+
+Отдельный контейнер `vr-lesson-hub` (тот же образ и сеть, что у API; код и данные только для чтения), Caddy отдаёт его по `/ws`. Порядок, каждая команда — одна строка на VPS:
+1. `docker exec vr-lesson-api python3 /app/server/app.py hub-secret` — секрет hub (в чат не присылать).
+2. `docker exec vr-lesson-api python3 /app/server/app.py hub-setup vrklass.ru https://cosmo818.github.io` — адрес `wss://vrklass.ru/ws`, разрешённые сайты, адрес API для отчётов.
+3. `sh /opt/vr-lesson-app/deploy/hub.sh` — запуск (повторный запуск пересоздаёт контейнер); в конце печатает `/health`.
+4. `docker exec vrklass-web caddy reload --config /etc/caddy/Caddyfile` — Caddy узнаёт `/ws`.
+5. Выдача билетов (`net on`) — только по решению владельца, после пилота.
+
+Автообновление перезапускает hub, только когда нет идущих уроков; иначе ждёт (отметка `/opt/vr-lesson-data/.hub-restart-pending`, журнал `/var/log/vr-autoupdate.log`).
+
 ## Файлы
 
 - `index.html`, `css/style.css`, `js/app.js` — стартовый экран и сеанс ученика

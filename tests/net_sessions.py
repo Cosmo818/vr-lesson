@@ -475,5 +475,15 @@ r = cli2('net', 'off')
 ok(json.load(open(os.path.join(tmp2, 'config.json')))['net'] is False, 'CLI: net off')
 ok(sqlite3.connect(os.path.join(tmp2, 'vrlesson.db')).execute("select count(*) from audit_log where action in ('config.net','config.hubSecret')").fetchone()[0] == 4 and 'hubSecret' not in json.dumps(sqlite3.connect(os.path.join(tmp2, 'vrlesson.db')).execute('select detail from audit_log').fetchall()) .replace('"rotated"', ''), 'CLI: изменения в журнале, секрета в журнале нет')
 
+r = cli2('hub-setup', 'https://VRklass.ru/', 'https://cosmo818.github.io')
+c4 = json.load(open(os.path.join(tmp2, 'config.json')))
+ok(r.returncode == 0 and c4['hubUrl'] == 'wss://vrklass.ru/ws' and c4['hubOrigins'] == ['https://vrklass.ru', 'https://cosmo818.github.io'] and c4['hubAppUrl'] == 'http://vr-lesson-api:8787' and len(c4['hubSecret']) == 64, 'CLI: hub-setup ставит адрес hub, сайты и адрес API, секрет не трогает')
+r = cli2('hub-setup', 'vrklass.ru', 'http://evil.example')
+ok(r.returncode == 1 and json.load(open(os.path.join(tmp2, 'config.json')))['hubOrigins'] == c4['hubOrigins'], 'CLI: hub-setup не принимает сайт без https')
+sys.path.insert(0, os.path.join(ROOT, 'server'))
+import hub as _hub  # noqa: E402
+L4, _ = _hub.load_config(type('A', (), {'config': os.path.join(tmp2, 'config.json'), 'origins': '', 'handshake_s': None, 'hello_s': None, 'max_unauth_ip': None, 'max_conns': None, 'ping_s': None, 'report_s': None, 'poll_s': None, 'idle_s': None, 'host': '127.0.0.1', 'port': 8788, 'test': False, 'app_url': '', 'report_file': ''})())
+ok(L4.get('origins') == c4['hubOrigins'], 'hub читает сайты из config.json после hub-setup')
+
 print('\nИТОГО: %s' % ('всё зелёное' if not fails else 'ПРОВАЛОВ: %d' % fails))
 sys.exit(1 if fails else 0)

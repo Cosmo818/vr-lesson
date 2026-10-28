@@ -2673,6 +2673,23 @@ def cli(argv):
             audit(c, who, 'config.hubSecret', 'config', 'hubSecret', None, {'rotated': len(argv) == 2})
         print('Секрет hub создан в config.json (права 0600). Скопируйте файл config.json на сервер hub тем же способом, что и ключи; в чат его не присылайте.')
         return 0
+    if cmd == 'hub-setup' and len(argv) >= 2:  # адреса hub: wss://<домен>/ws для билетов, разрешённые сайты, адрес API для отчётов hub (внутри сети Docker)
+        host = argv[1].strip().lower().rstrip('/')
+        host = host[8:] if host.startswith('https://') else host
+        extra = [x.strip().rstrip('/') for x in argv[2:]]
+        if not re.fullmatch(r'[a-z0-9-]+(\.[a-z0-9-]+)+', host) or any(not re.fullmatch(r'https://[a-z0-9.-]+', x) for x in extra):
+            print('Использование: hub-setup <домен> [https://другой-сайт ...], например: hub-setup vrklass.ru https://cosmo818.github.io', file=sys.stderr)
+            return 1
+        cfg = load_config()
+        old = {k: cfg.get(k) for k in ('hubUrl', 'hubOrigins', 'hubAppUrl')}
+        cfg['hubUrl'] = 'wss://%s/ws' % host
+        cfg['hubOrigins'] = list(dict.fromkeys(['https://' + host] + extra))[:20]
+        cfg['hubAppUrl'] = cfg.get('hubAppUrl') or 'http://vr-lesson-api:8787'
+        with lock, db() as c:
+            save_config(cfg)
+            audit(c, who, 'config.hub', 'config', 'hub', None, {'from': old, 'to': {k: cfg[k] for k in old}})
+        print('Hub: %s, сайты: %s, отчёты в %s.' % (cfg['hubUrl'], ', '.join(cfg['hubOrigins']), cfg['hubAppUrl']))
+        return 0
     if cmd == 'open-rooms' and len(argv) == 2 and argv[1] in ('on', 'off'):
         cfg = load_config()
         old = cfg['openRooms']
@@ -2770,7 +2787,7 @@ def cli(argv):
             out.close()
         print('Целостность %s, учеников %d' % (res, n))
         return 0 if res == 'ok' else 1
-    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | purge on|off | set-purge-hold <0..3650> | backup <файл> | check <файл> | ai on|off|status|limit <N>', file=sys.stderr)
+    print('Команды: create-superadmin <логин> | reset-password <логин> | set-session-minutes <5..300> | accounts on|off | open-rooms on|off | purge on|off | set-purge-hold <0..3650> | backup <файл> | check <файл> | ai on|off|status|limit <N> | net on|off | hub-secret [--rotate] | hub-setup <домен> [https://сайт ...]', file=sys.stderr)
     return 2
 
 
