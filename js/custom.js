@@ -88,6 +88,14 @@ function buildSpec(E,S,spec){
 /* ---------- редактор прямо в шлеме: планшет на левой руке повторяет меню редактора (Б50) ---------- */
 const ED={on:false,id:null,sel:null,hist:[],fut:[]};
 const teacherOk=()=>{try{return +sessionStorage.getItem('vrl.editor')>Date.now();}catch(e){return false;}};
+/* редактор в шлеме: открыт из кабинета («Править в VR») или учитель в своей комнате (автор = его логин; у старых комнат без автора — любой учитель) */
+function canEdit(E,id){
+  if(teacherOk())return true;
+  const sp=VR.Store.customRoom(id);if(!sp||VR.Store.temp[id])return false;
+  if(!(E&&E.isTeacher&&E.isTeacher()))return false;
+  const who=VR.Store.account&&VR.Store.account.who?VR.Store.account.who():'';
+  return !sp.author||(!!who&&sp.author===who);
+}
 const copy=o=>JSON.parse(JSON.stringify(o));
 const r05=v=>Math.round(v*20)/20;
 const clampC=v=>Math.max(-RS.LIM.coord,Math.min(RS.LIM.coord,r05(v)));
@@ -167,7 +175,7 @@ function poseTablet(E,S){
   t.setPose(p,yawTo(p[0],p[2],hp[0],hp[2]));
 }
 function startEdit(E,id){
-  if(!teacherOk()){E.toast('Редактор открывается из кабинета учителя: «Править в VR».','#fca5a5');return false;}
+  if(!canEdit(E,id)){E.toast('Редактор: только автор комнаты или из кабинета учителя («Править в VR»).','#fca5a5');return false;}
   if(!VR.Store.customRoom(id))return false;
   ED.on=true;ED.id=id;ED.sel=null;ED.hist=[];ED.fut=[];
   if(E.roomId===id)rebuild(E);else E.loadRoom(id);
@@ -242,5 +250,5 @@ function hallPanel(E,g){
   }});
 }
 
-VR.custom={refresh,hallPanel,register,startEdit,editing:()=>ED.on?ED.id:null,teacherOk};
+VR.custom={refresh,hallPanel,register,startEdit,editing:()=>ED.on?ED.id:null,teacherOk,canEdit};
 })();

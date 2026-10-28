@@ -16,8 +16,27 @@ try:
     pg.goto(u+'index.html');pg.evaluate("sessionStorage.setItem('vrl.laser',String(Date.now()+1e7))")
     pg.goto(u+'index.html?as=teacher');pg.wait_for_timeout(1500)
     t(pg.is_visible('#go') and pg.inner_text('#who')=='Учитель','?as=teacher с флагом: экран «Учитель» и кнопка входа')
+    t(not pg.is_visible('#tClassP'),'без классов на устройстве выбора класса нет, есть выбор параллели')
     pg.click('#go');pg.wait_for_timeout(1500)
     t(pg.evaluate("VR.app.E.student.role")=='teacher','в сессии роль учителя')
+    # классы на устройстве (после входа в кабинет): выбор класса урока, параллель берётся из класса
+    pg.goto(u+'index.html');pg.evaluate("""()=>{const n=Date.now();localStorage.setItem('vrlesson.v1',JSON.stringify({v:5,classes:[{id:'k7a',grade:7,letter:'А',created:n,updated:n},{id:'k9b',grade:9,letter:'Б',created:n,updated:n}],students:[{id:'s1',name:'Петров Пётр',grade:9,classId:'k9b',created:n,updated:n},{id:'s2',name:'Смирнова Анна',grade:9,classId:'k9b',created:n,updated:n},{id:'s3',name:'Чужой Ученик',grade:7,classId:'k7a',created:n,updated:n}],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{}}));localStorage.setItem('vrl.sub',JSON.stringify(['k9b']));sessionStorage.setItem('vrl.laser',String(Date.now()+1e7));}""")
+    pg.goto(u+'index.html?as=teacher');pg.wait_for_timeout(1500)
+    opts=pg.eval_on_selector_all('#tClass option','o=>o.map(x=>x.value+"|"+x.textContent)')
+    t(pg.is_visible('#tClassP') and opts[0].startswith('k7a|7А') and any(o.startswith('k9b|') and 'предметник' in o for o in opts) and not pg.is_visible('#guestGrade'),'выбор класса урока: свои и предметные классы, параллель не спрашивается (%s)'%opts)
+    pg.select_option('#tClass','k9b');pg.click('#go');pg.wait_for_timeout(1500)
+    s=pg.evaluate("VR.app.E.student")
+    t(s.get('classId')=='k9b' and s.get('grade')==9 and s.get('className')=='9Б','урок с классом 9Б: класс и параллель в сессии (%s)'%s)
+    # планшет учителя: вкладка «Класс» со статистикой выбранного класса
+    pg.evaluate("VR.app.E.toggleMenu(true)");pg.wait_for_timeout(400)
+    lab=pg.evaluate("(()=>{const m=VR.app.E.menu;const b=m.btns.find(b=>b.x===218&&b.y===150);if(!b)return null;b.fn();m.dirty=true;return true;})()");pg.wait_for_timeout(500)
+    txt=pg.evaluate("(()=>{const m=VR.app.E.menu,out=[];const c=m.ctx,f=c.fillText.bind(c);c.fillText=(t,...a)=>{out.push(String(t));return f(t,...a);};m.btns=[];m.over=[];VR.app.E.hooks.menuDraw(c,m);c.fillText=f;return out.join('|');})()")
+    t(lab and 'Петров Пётр' in txt and 'Смирнова Анна' in txt and 'Чужой Ученик' not in txt and '9Б класс' in txt,'планшет учителя: вкладка «Класс» — ученики выбранного класса (9Б), чужих нет')
+    # редактор своей комнаты в шлеме: автор = логин учителя
+    r=pg.evaluate("""(()=>{const S=VR.Store,E=VR.app.E;sessionStorage.removeItem('vrl.editor');sessionStorage.setItem('vrl.user','t.mine');
+      const a=S.saveRoom({schema:'room/1',title:'Моя',blocks:[]}).spec,b=S.saveRoom({schema:'room/1',title:'Чужая',blocks:[],author:'t.other'}).spec;VR.custom.refresh();
+      return [a&&a.author,VR.custom.canEdit(E,a.id),VR.custom.canEdit(E,b.id)];})()""")
+    t(r==['t.mine',True,False],'редактор в шлеме: своя комната — можно, чужая — нельзя (%s)'%r)
     t(not errs,'ошибок JS нет')
     b.close()
 finally: srv.kill()

@@ -141,6 +141,8 @@ function clean(spec,subjOk){
   if(!/^c-/.test(o.id))o.id='c-'+o.id.replace(/^c-?/,'').slice(0,36);
   o.title=str(spec.title,LIM.title).trim()||'Новая комната';
   o.hint=str(spec.hint,LIM.hint).trim();
+  /* автор — логин учётной записи учителя, создавшего комнату: в шлеме ему доступен редактор этой комнаты */
+  o.author=typeof spec.author==='string'&&/^[a-z0-9._@-]{1,60}$/.test(spec.author.toLowerCase())?spec.author.toLowerCase():'';
   o.env=oneOf(spec.env,PRESETS,'lab');
   if(isObj(spec.spawn))o.spawn={x:r1(num(spec.spawn.x,-LIM.coord,LIM.coord,0)),z:r1(num(spec.spawn.z,-LIM.coord,LIM.coord,4))};
   o.created=typeof spec.created==='number'&&isFinite(spec.created)?spec.created:0;

@@ -44,8 +44,19 @@ function choose(st){
   chosen=st;
   $('who').textContent=st.id?st.name:(st.role==='teacher'?'Учитель':'Гость');
   $('guestGrade').hidden=!!st.id;
+  /* учитель выбирает класс для урока: свои классы и классы, где он предметник (они есть на этом устройстве после входа в кабинет) */
+  const tc=st.role==='teacher'?S.classes():[];
+  $('tClassP').hidden=!tc.length;
+  if(tc.length){
+    let last='';try{last=sessionStorage.getItem('vrl.tclass')||'';}catch(e){}
+    const sel=$('tClass');sel.textContent='';
+    for(const k of tc){const o=document.createElement('option');o.value=k.id;o.textContent=S.className(k)+' класс'+(S.isSub&&S.isSub(k.id)?' · предметник':'');sel.appendChild(o);}
+    const o0=document.createElement('option');o0.value='';o0.textContent='Без класса (выбрать параллель)';sel.appendChild(o0);
+    if(tc.some(k=>k.id===last))sel.value=last;
+    const upd=()=>{$('guestGrade').hidden=!!sel.value;};sel.onchange=upd;upd();
+  }
   if(st.id){const p=S.points(st.id),k=S.klass(st.classId);$('whoInfo').textContent=(k?S.className(k):st.grade)+' класс · '+D.bands[S.band(st.grade)]+' задания · '+p.total+' баллов';}
-  else if(st.role==='teacher')$('whoInfo').textContent='Вы входите как учитель: указка включена, результаты не записываются. Выберите класс для заданий:';
+  else if(st.role==='teacher')$('whoInfo').textContent='Вы входите как учитель: указка включена, результаты не записываются. Выберите класс:';
   else $('whoInfo').textContent='Результаты гостя не сохраняются. Выбери класс для заданий:';
   $('go').textContent=xrOk?'Войти в VR':'Начать на экране';
   showSection('ready');
@@ -53,8 +64,13 @@ function choose(st){
 function startSession(){
   if(!chosen)return;
   if(!chosen.id)chosen.grade=parseInt($('gg').value,10)||5;
+  if(chosen.role==='teacher'){
+    const cid=$('tClassP').hidden?'':$('tClass').value,k=cid?S.klass(cid):null;
+    chosen.classId=k?k.id:null;chosen.className=k?S.className(k):'';if(k)chosen.grade=k.grade;
+    try{sessionStorage.setItem('vrl.tclass',cid||'');}catch(e){}
+  }
   const st=chosen.id?S.student(chosen.id):chosen;
-  E.student={id:st.id||null,name:st.name,grade:st.grade};if(st.role==='teacher')E.student.role='teacher';
+  E.student={id:st.id||null,name:st.name,grade:st.grade};if(st.role==='teacher'){E.student.role='teacher';E.student.classId=st.classId||null;E.student.className=st.className||'';}
   E.resetGuest();
   const set=S.settings();
   sess={t0:performance.now(),limit:Math.max(1,set.minutes)*60,up:false,startPts:st.id?S.points(st.id).total:0,startPassed:st.id?S.points(st.id).passed:0,tests:0};
@@ -135,22 +151,41 @@ function hooks(){
   const rated={};  /* оценка комнаты в этом сеансе: звёзды остаются закрашенными */
   /* учитель: сессия, открытая из кабинета (ключ vrl.laser или vrl.editor с неистёкшим сроком), либо учётная запись роли «учитель» */
   E.hooks.isTeacher=()=>{try{return +sessionStorage.getItem('vrl.laser')>Date.now()||VR.custom.teacherOk()||(E.student&&E.student.role==='teacher');}catch(e){return false;}};
+  let menuTab='main';
+  /* вкладка «Класс» планшета учителя: ученики по баллам (два столбца), сколько предметов сдано, когда занимались */
+  const classTab=(p,W,kc)=>{
+    if(!kc){p.text('Класс не выбран. Выберите его при входе в VR («Я учитель» → «Класс, с которым урок»).',36,270,{size:34,color:'#b8c7ea',maxW:W-72});return;}
+    const L=S.studentsOf(kc.id).map(s=>({s,p:S.points(s.id),a:S.lastActive(s.id)})).sort((a,b)=>b.p.total-a.p.total);
+    const act=L.filter(x=>x.a&&Date.now()-x.a<7*864e5).length,avg=L.length?Math.round(L.reduce((t,x)=>t+x.p.total,0)/L.length):0;
+    p.text(S.className(kc)+' класс'+(S.isSub&&S.isSub(kc.id)?' · вы предметник':'')+' · учеников: '+L.length,36,258,{size:32,bold:true,maxW:W-72});
+    p.text('Средний балл '+avg+' · занимались за неделю: '+act,36,302,{size:28,color:'#b8c7ea',maxW:W-72});
+    const cw=(W-90)/2;
+    L.slice(0,30).forEach((x,i)=>{const col=(i/15)|0,r=i%15,X=36+col*(cw+18),Y=350+r*34;
+      p.text((i+1)+'. '+x.s.name,X,Y,{size:24,maxW:cw-130,color:'#e8efff'});
+      p.text(x.p.total+' · '+x.p.passed+'✓',X+cw,Y,{size:24,align:'right',color:'#fde68a',maxW:140});});
+    if(L.length>30)p.text('и ещё '+(L.length-30)+' — полный список в кабинете',36,862,{size:24,color:'#94a3b8'});
+    if(!L.length)p.text('В этом классе пока нет учеников на этом устройстве.',36,360,{size:28,color:'#94a3b8',maxW:W-72});
+    p.text('баллы · сдано предметов',W-36,972-40,{size:22,align:'right',color:'#64748b',maxW:500});
+  };
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
-    p.text((st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
-    const tch=E.isTeacher();
-    p.button(36,150,tch?W-72-540:W-72,86,'Холл',()=>{E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:40,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    p.text((st.className?st.className+' класс · ':st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
+    const tch=E.isTeacher(),kc=tch&&st.classId?S.klass(st.classId):null;
+    p.button(36,150,tch?170:W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
     if(tch){
-      p.button(W-36-526,150,256,86,E.laser.on?'Указка: выкл':'Указка: вкл',()=>E.toggleLaser(),{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:30});
+      /* планшет учителя: вкладка «Класс» — ученики выбранного при входе класса и их статистика */
+      p.button(218,150,190,86,menuTab==='class'?'← Меню':(kc?'Класс '+S.className(kc):'Класс'),()=>{menuTab=menuTab==='class'?'main':'class';E.menu.dirty=true;},{bg:menuTab==='class'?'#1d4ed8':'#0f766e',size:30});
+      p.button(W-36-444,150,220,86,E.laser.on?'Указка: выкл':'Указка: вкл',()=>E.toggleLaser(),{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:28});
       /* цвет указки: плитка нужного цвета; «радуга» — с переливом */
-      const lc=E.LASER_COLORS[E.laser.ci],cx=W-36-256,hov=p.area(cx,150,256,86,()=>E.nextLaserColor());
+      const lc=E.LASER_COLORS[E.laser.ci],cx=W-36-212,hov=p.area(cx,150,212,86,()=>E.nextLaserColor());
       const g=p.ctx,rgb=c=>'rgb('+c.map(v=>Math.round(v*255)).join(',')+')';
       let fill;if(lc.rainbow){fill=g.createLinearGradient(cx,0,cx+256,0);for(let k=0;k<=6;k++)fill.addColorStop(k/6,rgb(E.hsv(((k/6*.9+E.t*.3)%1),.9,1)));}else fill=rgb(lc.c);
-      g.fillStyle=fill;g.beginPath();g.roundRect?g.roundRect(cx,150,256,86,14):g.rect(cx,150,256,86);g.fill();
+      g.fillStyle=fill;g.beginPath();g.roundRect?g.roundRect(cx,150,212,86,14):g.rect(cx,150,212,86);g.fill();
       if(hov){g.strokeStyle='#fff';g.lineWidth=5;g.stroke();}
-      g.font='bold 30px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle=lc.rainbow||lc.c[0]+lc.c[1]+lc.c[2]<1.6?'#0b1020':'#0b1020';g.fillText('Цвет: '+lc.n,cx+128,193);g.textAlign='left';g.textBaseline='top';
+      g.font='bold 26px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle=lc.rainbow||lc.c[0]+lc.c[1]+lc.c[2]<1.6?'#0b1020':'#0b1020';g.fillText('Цвет: '+lc.n,cx+106,193);g.textAlign='left';g.textBaseline='top';
     }
+    if(tch&&menuTab==='class'){classTab(p,W,kc);return;}
     const bw=(W-90)/2;
     VR.openRooms(st.grade||5).forEach((k,i)=>{
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';
@@ -160,7 +195,7 @@ function hooks(){
     p.button(54+bw,780,bw,90,'Завершить',()=>{if(E.session)E.exitXR();else endSession();},{bg:'#b91c1c',size:38});
     if(E.roomId&&E.roomId!=='hall'){
       const cr=VR.ROOMS[E.roomId];
-      if(cr&&cr.custom&&VR.custom.teacherOk())p.button(36,880,340,70,VR.custom.editing()===E.roomId?'Редактор открыт':'Править комнату',()=>{E.toggleMenu(false);VR.custom.startEdit(E,E.roomId);},{bg:'#a16207',size:32});
+      if(cr&&cr.custom&&VR.custom.canEdit(E,E.roomId))p.button(36,880,340,70,VR.custom.editing()===E.roomId?'Редактор открыт':'✎ Редактор комнаты',()=>{E.toggleMenu(false);VR.custom.startEdit(E,E.roomId);},{bg:'#a16207',size:32});
       else p.text('Как тебе эта комната?',36,892,{size:32,color:'#b8c7ea'});
       /* оценка комнаты: пять звёзд, при наведении закрашиваются до наведённой, по щелчку сохраняется оценка */
       const rate=n=>{const st=E.student||{};S.addFeedback({kind:'rate',room:E.roomId,rating:n,grade:st.grade||null,sid:st.id||null});rated[E.roomId]=n;E.toast('Спасибо за оценку: '+n+' из 5!');E.chime();E.menu.dirty=true;};

@@ -246,6 +246,7 @@ const Store=VR.Store={
   temp:{},/* открытые комнаты, загруженные с сервера на время сеанса: в память, не в хранилище */
   customRoom(id){return Store.temp[id]||Store.customRooms().find(s=>s.id===id)||null;},
   saveRoom(spec){
+    if(spec&&typeof spec==='object'&&!spec.author){const w=Store.account.who();if(w)spec=Object.assign({},spec,{author:w});}
     const RS=VR.roomspec,Q=VR.DATA&&VR.DATA.Q,d=load();
     const c=RS.clean(spec,v=>!!(Q&&Q[v]));
     if(!c.spec)return{spec:null,errors:c.errors};
