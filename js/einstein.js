@@ -201,5 +201,30 @@ function drawTile(c,row,n,x,y,s,col){
   c.restore();
 }
 
-VR.einstein={N,Poss,rng,generate,canSolve,newGame,click,restart,hint,drawTile,showOf,keyOf,applyRule,RULES:R};
+/* рисунок подсказки как в оригинале Einstein 2.0: светлые фишки с чёрными знаками;
+   «рядом» — красная двойная стрелка на синем квадрате, «левее» — три красные точки на синем квадрате,
+   «между» — три фишки и синяя двойная стрелка над средней; вертикальная — две фишки одна над другой */
+/* градиент с запасным сплошным цветом (на случай урезанного canvas) */
+function grad(c,x,y,T,a,b){const g=c.createLinearGradient&&c.createLinearGradient(x,y,x+T,y+T);if(!g||!g.addColorStop)return b;g.addColorStop(0,a);g.addColorStop(1,b);return g;}
+function hintTile(c,row,n,x,y,T,dim){
+  const g=grad(c,x,y,T,dim?'#6b7280':'#cfc8c4',dim?'#9ca3af':'#f3eeea');
+  c.fillStyle=g;c.fillRect(x,y,T,T);c.strokeStyle='#111';c.lineWidth=Math.max(2,T*.03);c.strokeRect(x+1,y+1,T-2,T-2);
+  drawTile(c,row,n,x,y,T,dim?'#374151':'#111');
+}
+function dArrow(c,x1,x2,y,h,col){/* двойная стрелка ↔ толщиной h */
+  const a=h*1.6;c.fillStyle=col;c.beginPath();
+  c.moveTo(x1,y);c.lineTo(x1+a,y-a*.75);c.lineTo(x1+a,y-h/2);c.lineTo(x2-a,y-h/2);c.lineTo(x2-a,y-a*.75);c.lineTo(x2,y);
+  c.lineTo(x2-a,y+a*.75);c.lineTo(x2-a,y+h/2);c.lineTo(x1+a,y+h/2);c.lineTo(x1+a,y+a*.75);c.closePath();c.fill();
+}
+function blueSq(c,x,y,T,dim){c.fillStyle=grad(c,x,y,T,dim?'#6b7280':'#8f8ff0',dim?'#d1d5db':'#ffffff');c.fillRect(x,y,T,T);}
+function drawHint(c,s,x,y,T,dim){
+  const red=dim?'#4b5563':'#ef1111',blue=dim?'#4b5563':'#1630f0';
+  if(s.t==='under'){hintTile(c,s.a[0],s.a[1],x,y,T,dim);hintTile(c,s.b[0],s.b[1],x,y+T,T,dim);return;}
+  hintTile(c,s.a[0],s.a[1],x,y,T,dim);hintTile(c,s.b[0],s.b[1],x+2*T,y,T,dim);
+  if(s.t==='near'){blueSq(c,x+T,y,T,dim);dArrow(c,x+T+T*.08,x+2*T-T*.08,y+T/2,T*.13,red);}
+  else if(s.t==='dir'){blueSq(c,x+T,y,T,dim);c.fillStyle=red;for(let k=-1;k<=1;k++){c.beginPath();c.arc(x+1.5*T+k*T*.3,y+T/2,T*.1,0,6.283);c.fill();}}
+  else if(s.t==='btw'){hintTile(c,s.c[0],s.c[1],x+T,y,T,dim);dArrow(c,x+T*.75,x+2.25*T,y+T*.14,T*.1,blue);}
+}
+
+VR.einstein={N,Poss,rng,generate,canSolve,newGame,click,restart,hint,drawTile,drawHint,showOf,keyOf,applyRule,RULES:R};
 })();
