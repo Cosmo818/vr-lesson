@@ -150,7 +150,8 @@ function hooks(){
   window.addEventListener('keydown',e=>{if(e.code==='KeyH'&&E.deskInput&&!(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))&&!e.repeat){helpToggle();e.preventDefault();}});
   const rated={};  /* оценка комнаты в этом сеансе: звёзды остаются закрашенными */
   /* учитель: сессия, открытая из кабинета (ключ vrl.laser или vrl.editor с неистёкшим сроком), либо учётная запись роли «учитель» */
-  E.hooks.isTeacher=()=>{try{return +sessionStorage.getItem('vrl.laser')>Date.now()||VR.custom.teacherOk()||(E.student&&E.student.role==='teacher');}catch(e){return false;}};
+  /* ученик с учёткой (есть id) учителем не бывает, даже если в этой вкладке остался флаг учителя (вошёл ученик после «Назад») */
+  E.hooks.isTeacher=()=>{try{if(E.student&&E.student.id)return false;return +sessionStorage.getItem('vrl.laser')>Date.now()||VR.custom.teacherOk()||(E.student&&E.student.role==='teacher');}catch(e){return false;}};
   let menuTab='main';
   /* вкладка «Класс» планшета учителя: ученики по баллам (два столбца), сколько предметов сдано, когда занимались */
   const classTab=(p,W,kc)=>{
@@ -167,12 +168,33 @@ function hooks(){
     if(!L.length)p.text('В этом классе пока нет учеников на этом устройстве.',36,360,{size:28,color:'#94a3b8',maxW:W-72});
     p.text('баллы · сдано предметов',W-36,972-40,{size:22,align:'right',color:'#64748b',maxW:500});
   };
+  /* планшет ученика: свои баллы по предметам и место в классе; одноклассники — без имён (средний балл, лучший, сколько занимались) */
+  const meTab=(p,W,st)=>{
+    const me=S.student(st.id),pts=S.points(st.id),b=S.best(st.id),k=me&&me.classId?S.klass(me.classId):null;
+    const mates=k?S.studentsOf(k.id).map(s=>({id:s.id,t:S.points(s.id).total})).sort((a,b)=>b.t-a.t):[];
+    const place=mates.findIndex(x=>x.id===st.id)+1,avg=mates.length?Math.round(mates.reduce((t,x)=>t+x.t,0)/mates.length):0;
+    p.text('Баллы: '+pts.total+' · сдано предметов: '+pts.passed+' · открытий: '+pts.discCount,36,256,{size:30,bold:true,maxW:W-72});
+    if(k&&mates.length>1)p.text('Класс '+S.className(k)+': место '+place+' из '+mates.length+' · средний балл класса '+avg+' · лучший '+mates[0].t+(pts.total>avg?' — ты выше среднего!':''),36,300,{size:26,color:'#b8c7ea',maxW:W-72});
+    else p.text('Сравнение с классом появится, когда в классе будут результаты.',36,300,{size:26,color:'#94a3b8',maxW:W-72});
+    const subs=Object.keys(D.subjects).filter(x=>b[x]),cw=(W-90)/2;
+    subs.slice(0,16).forEach((x,i)=>{const col=i%2,r=(i/2)|0,X=36+col*(cw+18),Y=392+r*58,o=b[x],sub=D.subjects[x];
+      const ratio=o.ratio;p.ctx.fillStyle='#1e293b';p.ctx.fillRect(X,Y,cw,46);
+      if(ratio!==null){p.ctx.fillStyle=ratio>=.6?'#15803d':'#a16207';p.ctx.fillRect(X,Y,Math.round(cw*ratio),46);}
+      p.text(sub.title,X+12,Y+8,{size:26,maxW:cw-140,color:'#f8fafc'});
+      p.text(ratio===null?'—':Math.round(ratio*100)+'%',X+cw-12,Y+8,{size:26,align:'right',maxW:120,color:'#fde68a'});});
+    p.text('Зелёный — сдано (60% и выше). Баллы: лучший тест × 50 + 2 за открытие.',36,872,{size:24,color:'#94a3b8',maxW:W-72});
+  };
   E.hooks.menuDraw=(c,p)=>{
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
     p.text((st.className?st.className+' класс · ':st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
     const tch=E.isTeacher(),kc=tch&&st.classId?S.klass(st.classId):null;
-    p.button(36,150,tch?170:W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    const me=!tch&&st.id;
+    p.button(36,150,tch?170:me?(W-90)/2:W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    if(me){
+      p.button(54+(W-90)/2,150,(W-90)/2,86,menuTab==='me'?'← Меню':'Мои успехи',()=>{menuTab=menuTab==='me'?'main':'me';E.menu.dirty=true;},{bg:menuTab==='me'?'#1d4ed8':'#0f766e',size:34});
+      if(menuTab==='me'){meTab(p,W,st);return;}
+    }
     if(tch){
       /* планшет учителя: вкладка «Класс» — ученики выбранного при входе класса и их статистика */
       p.button(218,150,190,86,menuTab==='class'?'← Меню':(kc?'Класс '+S.className(kc):'Класс'),()=>{menuTab=menuTab==='class'?'main':'class';E.menu.dirty=true;},{bg:menuTab==='class'?'#1d4ed8':'#0f766e',size:30});

@@ -37,6 +37,19 @@ try:
       const a=S.saveRoom({schema:'room/1',title:'Моя',blocks:[]}).spec,b=S.saveRoom({schema:'room/1',title:'Чужая',blocks:[],author:'t.other'}).spec;VR.custom.refresh();
       return [a&&a.author,VR.custom.canEdit(E,a.id),VR.custom.canEdit(E,b.id)];})()""")
     t(r==['t.mine',True,False],'редактор в шлеме: своя комната — можно, чужая — нельзя (%s)'%r)
+    # планшет ученика: «Мои успехи» — свои баллы и место в классе, одноклассники без имён
+    pg.goto(u+'index.html');pg.evaluate("""()=>{sessionStorage.clear();const n=Date.now(),R=[];const st=[['a1','Аникин Артём'],['a2','Борисова Вера'],['a3','Волков Глеб']].map(([id,name])=>({id,name,grade:6,classId:'k6',created:n,updated:n}));
+      [['a1',5],['a2',3],['a3',1]].forEach(([sid,sc],i)=>R.push({id:'r'+i,sid,subj:'math',score:sc,total:5,ts:n-i}));
+      localStorage.setItem('vrlesson.v1',JSON.stringify({v:5,classes:[{id:'k6',grade:6,letter:'В',created:n,updated:n}],students:st,results:R,disc:{},tests:[],feedback:[],deleted:{},settings:{}}));}""")
+    pg.goto(u+'index.html');pg.wait_for_timeout(1500)
+    pg.evaluate("(()=>{VR.app.choose(VR.Store.student('a2'));VR.app.startSession();})()");pg.wait_for_timeout(800)
+    pg.evaluate("VR.app.E.toggleMenu(true)");pg.wait_for_timeout(300)
+    ok2=pg.evaluate("(()=>{const m=VR.app.E.menu;const b=m.btns.find(b=>b.y===150&&b.x>100);if(!b)return false;b.fn();return true;})()")
+    txt=pg.evaluate("(()=>{const m=VR.app.E.menu,out=[];const c=m.ctx,f=c.fillText.bind(c);c.fillText=(t,...a)=>{out.push(String(t));return f(t,...a);};m.btns=[];m.over=[];VR.app.E.hooks.menuDraw(c,m);c.fillText=f;return out.join('|');})()")
+    t(ok2 and 'место 2 из 3' in txt and 'Математика' in txt and '60%' in txt and 'Аникин' not in txt and 'Волков' not in txt,'планшет ученика: «Мои успехи» — баллы, место 2 из 3, проценты по предметам, без имён одноклассников')
+    t(not pg.evaluate("VR.app.E.menu.over.length"),'планшет ученика: ничего не за краем')
+    pg.evaluate("sessionStorage.setItem('vrl.laser',String(Date.now()+1e7))")
+    t(pg.evaluate("VR.app.E.isTeacher()")==False,'ученик не получает инструменты учителя, даже если в вкладке остался флаг указки')
     t(not errs,'ошибок JS нет')
     b.close()
 finally: srv.kill()
