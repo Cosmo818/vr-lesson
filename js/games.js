@@ -63,6 +63,31 @@ function favToggle(game,seed){if(!/^[a-z]{2,12}$/.test(game)||!Number.isInteger(
   const f=favLoad(),a=f[game]||(f[game]=[]),i=a.indexOf(seed);if(i>=0)a.splice(i,1);else{a.unshift(seed);if(a.length>60)a.pop();}
   try{localStorage.setItem(FKEY,JSON.stringify(f));}catch(e){}return i<0;}
 
+/* ---------- настройки ученика в «Эйнштейне»: один ключ на устройстве, по id ученика (формат — PLAN-einstein.md 1.4) ---------- */
+const PKEY='vrl.einprefs',PDEF={hk:1,mode:'pick',view:'wall',tab:'school',order:'avg'},PREFMAX=200;
+function prefField(k,v){
+  if(k==='hk')return Number.isInteger(v)&&v>=0&&v<=2?v:undefined;
+  if(k==='mode')return v==='pick'||v==='excl'?v:undefined;
+  if(k==='view')return v==='wall'||v==='term'?v:undefined;
+  if(k==='tab')return v==='school'||v==='district'||v==='region'?v:undefined;
+  if(k==='order')return v==='avg'||v==='count'?v:undefined;
+}
+function prefClean(o){const r={};for(const k of Object.keys(PDEF)){const v=o&&typeof o==='object'?prefField(k,o[k]):undefined;r[k]=v===undefined?PDEF[k]:v;}
+  r.ts=o&&typeof o==='object'&&Number.isFinite(o.ts)&&o.ts>=0&&o.ts<=4e12?o.ts:0;return r;}
+const prefKey=sid=>{const k=sid?String(sid):'guest';return /^[\w-]{1,60}$/.test(k)&&k!=='__proto__'?k:null;};
+function prefLoad(){let x=null;try{x=JSON.parse(localStorage.getItem(PKEY)||'null');}catch(e){}
+  const u={};if(x&&typeof x==='object'&&!Array.isArray(x)&&x.u&&typeof x.u==='object'&&!Array.isArray(x.u))
+    for(const k of Object.keys(x.u).slice(0,PREFMAX*2)){if(prefKey(k)!==k)continue;u[k]=prefClean(x.u[k]);}
+  return u;}
+function prefs(sid){const k=prefKey(sid),r=prefClean(k?prefLoad()[k]:null);delete r.ts;return r;}
+function setPrefs(sid,patch){const k=prefKey(sid);if(!k)return prefs(null);
+  const u=prefLoad(),cur=u[k]||prefClean(null);
+  if(patch&&typeof patch==='object')for(const f of Object.keys(PDEF)){const v=prefField(f,patch[f]);if(v!==undefined)cur[f]=v;}
+  cur.ts=Date.now();u[k]=cur;
+  let ks=Object.keys(u);while(ks.length>PREFMAX){let o=ks[0];for(const q of ks)if(u[q].ts<u[o].ts)o=q;delete u[o];ks=Object.keys(u);}
+  try{localStorage.setItem(PKEY,JSON.stringify({v:1,u}));}catch(e){}
+  const r=Object.assign({},cur);delete r.ts;return r;}
+
 /* ---------- запись игр и статистика ---------- */
 function record(r){
   const c=cleanGame(Object.assign({id:uid(),ts:now()},r));if(!c)return null;
@@ -178,5 +203,5 @@ function advance(t,r,i,sid){
   const n=t.rounds[r+1][i>>1];if(i%2===0)n.a=sid;else n.b=sid;
 }
 
-VR.games={favs,favToggle,KEY,load,save,clean,merge,record,finish,stats,top,history,tour:T,matchSeed,onChange:f=>{listeners.push(f);return f;},offChange:f=>{const i=listeners.indexOf(f);if(i>=0)listeners.splice(i,1);},pending:null,_reset(){db=null;mem=null;try{localStorage.removeItem(KEY);}catch(e){}}};
+VR.games={favs,favToggle,prefs,setPrefs,KEY,load,save,clean,merge,record,finish,stats,top,history,tour:T,matchSeed,onChange:f=>{listeners.push(f);return f;},offChange:f=>{const i=listeners.indexOf(f);if(i>=0)listeners.splice(i,1);},pending:null,_reset(){db=null;mem=null;try{localStorage.removeItem(KEY);}catch(e){}try{localStorage.removeItem(PKEY);}catch(e){}}};
 })();

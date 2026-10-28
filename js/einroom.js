@@ -13,7 +13,7 @@ const FX=100,FY=24,CW=316,CH=232,TS=96;
 function start(E,S,seed,again,begin){
   const pz=again&&S.g?S.g.pz:E1.generate(seed);
   S.g=E1.newGame(pz);S.t=0;S.helped=false;S.sec=0;S.sent=false;S.used=new Set();
-  S.phase=begin===false?'idle':'play';S.showRules=false;
+  S.phase=begin===false?'idle':'play';S.paused=false;S.showRules=false;
   S.msg='';S.field.dirty=S.hints.dirty=S.ctl.dirty=true;if(S.favs)S.favs.dirty=true;
 }
 const HK=[.9,1.2,1.5];/* ступени размера подсказок */
@@ -26,6 +26,8 @@ const RULES=[
   {t:'Три красные точки: левая фишка находится в колонке левее правой, на любом расстоянии.',ex:{t:'dir',a:[3,3],b:[2,2]}},
   {t:'Синяя стрелка над тремя фишками: средняя стоит между двумя другими, все три в соседних колонках; какая из крайних левее — неизвестно.',ex:{t:'btw',a:[5,5],c:[4,4],b:[0,5]}},
   {t:'Использованную подсказку нажми — она потускнеет. Ошибка (убрана верная фишка или выбрана неверная) — проигрыш.'}];
+function savePref(E,patch){try{if(VR.games&&VR.games.setPrefs)VR.games.setPrefs(E.student&&E.student.id,patch);}catch(e){}}
+function setPause(S,v){S.paused=v;S.field.dirty=S.hints.dirty=S.ctl.dirty=true;}
 function rulesDraw(E,S,c,p){
   p.text('Правила игры «Эйнштейн»',30,14,{size:56,bold:true,maxW:p.W-60});
   let y=100;const T=76;
@@ -36,7 +38,7 @@ function rulesDraw(E,S,c,p){
   }
 }
 function applyClick(E,S,h,c,r,e){
-  const g=S.g;if(g.status!=='play'||S.phase!=='play')return;
+  const g=S.g;if(g.status!=='play'||S.phase!=='play'||S.paused)return;
   const alt=!!(h&&h.src&&h.src.gamepad&&h.src.gamepad.buttons&&h.src.gamepad.buttons[1]&&h.src.gamepad.buttons[1].pressed);
   const btn=(S.mode==='pick')!==alt?1:3;
   const res=E1.click(g,c,r,e,btn);
@@ -55,7 +57,9 @@ function won(E,S){
   if(!S.sent){S.sent=true;try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{time:Math.round(S.t),seed:S.g.pz.seed,helped:S.helped,moves:S.g.moves,tid:S.tid||null,mid:S.mid||null});}catch(e){}}
   S.ctl.dirty=S.hints.dirty=true;
 }
+function pauseDraw(c,p,sz){c.fillStyle='#0b1020';c.fillRect(0,0,p.W,p.H);c.fillStyle='#fde68a';c.font='bold '+sz+'px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('Пауза',p.W/2,p.H/2);}
 function fieldDraw(E,S,c,p){
+  if(S.paused&&S.phase==='play')return pauseDraw(c,p,150);
   const g=S.g,P=g.P,over=g.status==='lose';
   c.font='bold 30px sans-serif';c.fillStyle='#94a3b8';c.textAlign='center';c.textBaseline='middle';
   for(let i=0;i<N;i++)c.fillText(String(i+1),FX+i*CW+CW/2,12);
@@ -120,12 +124,13 @@ function drawHint(c,s,x,y,T,dim){
   else if(s.t==='btw'){hintTile(c,s.c[0],s.c[1],x+T,y,T,dim);dArrow(c,x+T*.75,x+2.25*T,y+T*.14,T*.1,blue);}
 }
 function hintDraw(E,S,c,p){
+  if(S.paused&&S.phase==='play')return pauseDraw(c,p,110);
   if(S.phase==='idle'||S.showRules)return rulesDraw(E,S,c,p);
   const g=S.g,rules=g.pz.rules,K=HK[S.hk===undefined?1:S.hk],T=Math.round(84*K),sc=v=>Math.round(v*K);
   p.text('Подсказки',30,14,{size:48,bold:true,maxW:700});
   /* размер подсказок: три ступени, кнопки A− / A+ */
-  p.button(p.W-30-230,10,104,60,'A−',()=>{S.hk=Math.max(0,(S.hk===undefined?1:S.hk)-1);S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)<=0});
-  p.button(p.W-30-110,10,104,60,'A+',()=>{S.hk=Math.min(HK.length-1,(S.hk===undefined?1:S.hk)+1);S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)>=HK.length-1});
+  p.button(p.W-30-230,10,104,60,'A−',()=>{S.hk=Math.max(0,(S.hk===undefined?1:S.hk)-1);savePref(E,{hk:S.hk});S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)<=0});
+  p.button(p.W-30-110,10,104,60,'A+',()=>{S.hk=Math.min(HK.length-1,(S.hk===undefined?1:S.hk)+1);savePref(E,{hk:S.hk});S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)>=HK.length-1});
   p.text('Нажми подсказку, чтобы отметить её как использованную',30,72,{size:26,color:'#94a3b8',maxW:p.W-60});
   const horiz=[],vert=[];
   rules.forEach((s,i)=>{const k=E1.showOf(s);if(k==='horiz')horiz.push(i);else if(k==='vert')vert.push(i);});
@@ -145,8 +150,9 @@ function ctlDraw(E,S,c,p){
   const g=S.g,X=24,W=p.W-48;
   p.text('Эйнштейн',X,14,{size:46,bold:true,maxW:W-200});
   p.text(fmtT(S.t),p.W-X-170,18,{size:46,bold:true,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#fde68a',maxW:170});
+  const canPause=S.phase==='play'&&g.status==='play'&&!S.tid;
   const st=g.status==='lose'?S.msg:g.status==='win'?S.msg:(S.msg||'Открой все фишки: исключай лишние по подсказкам.');
-  p.text(st,X,80,{size:28,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#cbd5e1',maxW:W,maxY:200});
+  p.text(st,X,80,{size:28,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#cbd5e1',maxW:W,maxY:canPause?154:200});
   const bw=(W-14)/2;
   if(S.phase==='idle'){
     p.button(X,206,W,64,'▶ Начать',()=>{S.phase='play';S.t=0;S.sec=0;S.field.dirty=S.hints.dirty=S.ctl.dirty=true;E.beep(660,.08,'sine',.05);},{size:34,bg:'#15803d'});
@@ -155,10 +161,11 @@ function ctlDraw(E,S,c,p){
     if(VR.ROOMS.arena)p.button(X+bw+14,440,bw,64,'В зал',()=>E.goRoom('arena'),{size:26,bg:'#475569'});
     p.text('Головоломка № '+g.pz.seed,X,520,{size:22,color:'#64748b',maxW:W});return;
   }
-  p.button(X,206,W,64,'Курок: '+(S.mode==='pick'?'ВЫБРАТЬ фишку':'УБРАТЬ фишку'),()=>{S.mode=S.mode==='pick'?'excl':'pick';S.ctl.dirty=true;},{size:30,bg:S.mode==='pick'?'#166534':'#991b1b'});
+  if(canPause)p.button(X,156,W,46,S.paused?'▶ Продолжить':'⏸ Пауза',()=>setPause(S,!S.paused),{size:26,bg:S.paused?'#15803d':'#334155'});
+  p.button(X,206,W,64,'Курок: '+(S.mode==='pick'?'ВЫБРАТЬ фишку':'УБРАТЬ фишку'),()=>{S.mode=S.mode==='pick'?'excl':'pick';savePref(E,{mode:S.mode});S.ctl.dirty=true;},{size:30,bg:S.mode==='pick'?'#166534':'#991b1b'});
   p.button(X,284,bw,64,'Сначала',()=>start(E,S,0,true),{size:30,bg:'#475569',disabled:!!S.tid});
   p.button(X+bw+14,284,bw,64,'Новая',()=>start(E,S),{size:30,bg:'#b45309',disabled:!!S.tid});
-  p.button(X,362,W,64,'Открыть одну клетку (без зачёта)',()=>{if(g.status!=='play'||S.tid)return;S.helped=true;E1.hint(g);S.field.dirty=true;if(g.status==='win')won(E,S);S.ctl.dirty=true;},{size:26,bg:'#1e293b',disabled:g.status!=='play'||!!S.tid});
+  p.button(X,362,W,64,'Открыть одну клетку (без зачёта)',()=>{if(g.status!=='play'||S.tid)return;S.helped=true;E1.hint(g);S.field.dirty=true;if(g.status==='win')won(E,S);S.ctl.dirty=true;},{size:26,bg:'#1e293b',disabled:g.status!=='play'||!!S.tid||S.paused});
   p.button(X,440,VR.ROOMS.arena?bw:W,64,S.showRules?'Подсказки':'Правила',()=>{S.showRules=!S.showRules;S.hints.dirty=S.ctl.dirty=true;},{size:26,bg:'#334155'});
   if(VR.ROOMS.arena)p.button(X+bw+14,440,bw,64,'В зал',()=>E.goRoom('arena'),{size:26,bg:'#475569'});
   p.text((S.tid?'Турнирная партия. ':'')+'Хват во время курка — наоборот. Головоломка № '+g.pz.seed,X,520,{size:22,color:'#64748b',maxW:W});
@@ -180,7 +187,8 @@ ROOMS.ein={
   hint:'Эйнштейн: открой все фишки 6×6 по подсказкам. Курок на фишку — выбрать её (режим «убрать» переключается кнопкой).',
   build(E,S){
     VR.RU.backDoor(E);
-    S.mode='pick';S.tid=null;S.mid=null;
+    S.tid=null;S.mid=null;S.paused=false;
+    { const pf=VR.games&&VR.games.prefs?VR.games.prefs(E.student&&E.student.id):{hk:1,mode:'pick',view:'wall'};S.hk=pf.hk;S.mode=pf.mode;S.view=pf.view; }
     const pd=VR.games&&VR.games.pending;if(pd&&pd.game==='einstein'){S.tid=pd.tid;S.mid=pd.r+'.'+pd.i;S.nextSeed=pd.seed;VR.games.pending=null;}
     S.field=E.addPanel({w:3.4,h:2.4,res:2048,pos:[-1.2,1.55,-4.2],yaw:0,accent:'#818cf8',draw:(c,p)=>fieldDraw(E,S,c,p)});
     S.hints=E.addPanel({w:2.2,h:2.4,res:1536,pos:[2.0,1.55,-4.2],yaw:0,accent:'#a78bfa',draw:(c,p)=>hintDraw(E,S,c,p)});
@@ -190,6 +198,8 @@ ROOMS.ein={
   },
   targets(){return[];},
   update(E,S,dt){
+    if(S.g&&E.menuOpen&&!S.tid&&!S.paused&&S.phase==='play'&&S.g.status==='play')setPause(S,true);
+    if(S.paused)return;
     if(!S.g||S.g.status!=='play'||S.phase!=='play')return;
     S.t+=dt;const s=Math.floor(S.t);
     if(s!==S.sec){S.sec=s;S.ctl.dirty=true;}

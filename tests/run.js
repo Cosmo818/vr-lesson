@@ -568,6 +568,50 @@ function makeCtx(xr){
       if(!hit)break;}
     ok(g.status==='win'&&Z.ctl.dirty!==undefined,'эйнштейн-комната: клики по областям фишек решают головоломку ('+g.status+')');
   }
+  { /* эйнштейн: пауза и настройки ученика на устройстве */
+    const V=VR.games,LS=C.sb.localStorage,PK='vrl.einprefs',stuKeep=E.student,pendKeep=V.pending;V._reset();
+    const startPlay=()=>{E.goRoom('ein');run(25);const Q=E.S;Q.ctl.btns.find(b=>b.y===206&&!b.disabled).fn({});run(4);return Q;};
+    E.student={id:'sA',name:'Аня',grade:5};let Q=startPlay();
+    const pb=()=>Q.ctl.btns.find(b=>b.y===156);
+    ok(Q.phase==='play'&&!!pb()&&/Пауза/.test(pb().label||'Пауза'),'эйнштейн: кнопка паузы есть в обычной партии');
+    run(300);const t1=Q.t;ok(t1>3,'эйнштейн: время идёт без паузы ('+t1.toFixed(1)+')');
+    pb().fn();run(4);ok(Q.paused===true,'эйнштейн: пауза включена');
+    const t2=Q.t;run(310);ok(Q.t===t2,'эйнштейн: на паузе время стоит (5 с кадров)');
+    { const calls=[];const rc=Q.field.ctx||null;void rc;
+      Q.field.dirty=Q.hints.dirty=Q.ctl.dirty=true;run(4);
+      ok(Q.field.btns.length===0&&Q.hints.btns.length===0,'эйнштейн: на паузе нет областей поля и подсказок');
+      ok(!Q.field.over.length&&!Q.hints.over.length&&!Q.ctl.over.length,'эйнштейн: панели паузы не за краем');
+      const g=Q.g,before=JSON.stringify(g.moves);Q.g.moves=Q.g.moves;void before; }
+    pb().fn();run(4);ok(Q.paused===false&&Q.field.btns.length>=100,'эйнштейн: «Продолжить» возвращает поле');
+    run(60);ok(Q.t>t2,'эйнштейн: после паузы время идёт');
+    pb().fn();run(2);Q.ctl.btns.find(b=>b.y===284&&b.x<200).fn({});run(2);ok(Q.paused===false,'эйнштейн: «Сначала» снимает паузу');
+    E.toggleMenu(true);run(4);ok(Q.paused===true,'эйнштейн: открытое меню включает паузу');E.toggleMenu(false);run(4);ok(Q.paused===true,'эйнштейн: закрытие меню паузу не снимает');
+    { const bs=Q.ctl.btns.filter(b=>b.y===156);bs[0].fn();run(2);ok(Q.paused===false,'эйнштейн: паузу снимает только кнопка'); }
+    /* турнир: кнопки нет, меню не включает паузу */
+    V.pending={game:'einstein',tid:'T1',r:0,i:0,seed:77};Q=startPlay();
+    ok(Q.tid==='T1'&&Q.phase==='play'&&!pb(),'эйнштейн: в турнире кнопки паузы нет');
+    E.toggleMenu(true);run(4);ok(Q.paused===false,'эйнштейн: в турнире меню паузу не включает');const t3=Q.t;run(60);ok(Q.t>t3,'эйнштейн: в турнире время идёт при меню');E.toggleMenu(false);run(2);
+    /* настройки: два ученика на одном шлеме */
+    V._reset();E.student={id:'sA',name:'Аня',grade:5};Q=startPlay();
+    Q.hints.btns.find(b=>b.y===10&&b.x>1300).fn();run(2);Q.ctl.btns.find(b=>b.y===206).fn();run(2);
+    ok(Q.hk===2&&Q.mode==='excl','эйнштейн: ученик A выставил крупно и режим «убрать»');
+    E.student={id:'sB',name:'Боря',grade:5};Q=startPlay();ok(Q.hk===1&&Q.mode==='pick','эйнштейн: у ученика B свои настройки (по умолчанию)');
+    Q.hints.btns.find(b=>b.y===10&&b.x<1300).fn();run(2);ok(Q.hk===0,'эйнштейн: B уменьшил подсказки');
+    E.student={id:'sA',name:'Аня',grade:5};Q=startPlay();ok(Q.hk===2&&Q.mode==='excl','эйнштейн: A после перезахода: настройки сохранились');
+    E.student=null;Q=startPlay();ok(Q.hk===1,'эйнштейн: гость — по умолчанию, настройки не чужие');
+    ok(V.prefs('sB').hk===0&&V.prefs('sA').hk===2&&V.prefs('nobody').hk===1,'игры: prefs по id ученика');
+    /* испорченные данные */
+    for(const bad of ['{{не json','[1,2,3]','"строка"','null','{"v":1,"u":[1]}','{"v":1,"u":{"sA":{"hk":99,"mode":"zzz","view":5,"tab":{},"order":null}}}']){
+      LS.setItem(PK,bad);const pf=V.prefs('sA');ok(pf.hk===1&&pf.mode==='pick'&&pf.view==='wall'&&pf.tab==='school'&&pf.order==='avg','игры: испорченный vrl.einprefs ('+bad.slice(0,14)+') — значения по умолчанию');}
+    LS.setItem(PK,'[1]');ok(V.setPrefs('sA',{hk:2}).hk===2&&V.prefs('sA').hk===2,'игры: setPrefs после порчи пишет заново');
+    ok(V.setPrefs('sA',{hk:99,mode:'bad'}).hk===2&&V.prefs('sA').mode==='pick','игры: неверное в setPrefs отбрасывается');
+    /* 201-й ученик вытесняет самого старого */
+    { const u={};for(let i=1;i<=200;i++)u['k'+i]={hk:2,mode:'excl',ts:1000+i};LS.setItem(PK,JSON.stringify({v:1,u}));
+      V.setPrefs('new201',{hk:0});const raw=JSON.parse(LS.getItem(PK)).u,ks=Object.keys(raw);
+      ok(ks.length===200&&!('k1' in raw)&&raw.k2&&raw.new201.hk===0,'игры: 201-й ученик вытеснил самого старого ('+ks.length+')'); }
+    V._reset();ok(LS.getItem(PK)===null,'игры: _reset чистит vrl.einprefs');
+    E.student=stuKeep;V.pending=pendKeep;E.goRoom('hall');run(10);
+  }
   { /* протокол поз: те же байты, что у server/netproto.py (tests/net_proto.py) */
     const NP=VR.netproto,fx=JSON.parse(fs.readFileSync(path.join(ROOT,'tests','fixtures','net_frames.json'),'utf8')),hx=b=>Buffer.from(b).toString('hex'),fromHex=h=>{const b=Buffer.from(h,'hex');return b.buffer.slice(b.byteOffset,b.byteOffset+b.length);};
     ok(fx.poses.every(c=>hx(NP.encodePose(c.input))===c.hex),'протокол: '+fx.poses.length+' эталонных кадров поз кодируются теми же байтами, что на сервере');
