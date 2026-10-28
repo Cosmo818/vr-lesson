@@ -16,6 +16,7 @@ function start(E,S,seed,again,begin){
   S.phase=begin===false?'idle':'play';S.showRules=false;
   S.msg='';S.field.dirty=S.hints.dirty=S.ctl.dirty=true;if(S.favs)S.favs.dirty=true;
 }
+const HK=[.7,1,1.35];/* ступени размера подсказок */
 const RULES=[
   'Поле 6×6: шесть строк A–F, шесть колонок 1–6. В каждой строке свой набор из шести фишек (цифры, буквы, римские цифры, кости, фигуры, знаки).',
   'В строке каждая фишка стоит ровно один раз. Нужно понять, какая фишка в какой колонке, и открыть все 36 клеток.',
@@ -90,27 +91,30 @@ function fieldDraw(E,S,c,p){
 }
 function hintDraw(E,S,c,p){
   if(S.phase==='idle'||S.showRules)return rulesDraw(E,S,c,p);
-  const g=S.g,rules=g.pz.rules,T=84;
+  const g=S.g,rules=g.pz.rules,K=HK[S.hk===undefined?1:S.hk],T=Math.round(84*K),sc=v=>Math.round(v*K);
   p.text('Подсказки',30,14,{size:48,bold:true,maxW:700});
+  /* размер подсказок: три ступени, кнопки A− / A+ */
+  p.button(p.W-30-230,10,104,60,'A−',()=>{S.hk=Math.max(0,(S.hk===undefined?1:S.hk)-1);S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)<=0});
+  p.button(p.W-30-110,10,104,60,'A+',()=>{S.hk=Math.min(HK.length-1,(S.hk===undefined?1:S.hk)+1);S.hints.dirty=true;},{size:34,bg:'#334155',disabled:(S.hk===undefined?1:S.hk)>=HK.length-1});
   p.text('Нажми подсказку, чтобы отметить её как использованную',30,72,{size:26,color:'#94a3b8',maxW:p.W-60});
   const tile=(r,t,x,y,col)=>{c.fillStyle='#1e293b';c.fillRect(x,y,T,T);E1.drawTile(c,r,t,x,y,T,col);};
   const horiz=[],vert=[];
   rules.forEach((s,i)=>{const k=E1.showOf(s);if(k==='horiz')horiz.push(i);else if(k==='vert')vert.push(i);});
   const dim=i=>S.used.has(i),col=i=>dim(i)?'#475569':'#e5e7eb';
   const toggle=i=>()=>{if(S.used.has(i))S.used.delete(i);else S.used.add(i);S.hints.dirty=true;};
-  let y=130,cw=360,ch=T+30;
+  let y=130,cw=sc(360),ch=T+30;const perH=Math.max(1,Math.floor((p.W-30)/cw)),perV=Math.max(1,Math.floor((p.W-30)/sc(180)));
   c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('Рядом, левее, между (по горизонтали):',30,y+8);y+=48;
   horiz.forEach((i,k)=>{
-    const s=rules[i],x=30+(k%4)*cw,yy=y+((k/4)|0)*ch,cc=col(i);
+    const s=rules[i],x=30+(k%perH)*cw,yy=y+((k/perH)|0)*ch,cc=col(i);
     p.area(x-6,yy-4,cw-24,T+8,toggle(i));
-    if(s.t==='near'){tile(s.a[0],s.a[1],x,yy,cc);c.fillStyle=cc;c.font='bold 44px sans-serif';c.textAlign='center';c.fillText('↔',x+T+30,yy+T/2);tile(s.b[0],s.b[1],x+T+60,yy,cc);}
-    else if(s.t==='dir'){tile(s.a[0],s.a[1],x,yy,cc);c.fillStyle=cc;c.font='bold 44px sans-serif';c.textAlign='center';c.fillText('→',x+T+30,yy+T/2);tile(s.b[0],s.b[1],x+T+60,yy,cc);}
+    if(s.t==='near'){tile(s.a[0],s.a[1],x,yy,cc);c.fillStyle=cc;c.font='bold 44px sans-serif';c.textAlign='center';c.fillText('↔',x+T+sc(30),yy+T/2);tile(s.b[0],s.b[1],x+T+sc(60),yy,cc);}
+    else if(s.t==='dir'){tile(s.a[0],s.a[1],x,yy,cc);c.fillStyle=cc;c.font='bold 44px sans-serif';c.textAlign='center';c.fillText('→',x+T+sc(30),yy+T/2);tile(s.b[0],s.b[1],x+T+sc(60),yy,cc);}
     else{tile(s.a[0],s.a[1],x,yy,cc);tile(s.c[0],s.c[1],x+T+4,yy,dim(i)?'#475569':'#fde68a');tile(s.b[0],s.b[1],x+2*T+8,yy,cc);}
   });
-  y+=Math.ceil(horiz.length/4)*ch+20;
+  y+=Math.ceil(horiz.length/perH)*ch+20;
   c.fillStyle='#94a3b8';c.font='28px sans-serif';c.textAlign='left';c.fillText('В одной колонке (по вертикали):',30,y+8);y+=48;
   vert.forEach((i,k)=>{
-    const s=rules[i],x=30+(k%8)*180,yy=y+((k/8)|0)*(2*T+30),cc=col(i);
+    const s=rules[i],x=30+(k%perV)*sc(180),yy=y+((k/perV)|0)*(2*T+30),cc=col(i);
     p.area(x-4,yy-4,T+8,2*T+8,toggle(i));
     tile(s.a[0],s.a[1],x,yy,cc);tile(s.b[0],s.b[1],x,yy+T,cc);
   });

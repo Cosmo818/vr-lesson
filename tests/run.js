@@ -546,6 +546,8 @@ function makeCtx(xr){
     { const t0=Z.t;run(60);ok(Z.t===t0&&Z.field.btns.length===0,'эйнштейн-комната: до «Начать» время стоит, фишки не нажимаются'); }
     { const sb=Z.ctl.btns.find(b=>b.y===206&&!b.disabled);ok(!!sb,'эйнштейн-комната: есть кнопка «Начать»');sb.fn({});run(4); ok(Z.phase==='play','эйнштейн-комната: «Начать» запускает партию'); }
     { const sd=Z.g.pz.seed,V=VR.games;ok(V.favToggle('einstein',sd)===true&&V.favs('einstein').includes(sd),'эйнштейн: сид сохраняется');ok(V.favToggle('einstein',sd)===false&&!V.favs('einstein').includes(sd),'эйнштейн: сид убирается из сохранённых');V.favToggle('einstein',123456);Z.favs.dirty=true;run(4);ok(!Z.favs.over.length&&Z.favs.btns.length>=3,'эйнштейн: панель сохранённых: кнопки есть, за край не выходит');V.favToggle('einstein',123456); }
+    { const w0=Z.hints.btns.length;for(const k of [0,2,1]){Z.hk=k;Z.hints.dirty=true;run(4);ok(!Z.hints.over.length&&Z.hints.btns.length>=w0-1,'эйнштейн: размер подсказок '+k+': области на месте, за край не выходят');}
+      const ab=Z.hints.btns.filter(b=>b.y===10);ok(ab.length===2,'эйнштейн: кнопки A− / A+');Z.hk=1;ab[1].fn();run(2);ok(Z.hk===2,'эйнштейн: A+ увеличивает подсказки');Z.hints.dirty=true;run(4);Z.hints.btns.find(b=>b.y===10).fn();run(2);ok(Z.hk===1,'эйнштейн: A− уменьшает');Z.hints.dirty=true;run(4); }
     Z.field.dirty=true;Z.hints.dirty=true;Z.ctl.dirty=true;run(4);
     ok(Z.field.btns.length>=100&&Z.hints.btns.length>=15,'эйнштейн-комната: у поля и подсказок есть области нажатия ('+Z.field.btns.length+' / '+Z.hints.btns.length+')');
     ok(!Z.field.over.length&&!Z.hints.over.length&&!Z.ctl.over.length,'эйнштейн-комната: ничего не за краем панели');
