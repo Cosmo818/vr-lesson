@@ -160,7 +160,7 @@ function hooks(){
     const dot=netDot();
     if(!sess||!E.student)return{a:'',b:'',dot};
     const l=left(),pts=E.student.id?S.points(E.student.id).total:0;
-    if(!isFinite(l))return{a:'Учитель',b:E.student.name.split(' ')[0],dot};
+    if(!isFinite(l)){const d=new Date();return{a:String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'),b:d.toLocaleDateString('ru-RU',{weekday:'short',day:'numeric',month:'short'}),dot};}   /* учитель: вместо таймера часы и дата */
     return{a:(l>0?mmss(l):'Время!'),b:E.student.name.split(' ')[0]+' · '+pts+' б.',alert:l<=0,dot};
   };
   E.hooks.onFrame=()=>{
