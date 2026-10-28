@@ -258,7 +258,7 @@ try{if(localStorage.getItem('vrl.acctMode')==='1'){acctMode=true;showForms();}}c
 $('tabs').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;for(const x of $('tabs').children)x.classList.toggle('on',x===b);if(b.dataset.t!=='lesson')lessonHide();for(const t of['rating','students','lesson','rooms','builder','tests','questions','feedback','data','archive'])$('t-'+t).hidden=t!==b.dataset.t;renderAll();};
 
 /* ---- урок (сеть, PLAN-network.md Н8, §7.6): открыть/закрыть, настройки, список участников из hub ---- */
-const LS={cls:'',sess:null,code:'',msg:'',off:'',roster:{},st:{},ph:{},planT:0,wired:false,seq:0,confirm:false,rooms:null};
+const LS={cls:'',sess:null,code:'',msg:'',off:'',roster:{},st:{},ph:{},planT:0,wired:false,seq:0,confirm:false,rooms:null,me:-1,role:'',freeze:false,kick:-1,kickT:0};
 const LS_MODES={seat:'сижу (за партами, до 15 шлемов)',stand:'стою на месте (≥ 2,5 м² на человека)'};   /* «хожу» — после калибровки, шаг Н9 */
 const LS_CHAT={off:'выключен',phrases:'только готовые фразы',text:'текст с фильтром'};
 const LS_ROLE={s:'ученик',t:'учитель',a:'наблюдатель',v:'зритель'};
@@ -273,7 +273,8 @@ function lessonHide(){try{VR.net.close('tab');}catch(e){}LS.roster={};}
 function lessonWire(){
   if(LS.wired)return;LS.wired=true;const N=VR.net;
   const upd=()=>{if(!$('t-lesson').hidden)lessonRoster();};
-  N.on('welcome',w=>{LS.roster={};for(const r of(w&&w.roster)||[])if(r&&typeof r.slot==='number')LS.roster[r.slot]=Object.assign({},r);upd();});
+  N.on('welcome',w=>{LS.roster={};for(const r of(w&&w.roster)||[])if(r&&typeof r.slot==='number')LS.roster[r.slot]=Object.assign({},r);
+    LS.me=w&&typeof w.slot==='number'?w.slot:-1;LS.freeze=!!(w&&w.sess&&w.sess.freeze);lessonLead();upd();});
   N.on('roster',m=>{const s=m.slot;if(typeof s!=='number')return;
     if(m.op==='-'){delete LS.roster[s];delete LS.st[s];delete LS.ph[s];}
     else if(m.op==='away'){const r=LS.roster[s];if(r)r.away=m.on===undefined?true:!!m.on;}
@@ -281,14 +282,17 @@ function lessonWire(){
     upd();});
   N.on('needTicket',async()=>{if(!LS.sess)return;const r=await S.sessionTicket(LS.sess.id);if(r.status===200&&r.data&&r.data.ticket)N.useTicket(r.data.ticket,r.data.hubs);});
   /* Н9: статус безопасности учеников (ev st) и физические точки из поз (кабинет получает позы всех комнат) */
-  N.on('ev',m=>{if(m&&m.k==='st'&&typeof m.slot==='number'){LS.st[m.slot]=m;upd();}});
+  N.on('ev',m=>{if(m&&m.k==='st'&&typeof m.slot==='number'){LS.st[m.slot]=m;upd();}
+    else if(m&&m.k==='freeze'){LS.freeze=m.on===true;lessonLead();}});
+  N.on('err',m=>{if(m&&(m.code==='role'||m.code==='kick')){LS.msg=m.code==='role'?'Команды ведущего — только у учителя этого класса.':'Убрать можно только ученика.';upd();}});
   N.on('poses',ev=>{const t=Date.now();for(const it of(ev&&ev.items)||[])LS.ph[it.slot]={x:it.phys.x,z:it.phys.z,yaw:it.phys.yaw,cal:!!(it.flags&8),vr:!!(it.flags&4),t};
     if(t-LS.planT>250&&!$('t-lesson').hidden){LS.planT=t;lessonPlan();}});
-  N.on('status',upd);N.on('closed',()=>{LS.roster={};LS.st={};LS.ph={};upd();});
+  N.on('status',()=>{lessonLead();upd();});N.on('closed',()=>{LS.roster={};LS.st={};LS.ph={};LS.me=-1;LS.freeze=false;lessonLead();upd();});
 }
 async function lessonConnect(){
   const my=++LS.seq;lessonWire();
   const r=await S.sessionTicket(LS.sess.id);if(my!==LS.seq)return;
+  LS.role=r.status===200&&r.data?String(r.data.role||''):'';
   if(r.status!==200||!r.data||!r.data.ticket){LS.msg=r.data&&r.data.error==='hub off'?'Сервер связи (hub) не настроен — список участников недоступен.':'Не удалось подключиться к уроку.';lessonRoster();return;}
   try{await VR.net.connect({hubs:r.data.hubs,ticket:r.data.ticket,caps:{},app:'vr-lesson-cabinet'});LS.msg='';}catch(e){LS.msg='Нет связи с hub: '+((e&&e.msg)||'ошибка');}
   lessonRoster();
@@ -333,9 +337,53 @@ function lessonForm(){
       <div class="card"><div class="row" style="justify-content:space-between"><b>Участники</b><span class="muted small" id="lsDens"></span></div><div class="scroll"><table id="lsTab"></table></div>
       <div class="row" style="align-items:flex-start"><canvas id="lsPlan" width="560" height="380" style="max-width:100%;background:#0b1020;border:1px solid #334155;border-radius:8px"></canvas>
       <div class="muted small" style="max-width:340px">План класса: точки — откалиброванные ученики (где они стоят на самом деле), круг — 1,5 м. Красный — кто-то ближе 0,8 м, жёлтый — ушёл с места. Полоска A→B — станция калибровки. Не откалиброванных на плане нет — они в списке с жёлтой меткой.</div></div>
-      <p class="muted small">Кнопки ведущего («Все ко мне», «Заморозить», «Калибровка всем», «Убрать из урока») — следующий шаг (Н10).</p></div>`;
+      </div>
+      <div class="card"><b>Ведущий</b><div id="lsLead"></div><div id="lsBan"></div></div>`;
   }
-  box.innerHTML=h;wireLesson();lessonRoster();
+  box.innerHTML=h;wireLesson();lessonRoster();lessonLead();
+}
+/* кнопки ведущего (Н10): только учитель класса (роль t в hub); «все ко мне» и «за мной» — когда учитель в шлеме, из кабинета — к доске комнаты урока */
+function lessonSend(o){try{return VR.net.status().state==='on'&&VR.net.send(Object.assign({t:'ev'},o))!==false;}catch(e){return false;}}
+function lessonLead(){
+  const box=$('lsLead');if(!box||!LS.sess)return;
+  const on=(()=>{try{return VR.net.status().state==='on';}catch(e){return false;}})();   /* себя в roster нет: роль — из ответа на билет */
+  if(!on||LS.me<0){box.innerHTML='<div class="muted small">Кнопки появятся, когда кабинет подключится к уроку.</div>';}
+  else if(LS.role!=='t'){box.innerHTML='<div class="muted small">Вы на уроке наблюдателем: командовать классом может учитель этого класса.</div>';}
+  else{
+    const rooms=lessonRooms(),cur=LS.sess.room;
+    box.innerHTML=`<div class="row"><button class="btn" id="lsGather">Все к доске</button><button class="btn ${LS.freeze?'danger':''}" id="lsFreeze">${LS.freeze?'Снять «внимание»':'Внимание! (остановить всех)'}</button><button class="btn ghost" id="lsHall">Все в холл</button></div>
+      <div class="row"><label>Позвать в комнату: <select id="lsGo">${rooms.map(x=>`<option value="${esc(x[0])}"${x[0]===cur?' selected':''}>${esc(x[1])}</option>`).join('')}</select></label><button class="btn ghost" id="lsGoBtn">Позвать</button><span class="muted small" id="lsLeadMsg"></span></div>
+      <div class="muted small">«Все к доске» — полукругом у доски комнаты урока (${esc((rooms.find(x=>x[0]===cur)||[0,cur])[1])}); физически никто не двигается. «Внимание» — у учеников выпадают предметы, работают только голова и меню. В комнату ученики переходят через 3 с после таблички. «Все ко мне» и «За мной» — когда учитель сам в шлеме.</div>`;
+    const say=(ok,t)=>{const m=$('lsLeadMsg');if(m)m.textContent=ok?t:'Нет связи с уроком.';};
+    $('lsGather').onclick=()=>say(lessonSend({k:'gather',id:LS.sess.room}),'Собраны у доски.');
+    $('lsFreeze').onclick=()=>{const v=!LS.freeze;if(lessonSend({k:'freeze',on:v})){LS.freeze=v;lessonLead();}else say(false);};
+    $('lsHall').onclick=()=>say(lessonSend({k:'hall'}),'Позвал в холл.');
+    $('lsGoBtn').onclick=()=>{const id=$('lsGo').value;say(lessonSend({k:'room',id}),'Позвал в комнату.');};
+  }
+  lessonBanned();
+}
+/* убранные с урока (session.list → banned_ids): имя из списка класса, «Вернуть» — session.unkick; hub узнаёт в течение минуты */
+function lessonBanned(){
+  const box=$('lsBan');if(!box||!LS.sess)return;
+  const ids=LS.sess.banned_ids||[];
+  if(!ids.length){box.innerHTML='';return;}
+  const nm=u=>{const st=S.student&&S.student(u);return st&&st.name?st.name:'ученик ('+u.slice(0,6)+'…)';};
+  box.innerHTML='<div class="small" style="margin-top:8px"><b>Убраны с урока:</b></div>'+ids.map(u=>`<div class="row"><span>${esc(nm(u))}</span><button class="btn ghost" data-unkick="${esc(u)}">Вернуть</button></div>`).join('')+'<div class="muted small">Вернуть — ученик снова сможет войти (в течение минуты).</div>';
+  box.onclick=async e=>{const b=e.target.closest('[data-unkick]');if(!b)return;b.disabled=true;
+    const r=await S.admin('session.unkick',{id:LS.sess.id,uid:b.dataset.unkick});
+    if(r.status===200){const l=await S.admin('session.list',{class_id:LS.cls}),o=l.status===200&&(l.data.open||[]).find(x=>x.id===LS.sess.id);if(o)LS.sess=o;lessonBanned();}
+    else{b.disabled=false;LS.msg=(r.data&&r.data.error)||'Не удалось вернуть.';lessonRoster();}};
+}
+/* «Убрать» в строке ученика: двойное нажатие за 4 с → ev kick; hub отключает ученика и не пускает до конца урока */
+function lessonKick(slot){
+  const t=Date.now();
+  if(LS.kick!==slot||t-LS.kickT>4000){LS.kick=slot;LS.kickT=t;lessonRoster();return;}
+  LS.kick=-1;const who=(LS.roster[slot]||{}).name||'Ученик';
+  if(!lessonSend({k:'kick',slot})){LS.msg='Нет связи с уроком.';lessonRoster();return;}
+  LS.msg=who+' — убран с урока. В списке «Убраны» появится в течение минуты (оттуда можно вернуть).';lessonRoster();
+  /* hub сообщает серверу об удалении в отчёте (раз в минуту) — список перечитываем дважды */
+  const sid=LS.sess&&LS.sess.id;
+  for(const ms of[3000,65000])setTimeout(async()=>{if(!LS.sess||LS.sess.id!==sid)return;const l=await S.admin('session.list',{class_id:LS.cls}),o=l.status===200&&(l.data.open||[]).find(x=>x.id===sid);if(o&&LS.sess&&LS.sess.id===sid){LS.sess=o;lessonBanned();}},ms);
 }
 /* станции калибровки (Н9): до 4 строк «имя, x, z, угол A→B»; старый формат (имена) — в начале координат */
 function lessonStations(list){
@@ -407,8 +455,11 @@ function lessonRoster(){
   const row=r=>{const q=LS.st[r.slot]||{},ph=LS.ph[r.slot],vr=q.vr!==undefined?!!q.vr:ph?ph.vr:null,cal=q.cal!==undefined?!!q.cal:ph?ph.cal:null,al=[];
     if(q.near===2)al.push(R('ближе 0,8 м к соседу'));else if(q.near===1)al.push(Y('рядом сосед'));
     if(q.off)al.push(Y('ушёл с места'));if(vr&&cal===false&&r.role==='s')al.push(Y('не откалиброван'));
-    return `<tr><td>${esc(r.name||'—')}</td><td>${esc(LS_ROLE[r.role]||'—')}</td><td>${esc(rn(r.room))}</td><td>${r.away?Y('нет связи'):'в сети'}</td><td>${vr===null?'—':vr?'шлем':'экран'}</td><td>${q.fps?q.fps:'—'}</td><td>${!vr?'—':cal?'да':Y('нет')}</td><td>${al.join(', ')||'—'}</td></tr>`;};
-  tb.innerHTML='<tr><th>Имя</th><th>Роль</th><th>Комната</th><th>Связь</th><th>Устройство</th><th>Кадр/с</th><th>Калибровка</th><th>Тревоги</th></tr>'+(list.length?list.map(row).join(''):`<tr><td colspan="8" class="muted">${st.state==='on'?'Пока никого нет.':st.state==='off'?'Нет связи с hub.':'Подключение…'}</td></tr>`);
+    const kb=lead&&r.role==='s'?`<button class="btn ${LS.kick===r.slot?'danger':'ghost'}" data-kick="${r.slot}">${LS.kick===r.slot?'Точно убрать?':'Убрать'}</button>`:'';
+    return `<tr><td>${esc(r.name||'—')}</td><td>${esc(LS_ROLE[r.role]||'—')}</td><td>${esc(rn(r.room))}</td><td>${r.away?Y('нет связи'):'в сети'}</td><td>${vr===null?'—':vr?'шлем':'экран'}</td><td>${q.fps?q.fps:'—'}</td><td>${!vr?'—':cal?'да':Y('нет')}</td><td>${al.join(', ')||'—'}</td><td>${kb}</td></tr>`;};
+  const lead=LS.role==='t'&&LS.me>=0;
+  tb.onclick=e=>{const b=e.target.closest('[data-kick]');if(b)lessonKick(+b.dataset.kick);};
+  tb.innerHTML='<tr><th>Имя</th><th>Роль</th><th>Комната</th><th>Связь</th><th>Устройство</th><th>Кадр/с</th><th>Калибровка</th><th>Тревоги</th><th></th></tr>'+(list.length?list.map(row).join(''):`<tr><td colspan="9" class="muted">${st.state==='on'?'Пока никого нет.':st.state==='off'?'Нет связи с hub.':'Подключение…'}</td></tr>`);
   const ar=LS.sess&&LS.sess.settings&&LS.sess.settings.area_m2,md=LS.sess&&LS.sess.settings&&LS.sess.settings.mode;
   const NSP=VR.netsafe&&VR.netsafe._pure,lim=NSP&&ar?NSP.modeLimits(ar):null,allCal=kids.length>0&&kids.every(r=>{const q=LS.st[r.slot];return q&&q.cal;}),wc=NSP?NSP.walkCheck(kids.length,ar||0,allCal):null;
   const d=$('lsDens');if(d)d.textContent='учеников: '+kids.length+(ar&&kids.length?` · ${(ar/kids.length).toFixed(1)} м² на человека`+(md==='stand'&&ar/kids.length<2.5?' — тесно для режима «стою»':''):'')

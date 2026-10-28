@@ -77,7 +77,7 @@ function netProbe(st){
 function netStart(d){
   const N=VR.net,P=VR.netplay;if(!N||!P||!E||!d||!d.ticket)return false;
   try{
-    if(!netBound){netBound=true;P.attach(E,N);if(VR.netsafe)VR.netsafe.attach(E,N);
+    if(!netBound){netBound=true;P.attach(E,N);if(VR.netsafe)VR.netsafe.attach(E,N);if(VR.netlead)VR.netlead.attach(E,N);
       N.on('status',()=>{if(E.hud)E.hud.dirty=true;});
       N.on('needTicket',async()=>{if(!netCtx)return;const r=await S.sessionTicket(netCtx.sid,netCtx.id,netCtx.pin);if(r.status===200&&r.data&&r.data.ticket)N.useTicket(r.data.ticket,r.data.hubs);});}
     N.connect({hubs:d.hubs,ticket:d.ticket,caps:{quest1:P.detectQuest1(E)}}).catch(()=>{});
@@ -195,6 +195,18 @@ function hooks(){
   /* ученик с учёткой (есть id) учителем не бывает, даже если в этой вкладке остался флаг учителя (вошёл ученик после «Назад») */
   E.hooks.isTeacher=()=>{try{if(E.student&&E.student.id)return false;return +sessionStorage.getItem('vrl.laser')>Date.now()||VR.custom.teacherOk()||(E.student&&E.student.role==='teacher');}catch(e){return false;}};
   let menuTab='main';
+  /* указка ученика в сетевом уроке (Н10): учитель не выключил указки, нет «внимания» */
+  E.hooks.laserOk=()=>!!(VR.netlead&&VR.netlead.pointersOk());
+  const netLive=()=>{try{return !!(VR.netlead&&VR.net&&VR.net.status().state!=='off');}catch(e){return false;}};
+  /* вкладка «Реакции» (Н10): 12 эмодзи над головой (раз в 2 с) и указка, если учитель разрешил */
+  const reactTab=(p,W)=>{
+    const NL=VR.netlead,L=NL.EMOJI,bw=(W-72-54)/4;
+    p.text(NL.frozen()?'Учитель просит внимания — реакции подождут.':'Реакция появится над твоей головой на 3 секунды.',36,256,{size:28,color:'#b8c7ea',maxW:W-72});
+    L.forEach((e,i)=>p.button(36+(i%4)*(bw+18),300+((i/4)|0)*120,bw,104,e,()=>{if(NL.react(i))E.toggleMenu(false);},{bg:'#1e293b',size:56}));
+    const ok=E.isTeacher()||E.laserOk();
+    if(ok)p.button(36,680,W-72,86,E.laser.on?'Указка: выключить':'Указка: включить (или нажми стик)',()=>{E.toggleLaser();E.menu.dirty=true;},{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:30});
+    else p.text('Указки сейчас выключены учителем.',36,700,{size:28,color:'#94a3b8'});
+  };
   /* вкладка «Класс» планшета учителя: ученики по баллам (два столбца), сколько предметов сдано, когда занимались */
   const classTab=(p,W,kc)=>{
     if(!kc){p.text('Класс не выбран. Выберите его при входе в VR («Я учитель» → «Класс, с которым урок»).',36,270,{size:34,color:'#b8c7ea',maxW:W-72});return;}
@@ -243,15 +255,20 @@ function hooks(){
     p.text((st.className?st.className+' класс · ':st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
     const tch=E.isTeacher(),kc=tch&&st.classId?S.klass(st.classId):null;
     const me=!tch&&st.id;
-    p.button(36,150,tch?170:me?(W-90)/2:W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    p.button(36,150,tch?170:me?(netLive()?(W-108)/3:(W-90)/2):W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
     /* безопасность (Н9): калибровка по меткам и «Я на месте» — только в шлеме и в сетевом уроке */
     const NS=VR.netsafe,calOk=!!(NS&&E.session&&VR.net&&VR.net.status().state!=='off');
     if(calOk){
       p.button(W-36-300,88,300,54,menuTab==='cal'?'← Меню':(NS.calibrated()?'Калибровка ✓':'Калибровка'),()=>{menuTab=menuTab==='cal'?'main':'cal';E.menu.dirty=true;},{bg:menuTab==='cal'?'#1d4ed8':NS.calibrated()?'#166534':'#a16207',size:28});
       if(menuTab==='cal'){calTab(p,W,NS);return;}
     }else if(menuTab==='cal')menuTab='main';
+    const rx=me&&netLive();
+    if(rx){
+      p.button(36+2*((W-108)/3+18),150,(W-108)/3,86,menuTab==='react'?'← Меню':'Реакции 👍',()=>{menuTab=menuTab==='react'?'main':'react';E.menu.dirty=true;},{bg:menuTab==='react'?'#1d4ed8':'#7c3aed',size:32});
+      if(menuTab==='react'){reactTab(p,W);return;}
+    }else if(menuTab==='react')menuTab='main';
     if(me){
-      p.button(54+(W-90)/2,150,(W-90)/2,86,menuTab==='me'?'← Меню':'Мои успехи',()=>{menuTab=menuTab==='me'?'main':'me';E.menu.dirty=true;},{bg:menuTab==='me'?'#1d4ed8':'#0f766e',size:34});
+      p.button(rx?36+(W-108)/3+18:54+(W-90)/2,150,rx?(W-108)/3:(W-90)/2,86,menuTab==='me'?'← Меню':'Мои успехи',()=>{menuTab=menuTab==='me'?'main':'me';E.menu.dirty=true;},{bg:menuTab==='me'?'#1d4ed8':'#0f766e',size:34});
       if(menuTab==='me'){meTab(p,W,st);return;}
     }
     if(tch){

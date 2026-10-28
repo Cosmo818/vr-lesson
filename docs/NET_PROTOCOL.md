@@ -46,8 +46,8 @@ payload: `{v:1, kid, aud, sid, k:'lesson'|'play', sch, cls, uid, r:'s'|'t'|'a', 
 | `ev {k:'point', on, o:[x,y,z], d:[x,y,z], ci 0..6}` | той же комнате — `ev {k:'point', slot, on, o, d, ci}`; ученикам — если `sess.pointers` и нет `freeze` |
 | `ev {k:'react', e 0..11}` | той же комнате — `ev {k:'react', slot, e}`; не чаще раза в 2 с |
 | `ev {k:'rate', hz}` (5, 10, 15, 20) | — (частота пачек этому клиенту) |
-| `ev {k:'gather'}`, `ev {k:'hall'}`, `ev {k:'freeze', on}`, `ev {k:'follow', on}`, `ev {k:'room', id}` | только `r:'t'`; всем — то же со `slot` ведущего; иначе `err {code:'role'}` |
-| `ev {k:'kick', slot}` | только `r:'t'` и только ученика (`s`): ему 4012, всем `roster- {slot, why:'kick'}`; uid не пускается до закрытия сессии |
+| `ev {k:'gather', id?}` (id — комната урока, из кабинета: сбор у доски), `ev {k:'hall'}`, `ev {k:'freeze', on}`, `ev {k:'follow', on}`, `ev {k:'room', id}` | только `r:'t'`; всем — то же со `slot` ведущего; иначе `err {code:'role'}` |
+| `ev {k:'kick', slot}` | только `r:'t'` и только ученика (`s`): ему 4012, всем `roster- {slot, why:'kick'}`; uid не пускается до закрытия сессии; удаление повторяется в отчёте, пока app.py не вернёт uid в `banned`; список `banned` от app.py полный — `session.unkick` снимает запрет в hub |
 | `bye` | место освобождается сразу: всем `roster- {slot, why:'left'}` |
 | `ev {k:'st', cal 0..1, off 0..1, near 0..2, vr 0..1, fps 0..240}` (шаг Н9) | учителю и наблюдателям (`r:'t'`/`'a'`) во всех комнатах — `ev {k:'st', slot, …}`; ученикам не идёт. Клиент шлёт при изменении (не чаще 2/с) и раз в 5 с. Поле не целое — сообщение молча отбрасывается |
 

@@ -290,7 +290,11 @@ class Core:
                 sess.freeze = on
             return self.bcast(sess, {'t': 'ev', 'k': k, 'slot': s.slot, 'on': on}, ex=s)
         if k == 'gather' or k == 'hall':
-            return self.bcast(sess, {'t': 'ev', 'k': k, 'slot': s.slot}, ex=s)
+            out = {'t': 'ev', 'k': k, 'slot': s.slot}
+            rid = m.get('id')
+            if k == 'gather' and isinstance(rid, str) and ROOM_RE.match(rid):
+                out['id'] = rid          # из кабинета (поз нет): «все к доске» этой комнаты (Н10)
+            return self.bcast(sess, out, ex=s)
         if k == 'room':
             rid = m.get('id')
             if isinstance(rid, str) and ROOM_RE.match(rid):
@@ -459,7 +463,8 @@ class Core:
             resp = self.reporter(body)
         except Exception:
             resp = None
-        sess.kicked = []
+        # удалённые (kicked) повторяются в каждом отчёте, пока их нет в списке banned от app.py (ответ приходит позже, apply);
+        # так отчёт, потерянный по сети, не теряет удаления, а возврат («Вернуть» в кабинете) не путается с ещё не принятым удалением
         if isinstance(resp, dict):
             self.apply(resp)
 
@@ -472,10 +477,13 @@ class Core:
             sess = self.sessions.get(sid)
             if not sess or not isinstance(uids, list):
                 continue
+            # список app.py — полный (Н10: «Вернуть» в кабинете снимает запрет); удаления, которых app.py ещё не подтвердил, hub держит сам
+            srv = {u for u in uids if isinstance(u, str)}
+            sess.kicked = [u for u in sess.kicked if u not in srv]
+            sess.banned = srv | set(sess.kicked)
             for uid in uids:
                 if not isinstance(uid, str):
                     continue
-                sess.banned.add(uid)
                 s = next((x for x in sess.seats.values() if x.uid == uid), None)
                 if s:
                     c = s.conn

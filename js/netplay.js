@@ -115,7 +115,7 @@ function matQuat(m){
 /* ---------- состояние ---------- */
 const env={now:()=>(typeof performance!=='undefined'?performance.now():Date.now())};
 const S={on:false,E:null,net:null,opts:{},me:-1,roster:{},bufs:{},alpha:{},hide:false,seq:0,lastSend:0,
-  D:null,tickMs:50,lastSrv:0,lastAt:0,dev:[],quest1:false,frame:0,pool:[],hs:[]};
+  D:null,tickMs:50,lastSrv:0,lastAt:0,dev:[],quest1:false,frame:0,pool:[],hs:[],react:{}};
 
 function onWelcome(w){
   S.me=w&&typeof w.slot==='number'?w.slot:-1;S.roster={};S.bufs={};S.alpha={};
@@ -125,7 +125,7 @@ function onWelcome(w){
 function onRoster(m){
   if(!m||typeof m.slot!=='number')return;
   const s=m.slot;
-  if(m.op==='-'){delete S.roster[s];delete S.bufs[s];delete S.alpha[s];return;}
+  if(m.op==='-'){delete S.roster[s];delete S.bufs[s];delete S.alpha[s];delete S.react[s];return;}
   if(m.op==='away'){const r=S.roster[s];if(r)r.away=m.on===undefined?true:!!m.on;return;}
   const o=Object.assign({},S.roster[s]||{},m);delete o.op;delete o.t;
   if(m.op==='+'||m.op==='~')o.away=false;
@@ -147,7 +147,7 @@ function onPoses(ev){
     while(b.length>BUF)b.shift();
   }
 }
-function onClosed(){S.roster={};S.bufs={};S.alpha={};S.me=-1;if(S.E)S.E.peers=[];}
+function onClosed(){S.roster={};S.bufs={};S.alpha={};S.react={};S.me=-1;if(S.E)S.E.peers=[];}
 
 /* ---------- свои позы ---------- */
 function sendOwn(){
@@ -211,8 +211,8 @@ function update(dt){
     const hp=sm.head.p,d=Math.hypot(hp[0]-me[0],hp[1]-me[1],hp[2]-me[2]);
     const al=S.alpha[s]===undefined?fadeTarget(d):S.alpha[s];
     S.alpha[s]=fadeStep(al,fadeTarget(d),dt);
-    const r=S.roster[s],desk=!(b[b.length-1].flags&4);
-    list.push({slot:s,head:sm.head,hl:desk?null:sm.hl,hr:desk?null:sm.hr,col:colorOf(r.col,s),name:labelText(r.name,desk),alpha:S.alpha[s],full:false,desk,d,tex:null});
+    const r=S.roster[s],desk=!(b[b.length-1].flags&4),rc=S.react[s],nm=labelText(r.name,desk);
+    list.push({slot:s,head:sm.head,hl:desk?null:sm.hl,hr:desk?null:sm.hr,col:colorOf(r.col,s),name:rc&&rc.until>now?rc.e+' '+nm:nm,alpha:S.alpha[s],full:false,desk,d,tex:null});
   }
   const full=pickFull(list.map(p=>({slot:p.slot,d:p.d})),fullLimit(S.quest1,heavyNow()));
   for(const p of list)p.full=full.has(p.slot);
@@ -270,10 +270,19 @@ function physAll(){
   }
   return out;
 }
+/* последняя поза головы участника {p,q,desk,room} — для «все ко мне» и «за мной» (netlead.js, Н10); нет свежей — null */
+function headOf(slot){
+  const b=S.bufs[slot],r=S.roster[slot];if(!b||!b.length||!r||r.away||!S.net)return null;
+  const l=b[b.length-1];if(S.net.now()-l.t>STALE_MS||!l.head)return null;
+  return{p:l.head.p.slice(),q:l.head.q.slice(),desk:!(l.flags&4),room:r.room||null};
+}
+/* реакция над головой: эмодзи перед подписью на ms (по умолчанию 3 с) */
+function react(slot,e,ms){if(typeof slot!=='number'||!S.net)return;S.react[slot]={e:String(e||'').slice(0,8),until:S.net.now()+(ms||3000)};}
 const hideAll=v=>{S.hide=!!v;if(S.hide&&S.E)S.E.peers=[];};
 const hidden=()=>S.hide;
 
-VR.netplay={attach,detach,tick,physNow,physAll,hideAll,hidden,detectQuest1,peerIds:()=>Object.keys(S.roster).map(Number),
+VR.netplay={attach,detach,tick,physNow,physAll,hideAll,hidden,detectQuest1,headOf,react,peerIds:()=>Object.keys(S.roster).map(Number),
+  rosterOf:slot=>S.roster[slot]?Object.assign({},S.roster[slot]):null,mySlot:()=>S.me,
   _env:env,_state:S,
   _pure:{slerp,lerp3,sampleAt,percentile95,delayTarget,smoothD,fullLimit,pickFull,shortName,labelText,fadeTarget,fadeStep,colorOf,physPredict,detectQuest1From,matQuat,PALETTE}};
 })();

@@ -385,8 +385,11 @@ void main(){
   E.setLaserColor=i=>{const n=E.LASER_COLORS.length;E.laser.ci=((i%n)+n)%n;try{localStorage.setItem('vrl.laserColor',String(E.laser.ci));}catch(e){}menu.dirty=true;E.beep(660+E.laser.ci*60,.05,'sine',.04);return E.laser.ci;};
   E.nextLaserColor=()=>E.setLaserColor(E.laser.ci+1);
   E.isTeacher=()=>{try{return !!(E.hooks.isTeacher&&E.hooks.isTeacher());}catch(e){return false;}};
+  /* указка ученика в сетевом уроке (Н10): разрешает E.hooks.laserOk (учитель не выключил указки, нет заморозки) */
+  E.laserOk=()=>{try{return !!(E.hooks.laserOk&&E.hooks.laserOk());}catch(e){return false;}};
+  E.frozen=false;
   E.toggleLaser=(v,hi)=>{
-    if(!E.isTeacher()){E.toast('Лазерная указка — для учителя.','#fca5a5');return false;}
+    if(v!==false&&!E.isTeacher()&&!E.laserOk()){E.toast('Лазерная указка — для учителя.','#fca5a5');return false;}
     E.laser.on=v===undefined?!E.laser.on:!!v;if(hi!==undefined)E.laser.hi=hi;
     E.toast(E.laser.on?'Лазерная указка включена':'Лазерная указка выключена',E.laser.on?'#fca5a5':undefined);E.beep(E.laser.on?880:440,.06);menu.dirty=true;
     if(E.hooks.onLaser)try{E.hooks.onLaser(E.laser.on);}catch(e){}
@@ -691,7 +694,14 @@ void main(){
       h.trigPrev=trig;h.sqPrev=sq;h.mbPrev=mb;
       if(mbDown)E.toggleMenu();
       const sk=pressed(gp,3),skDown=sk&&!h.skPrev;h.skPrev=sk;
-      if(skDown&&E.session&&E.isTeacher()){if(E.laser.on&&E.laser.hi!==hi)E.nextLaserColor();else E.toggleLaser(!(E.laser.on&&E.laser.hi===hi),hi);}
+      /* «Учитель просит внимания» (Н10, E.frozen ставит netlead.js): предмет выпадает, работают только голова и меню */
+      if(E.frozen){
+        if(h.held)release(h);h.aim=false;h.tp=null;h.arc=null;h.hov=null;
+        const r=E.menuOpen?rayHit(h):null;h.hit=r&&r.kind==='panel'&&r.p===E.menu?r:null;
+        if(trigDown&&h.hit&&h.hit.bi>=0){const b=h.hit.p.btns[h.hit.bi];E.beep(880,.04,'square',.03);if(!h.hit.p.keepTex)h.hit.p.dirty=true;try{b.fn(h);}catch(e){}}
+        continue;
+      }
+      if(skDown&&E.session&&(E.isTeacher()||E.laserOk())){if(E.laser.on&&E.laser.hi!==hi)E.nextLaserColor();else E.toggleLaser(!(E.laser.on&&E.laser.hi===hi),hi);}
       const gpos=[h.g[12],h.g[13],h.g[14]];let used=false;
       if(!h.held&&(trigDown||sqDown)){
         let b=nearestBody(gpos,E.session?.22:.42),pull=false;
@@ -1041,7 +1051,7 @@ void main(){
         /* присед (Ctrl или C) и прыжок (пробел): высота глаз плавно меняется, прыжок — по параболе, в воздухе управлять нельзя только высотой */
         const crouch=!!(keys.ControlLeft||keys.ControlRight||keys.KeyC);
         D.h+=((crouch?1.0:1.6)-D.h)*(1-Math.exp(-dt/.07));
-        if(keys.Space&&D.jy<=.001&&!crouch)D.jv=3.1;
+        if(keys.Space&&D.jy<=.001&&!crouch&&!E.frozen)D.jv=3.1;
         if(D.jy>0||D.jv>0){D.jv-=9.8*dt;D.jy=Math.max(0,D.jy+D.jv*dt);if(D.jy===0)D.jv=0;}
         /* ходьба: желаемая скорость по клавишам, фактическая плавно догоняет её (резкий старт и стоп вызывают укачивание); по диагонали не быстрее */
         const base=(crouch?1.1:keys.ShiftLeft||keys.ShiftRight?3.6:2.2)*PF.walk,fx=-Math.sin(D.yaw),fz=-Math.cos(D.yaw),rx=Math.cos(D.yaw),rz=-Math.sin(D.yaw);
@@ -1050,6 +1060,7 @@ void main(){
         if(keys.KeyS||keys.ArrowDown){tx-=fx;tz-=fz;}
         if(keys.KeyD||keys.ArrowRight){tx+=rx;tz+=rz;}
         if(keys.KeyA||keys.ArrowLeft){tx-=rx;tz-=rz;}
+        if(E.frozen){tx=0;tz=0;}
         const tl=Math.hypot(tx,tz);if(tl>1){tx/=tl;tz/=tl;}
         tx*=base;tz*=base;const ek=PF.ease?1-Math.exp(-dt/.12):1;WV.x+=(tx-WV.x)*ek;WV.z+=(tz-WV.z)*ek;
         if(Math.abs(WV.x)<.005&&!tx)WV.x=0;if(Math.abs(WV.z)<.005&&!tz)WV.z=0;

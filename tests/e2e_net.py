@@ -147,6 +147,55 @@ try:
         ok(o.get('area_m2') == 30 and o.get('mode') == 'stand' and o.get('stations') == [{'id': 'Лаб 1', 'x': 1.5, 'z': -2.0, 'yaw': 90.0}, {'id': 'Лаб 2', 'x': 0.0, 'z': 0.0, 'yaw': 0.0}],
            'кабинет: настройки и станции с координатами сохранены на сервере (%s)' % o)
         ok('ходьба' in tp.inner_text('#lsDens'), 'кабинет: пределы площади и доступность ходьбы показаны')
+        # Н10: кнопки ведущего → ученики; «Убрать» двойным нажатием → 4012; «Вернуть» снимает запрет
+        sp = pages[1][0]
+        try:
+            tp.wait_for_selector('#lsFreeze', timeout=10000)
+        except Exception:
+            print('lsLead:', tp.inner_text('#lsLead'), tp.evaluate("JSON.stringify({me:LS.me,r:LS.roster})"))
+            raise
+        tp.click('#lsFreeze')
+        try:
+            sp.wait_for_function("VR.app.E.frozen===true", timeout=10000)
+        except Exception:
+            pass
+        ok(sp.evaluate("VR.app.E.frozen===true&&document.getElementById('toastBox').textContent.indexOf('внимания')>=0"), 'Н10: «Внимание» из кабинета — ученик заморожен, табличка')
+        tp.click('#lsFreeze')
+        try:
+            sp.wait_for_function("VR.app.E.frozen===false", timeout=10000)
+        except Exception:
+            pass
+        ok(sp.evaluate("VR.app.E.frozen===false"), 'Н10: «внимание» снято')
+        go = tp.evaluate("[...document.querySelectorAll('#lsGo option')].map(o=>o.value).find(v=>v!=='hall')")
+        tp.select_option('#lsGo', go); tp.click('#lsGoBtn')
+        want = sp.evaluate("v=>VR.entryOf?VR.entryOf(v):v", go)
+        sp.wait_for_timeout(1200)
+        ok(sp.evaluate("VR.app.E.roomId") != want and 'через 3 с' in sp.inner_text('#toastBox'), 'Н10: «Позвать» — сначала табличка, переход не сразу')
+        try:
+            sp.wait_for_function("w=>VR.app.E.roomId===w", arg=want, timeout=8000)
+        except Exception:
+            pass
+        ok(sp.evaluate("VR.app.E.roomId") == want, 'Н10: через 3 с ученик в комнате «%s»' % want)
+        tp.click('#lsGather')
+        sp.wait_for_timeout(800)
+        ok('у доски' in sp.inner_text('#toastBox'), 'Н10: «Все к доске» — ученик собран у доски (%s)' % sp.inner_text('#toastBox'))
+        victim = pages[0][0]
+        tp.click('#lsTab tr:has-text("Иван П.") [data-kick]')
+        ok('Точно убрать' in tp.inner_text('#lsTab'), 'Н10: «Убрать» — первое нажатие просит подтверждения')
+        tp.click('#lsTab tr:has-text("Иван П.") [data-kick]')
+        try:
+            victim.wait_for_function("VR.net.status().state==='off'", timeout=10000)
+        except Exception:
+            pass
+        ok(victim.evaluate("VR.net.status().state") == 'off' and 'убрал' in victim.inner_text('#toastBox'), 'Н10: ученик убран — связь закрыта, табличка')
+        try:
+            tp.wait_for_selector('[data-unkick]', timeout=15000)
+        except Exception:
+            pass
+        ok('Петров' in tp.inner_text('#lsBan') or 'Иван' in tp.inner_text('#lsBan'), 'Н10: кабинет — «Убраны с урока» с именем (%s)' % tp.inner_text('#lsBan')[:80])
+        tp.click('[data-unkick]'); tp.wait_for_timeout(1000)
+        st, lst2 = req('POST', '/api/admin/session.list', {'class_id': 'cA1'}, {'Authorization': 'Bearer ' + tok})
+        ok(not (lst2.get('open') or [{}])[0].get('banned_ids'), 'Н10: «Вернуть» — на сервере запрет снят')
         tp.click('#lsClose'); tp.wait_for_timeout(300); tp.click('#lsClose'); tp.wait_for_selector('#lsOpen', timeout=10000)
         st, lst = req('POST', '/api/admin/session.list', {'class_id': 'cA1'}, {'Authorization': 'Bearer ' + tok})
         ok(not lst.get('open'), 'кабинет: урок закрыт после двойного нажатия')

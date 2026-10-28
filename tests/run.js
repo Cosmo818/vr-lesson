@@ -1424,6 +1424,11 @@ except RuntimeError:
    try{out=cp.execFileSync('node',[path.join(ROOT,'tests','netsafe.js')],{encoding:'utf-8',timeout:120000});}
    catch(e){out=(e.stdout||'')+'\nFAIL: tests/netsafe.js завершился с ошибкой '+String(e.stderr||e.message).slice(-300);}
    for(const ln of out.split('\n')){if(ln.startsWith('ok  : '))ok(true,'безопасность: '+ln.slice(6));else if(ln.startsWith('FAIL: '))ok(false,'безопасность: '+ln.slice(6));}}
+  /* события ведущего js/netlead.js (Н10): сбор, «внимание», табличка перехода, указки, реакции — в отдельном процессе */
+  {let out='';
+   try{out=cp.execFileSync('node',[path.join(ROOT,'tests','netlead.js')],{encoding:'utf-8',timeout:120000});}
+   catch(e){out=(e.stdout||'')+'\nFAIL: tests/netlead.js завершился с ошибкой '+String(e.stderr||e.message).slice(-300);}
+   for(const ln of out.split('\n')){if(ln.startsWith('ok  : '))ok(true,'ведущий: '+ln.slice(6));else if(ln.startsWith('FAIL: '))ok(false,'ведущий: '+ln.slice(6));}}
   console.log(fails?('\nПРОВАЛЕНО: '+fails):'\nВсе проверки пройдены');
   process.exit(fails?1:0);
 })().catch(e=>{console.log('EXCEPTION',e&&e.stack||e);process.exit(2);});

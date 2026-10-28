@@ -144,7 +144,8 @@ def sess_row(c, sid):
 def pub_row(r):
     st = load_settings(r[12])
     return {'id': r[0], 'school': r[1], 'class_id': r[2], 'kind': r[3], 'room': r[4], 'host_id': r[6], 'created': r[7], 'closed_at': r[8], 'closed_by': r[9], 'status': r[10],
-            'settings': {k: v for k, v in st.items() if k != 'banned'}, 'banned': len(st.get('banned') or []), 'remote': bool(r[13])}
+            'settings': {k: v for k, v in st.items() if k != 'banned'}, 'banned': len(st.get('banned') or []),
+            'banned_ids': [u for u in (st.get('banned') or []) if isinstance(u, str)][:200], 'remote': bool(r[13])}
 
 
 def can_manage(A, c, p, row):
@@ -400,8 +401,7 @@ def control(A, c, sids):
         if r[10] == 'closed':
             out['closed'].append(sid)
             continue
-        if st.get('banned'):
-            out['banned'][sid] = list(st['banned'])
+        out['banned'][sid] = list(st.get('banned') or [])   # всегда, и пустой: hub заменяет свой список (возврат удалённого)
         out['settings'][sid] = {k: st[k] for k in ('chat', 'mode', 'maxSeats', 'pointers', 'stations') if k in st}
     return out
 
