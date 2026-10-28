@@ -603,6 +603,15 @@ def merge_in(c, inc, role, ip='', principal=None):
                         s['pinHash'] = get_settings(c)['pinHash']
                 if user:  # комнаты: автор — логин, сервер источник правды; чужую комнату меняет и удаляет только автор или директор и выше
                     s, fixed = fix_rooms(get_settings(c), s, (principal or {}).get('login') or '', sc['all'] or bool(sc['dir']))
+                    old_reset = get_settings(c).get('resetAt')
+                    if not sc['all'] and num(s.get('resetAt')) != num(old_reset):  # «Очистить результаты» (resetAt) — только суперадмин (Айрат 28.10): учителю и директору граница не меняется
+                        s = dict(s)
+                        if old_reset is None:
+                            s.pop('resetAt', None)
+                        else:
+                            s['resetAt'] = old_reset
+                        fixed = True
+                        audit(c, who, 'admin.denied', 'settings', None, DEFAULT_SCHOOL, {'why': 'resetAt'})
                     if fixed:  # прислали не то, что сохранили: настройки новее присланных, клиент заберёт исправленную версию
                         s['updated'] = num(s.get('updated')) + 1
                 old_rooms = get_settings(c).get('rooms')

@@ -239,6 +239,13 @@ try:
     sync('tA2', {'settings': s7, 'students': [], 'classes': [], 'results': [], 'disc': {}})
     ok(cur()['rooms']['rm-old'].get('author') == 't.a2', 'старую комнату без автора забирает первый изменивший учитель')
 
+    # --- «Очистить результаты» (resetAt) — только суперадмин
+    for k in ('tA1', 'tA2', 'dirA'):
+        r0 = cur().get('resetAt'); s8 = dict(cur(), resetAt=NOW + 99999, updated=cur()['updated'] + 10)
+        sync(k, {'settings': s8, 'students': [], 'classes': [], 'results': [], 'disc': {}})
+        ok(cur().get('resetAt') == r0 and cur()['updated'] > s8['updated'] - 10, '%s не сдвигает границу «очистить результаты»' % k)
+    st, b = sync('tA1'); ok(any(r['id'] == 'r-st-cA1-1' for r in b['state']['results']), 'результаты класса после попыток очистки на месте')
+
     sql("update classes set status = 'archived', doc = json_set(doc, '$.status', 'archived') where id = 'cA1'")
     st, b = sync('tA2'); ok('cA1' not in (b['state'].get('sub') or []), 'архивный класс предметнику не отдаётся')
     sql("update classes set status = 'active', doc = json_set(doc, '$.status', 'active') where id = 'cA1'")

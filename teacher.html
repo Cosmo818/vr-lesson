@@ -207,6 +207,7 @@ function lock(){try{sessionStorage.removeItem(TKEY);}catch(e){}if(S.account.toke
 function routeByRole(){
   const rs=S.account.roles().map(r=>r.role),adm=rs.some(r=>r==='superadmin'||r==='director'||r==='expert'),work=rs.some(r=>r==='superadmin'||r==='director'||r==='teacher');
   $('toAdmin').hidden=!adm;
+  $('clearRes').hidden=!!S.account.token()&&!rs.includes('superadmin');/* «Очистить результаты» — только суперадмин (старый вход по паролю страницы — владелец сервера) */
   const next=new URLSearchParams(location.search).get('next')==='admin';
   if(adm&&(next||!work))location.replace('admin.html');
 }
