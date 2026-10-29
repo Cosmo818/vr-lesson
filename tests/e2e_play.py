@@ -56,6 +56,17 @@ try:
         ev("()=>{const S=VR.app.E.S;S.mode='pick';const g=S.g,sol=g.pz.sol;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r)&&(r+c)%3)VR.einstein.click(g,c,r,sol[r][c],1);S.field.dirty=true;S.ctl.dirty=true}")
         pg.wait_for_timeout(300)
         save('S.field', 'ein_field_half.png')
+        ev("()=>{const E=VR.app.E,S=E.S;S.view='term';S.term.onToggle(S.term);S.term.onToggle(S.term);}")
+        ev("()=>{const E=VR.app.E,S=E.S;VR.einplay.begin(E,S);S.mode='pick';const g=S.g,sol=g.pz.sol;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r)&&(r+c)%3)VR.einstein.click(g,c,r,sol[r][c],1);S.t=95;E.setPose(0,-1.45,0);}")
+        pg.wait_for_timeout(500)
+        pg.screenshot(path=os.path.join(shots, 'ein_term_scene.png'))
+        save('S.term.panel', 'ein_term.png')
+        ev("VR.app.E.loadRoom('hall')"); pg.wait_for_timeout(500)
+        ev("()=>{const E=VR.app.E;E.setPose(2.7,-3.15,0);}"); pg.wait_for_timeout(500)
+        pg.screenshot(path=os.path.join(shots, 'hall_front.png'))
+        ev("()=>{const E=VR.app.E,S=E.S;VR.einplay.begin(E,S.term.G);}")
+        save('S.term.panel', 'hall_term.png')
+        ok(ev("VR.app.E.bodies.length===0&&VR.app.E.room.targets(VR.app.E,VR.app.E.S).length===0"), 'холл: нет тел, targets пуст')
         ev("""()=>{const G=VR.games,T=G.tour;G._reset();const names=['Аня Петрова','Боря Иванов','Вика Сидорова','Гоша Орлов','Даша Ким','Егор Власов'];
           names.forEach((n,i)=>{const E={student:{id:'s'+i,name:n,grade:6}};G.finish(E,'einstein',{time:240+i*37,seed:i,moves:30+i});G.finish(E,'einstein',{time:300+i*20,seed:9+i,moves:33});
             G.finish(E,'chess',{res:i%3?'win':'lose',lvl:i%4,moves:40});});

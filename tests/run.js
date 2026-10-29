@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/netplay.js','js/netsafe.js','js/games.js','js/einplay.js','js/einroom.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/netplay.js','js/netsafe.js','js/games.js','js/einplay.js','js/einroom.js','js/einterm.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -604,6 +604,46 @@ function makeCtx(xr){
       PL.start(Ex,G,4242,true,true);ok(G.g.status==='play'&&G.sent===false&&G.g.pz.seed===4242,'эйнштейн-ядро: «Сначала» — та же головоломка');
       G.mode='excl';PL.click(Ex,G,null,0,0,1);ok(G.g.moves<=1,'эйнштейн-ядро: режим «убрать» — клик считается');
     }
+  }
+  { /* терминал-стойка: холл без стендов, геометрия, тычок рукой, вид в комнате «Эйнштейн» */
+    const V=VR.games,stuKeep=E.student,pendKeep=V.pending;V._reset();V.pending=null;
+    E.goRoom('hall');run(6);
+    ok(E.bodies.length===0&&E.room.targets(E,E.S).length===0&&Array.isArray(E.room.targets(E,E.S)),'терминал: в холле нет тел, targets() пуст');
+    let T=E.S.term;ok(!!T&&T.panel&&Math.abs(T.panel.tilt-.52)<1e-6&&Math.abs(T.panel.pos[1]-1.10)<=.02&&T.panel.pos[0]===2.7&&T.panel.pos[2]===-3.7,'терминал: в холле панель tilt≈0,52 с центром 1,10 м');
+    ok(!E.panels.some(p=>p!==T.panel&&Math.abs(p.pos[0]-2.7)<.1&&Math.abs(p.pos[2]+3.95)<.1)&&!E.panels.some(p=>Math.abs(p.pos[0]+2.7)<.1&&Math.abs(p.pos[2]+3.95)<.1)&&E.tables.length===0,'терминал: нет таблички «Возьми и брось», красной кнопки и стола разминки');
+    { const n=VR.einterm.normal(T);const ang=eyeY=>{const d=[T.x-T.x,eyeY-T.panel.pos[1],(T.z+.55)-T.panel.pos[2]],l=Math.hypot(...d);return Math.acos((d[0]*n[0]+d[1]*n[1]+d[2]*n[2])/l)*180/Math.PI;};
+      ok(ang(1.6)<=35&&ang(1.2)<=35,'терминал: угол к глазам стоя '+ang(1.6).toFixed(1)+'° и сидя '+ang(1.2).toFixed(1)+'° (≤35°)'); }
+    { const bad=[];for(const p of E.panels){E.paintPanel(p);if(p.over.length)bad.push(p.over.join('|'));}
+      ok(!bad.length,'терминал: p.over пуст у всех панелей холла и терминала '+bad.join(';')); }
+    /* тычок рукой по «Новая» */
+    { const G=T.G;VR.einplay.begin(E,G);E.paintPanel(T.panel);
+      const btn=lab=>T.panel.btns.find(b=>b.label===lab);
+      const nb=btn('Новая');ok(!!nb&&!!btn('Сначала'),'терминал: в обычной партии есть «Новая» и «Сначала»');
+      const p=T.panel,n=VR.einterm.normal(T),lx=((nb.x+nb.w/2)/p.W-.5)*p.w,ly=(.5-(nb.y+nb.h/2)/p.H)*p.h;
+      const at=d=>[p.pos[0]+lx+n[0]*d,p.pos[1]+ly*Math.cos(p.tilt)+n[1]*d,p.pos[2]-ly*Math.sin(p.tilt)+n[2]*d];
+      const h=E.H[1];h.has=true;h.src=null;h.hit=null;
+      const put=d=>{const q=at(d);h.g=new Float32Array(16);h.g[12]=q[0];h.g[13]=q[1];h.g[14]=q[2];};
+      const seed0=G.g.pz.seed;
+      put(.12);VR.einterm.poke(E,T);ok(G.g.pz.seed===seed0,'терминал: рука далеко — ничего');
+      put(.01);VR.einterm.poke(E,T);const s1=G.g.pz.seed;ok(s1!==seed0,'терминал: тычок по «Новая» меняет партию');
+      E.paintPanel(T.panel);VR.einterm.poke(E,T);VR.einterm.poke(E,T);ok(G.g.pz.seed===s1,'терминал: задержка руки не повторяет нажатие');
+      put(.12);VR.einterm.poke(E,T);put(.01);VR.einterm.poke(E,T);ok(G.g.pz.seed!==s1,'терминал: отход и повтор — ещё одно нажатие');
+      h.has=false; }
+    /* турнир: нет «Новая/Сначала/Пауза» */
+    { const G=T.G;G.tid='T1';VR.einplay.start(E,G,5,false,true);E.paintPanel(T.panel);
+      const labs=T.panel.btns.map(b=>b.label||'');
+      ok(!labs.some(l=>/Новая|Сначала|Пауза/.test(l))&&!T.panel.over.length,'терминал: в турнире нет «Новая/Сначала/Пауза»');G.tid=null; }
+    /* комната «Эйнштейн»: вид wall/term без сброса партии */
+    E.student={id:'sT',name:'Тест',grade:5};E.goRoom('ein');run(25);
+    { const Q=E.S;ok(Q.view==='wall'&&Q.field.show&&Q.term&&!Q.term.panel.show&&!E.statics.includes(Q.term.statics[0]),'терминал: в комнате по умолчанию стена, терминал скрыт');
+      VR.einplay.begin(E,Q);run(120);const t0=Q.t,g0=Q.g;
+      const tg=()=>Q.term.panel.btns.find(b=>b.label==='Стена ⇄ Терминал');
+      Q.term.onToggle(Q.term);run(3);
+      ok(Q.view==='term'&&Q.term.panel.show&&!Q.field.show&&!Q.hints.show&&!Q.ctl.show&&E.statics.includes(Q.term.statics[0])&&E.boxes.includes(Q.term.boxes[0]),'терминал: вид term — терминал виден, стена скрыта');
+      ok(Q.t>=t0&&Q.g===g0&&Q.phase==='play','терминал: переключение вида не сбрасывает партию');
+      E.paintPanel(Q.term.panel);ok(!!tg()&&!Q.term.panel.over.length,'терминал: в комнате кнопка «Стена ⇄ Терминал», p.over пуст');
+      tg().fn({});run(3);ok(Q.view==='wall'&&Q.field.show&&!Q.term.panel.show&&Q.g===g0&&V.prefs('sT').view==='wall','терминал: обратно на стену, партия цела'); }
+    E.student=stuKeep;V.pending=pendKeep;V._reset();E.goRoom('hall');run(6);
   }
   { /* эйнштейн: пауза и настройки ученика на устройстве */
     const V=VR.games,LS=C.sb.localStorage,PK='vrl.einprefs',stuKeep=E.student,pendKeep=V.pending;V._reset();

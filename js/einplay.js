@@ -81,14 +81,21 @@ function tick(E,G,dt){
   if(s!==G.sec){G.sec=s;dirty(G,'ctl');}
 }
 
+/* общие действия кнопок: терминал вызывает их так же, как панель управления на стене */
+function begin(E,G){G.phase='play';G.t=0;G.sec=0;dirty(G);E.beep(660,.08,'sine',.05);}
+function openOne(E,G){const g=G.g;if(g.status!=='play'||G.tid)return;G.helped=true;E1.hint(g);dirty(G,'field');if(g.status==='win')won(E,G);dirty(G,'ctl');}
+function toggleMode(E,G){G.mode=G.mode==='pick'?'excl':'pick';savePref(E,{mode:G.mode});dirty(G,'ctl');}
+function toggleRules(G){G.showRules=!G.showRules;dirty(G,'hints');dirty(G,'ctl');}
+
 function pauseDraw(c,p,sz){c.fillStyle='#0b1020';c.fillRect(0,0,p.W,p.H);c.fillStyle='#fde68a';c.font='bold '+sz+'px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('Пауза',p.W/2,p.H/2);}
-function rulesDraw(c,p){
-  p.text('Правила игры «Эйнштейн»',30,14,{size:56,bold:true,maxW:p.W-60});
-  let y=100;const T=76;
+function rulesDraw(c,p,k){
+  k=k||1;const f=v=>Math.round(v*k);
+  p.text('Правила игры «Эйнштейн»',30,14,{size:f(56),bold:true,maxW:p.W-60});
+  let y=f(100);const T=f(76);
   for(const r of RULES){
     if(r.ex){const w=r.ex.t==='under'?T:3*T,h=r.ex.t==='under'?2*T:T;drawHint(c,r.ex,30,y,T,false);
-      y=Math.max(p.text(r.t,30+w+24,y,{size:38,color:'#f1f5f9',maxW:p.W-84-w,lh:46}),y+h)+18;}
-    else y=p.text(r.t,30,y,{size:38,color:'#f1f5f9',maxW:p.W-60,lh:46})+18;
+      y=Math.max(p.text(r.t,30+w+24,y,{size:f(38),color:'#f1f5f9',maxW:p.W-84-w,lh:f(46)}),y+h)+f(18);}
+    else y=p.text(r.t,30,y,{size:f(38),color:'#f1f5f9',maxW:p.W-60,lh:f(46)})+f(18);
   }
 }
 function drawField(E,G,c,p0,rect){
@@ -135,10 +142,10 @@ function drawField(E,G,c,p0,rect){
   });
 }
 /* K — множитель размера подсказок поверх ступени G.hk (по умолчанию 1) */
-function drawHints(E,G,c,p0,rect,K0){
+function drawHints(E,G,c,p0,rect,K0,RK){
   within(p0,c,rect,0,0,p=>{
   if(G.paused&&G.phase==='play')return pauseDraw(c,p,110);
-  if(G.phase==='idle'||G.showRules)return rulesDraw(c,p);
+  if(G.phase==='idle'||G.showRules)return rulesDraw(c,p,RK);
   const g=G.g,rules=g.pz.rules,K=HK[hkOf(G)]*(K0||1),T=Math.round(84*K),sc=v=>Math.round(v*K);
   p.text('Подсказки',30,14,{size:48,bold:true,maxW:700});
   /* размер подсказок: три ступени, кнопки A− / A+ */
@@ -188,5 +195,5 @@ function drawCtl(E,G,c,p0,rect,layout){
   p.text((G.tid?'Турнирная партия. ':'')+'Хват во время курка — наоборот. Головоломка № '+g.pz.seed,X,520,{size:22,color:'#64748b',maxW:W});
   });
 }
-VR.einplay={create,start,click,tick,drawField,drawHints,drawCtl,setPause,HK};
+VR.einplay={create,start,click,tick,drawField,drawHints,drawCtl,setPause,begin,openOne,toggleMode,toggleRules,savePref,fmtT,HK};
 })();
