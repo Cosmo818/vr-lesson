@@ -116,36 +116,16 @@ ROOMS.hall={
     makeQuiz(E,'gen',[0,1.6,5.86],Math.PI,{teacherOnly:true});
     if(VR.custom)VR.custom.hallPanel(E,gr);
     if(VR.learn)VR.learn.hallPanel(E);
-    /* разминка: стол с предметами */
-    const T=E.addTable(-2.7,-3.7,.7,.35,.8);
-    [[-3.2,'cube',[.9,.25,.25]],[-2.95,'cube',[.25,.8,.35]],[-2.7,'cube',[.3,.5,.95]],[-2.42,'ball',[.95,.8,.2]],[-2.15,'ball',[.95,.95,.95]]]
-      .forEach(([x,sh,col])=>E.addBody({shape:sh,p:[x,T.top+(sh==='cube'?.07:.055),-3.7],s:sh==='cube'?.14:.11,col}));
-    E.addPanel({w:1.4,h:.6,pos:[-2.7,1.75,-3.95],yaw:0,accent:'#22c55e',draw:(c,p)=>{p.text('Возьми и брось',30,24,{size:52,bold:true});p.text('Поднеси руку к предмету, нажми хват или курок и отпусти в броске.',30,100,{size:32,color:'#cbd5e1'});}});
-    /* красная кнопка */
-    S.btn=[2.7,.97,-3.7];S.lampI=0;S.dip=0;S.cool=0;S.count=0;
-    E.addStatic(E.mesh.cube,TRS(2.7,.45,-3.7,.5,.9,.5),[.35,.38,.45]);E.addBox({x:2.7,z:-3.7,hx:.25,hz:.25,top:.9});
-    S.btnPanel=E.addPanel({w:1.4,h:.6,pos:[2.7,2.4,-3.95],yaw:0,accent:'#ef4444',draw:(c,p)=>{p.text('Красная кнопка',30,24,{size:52,bold:true});p.text('Нажми рукой или лучом с курком. Нажато: '+S.count,30,100,{size:32,color:'#cbd5e1'});}});
-    S.press=h=>{
-      if(S.cool>0)return;S.cool=.4;S.count++;S.lampI=(S.lampI+1)%5;S.dip=.03;S.btnPanel.dirty=true;
-      E.burst([2.7,1.75,-3.7],36);E.beep(440+60*S.lampI,.15,'triangle');if(h)E.buzz(h,.6,50);
-      E.discover('hall','button','Красная кнопка');
-    };
-  },
-  targets(E,S){return[{c:S.btn,r:.2,id:'btn',sel:h=>S.press(h)}];},
-  update(E,S,dt){
-    S.cool=Math.max(0,S.cool-dt);S.dip=Math.max(0,S.dip-dt*.12);
-    for(const h of E.H){
-      if(!h.has||!E.session)continue;
-      const d=Math.hypot(h.g[12]-2.7,h.g[14]+3.7);
-      if(d<.17&&h.g[13]>.88&&h.g[13]<1.12){if(!h.poked){h.poked=true;S.press(h);}}else if(d>.25)h.poked=false;
+    /* терминал «Эйнштейн» в холле: своя партия (без турнира), победа уходит в VR.games.finish */
+    if(VR.einterm&&VR.einplay){
+      const hg=VR.einplay.create(E,{state:{},onDirty(){}});VR.einplay.start(E,hg,undefined,false,false);
+      S.term=VR.einterm.build(E,{x:2.7,z:-3.7,yaw:0,G:hg,toggleLabel:'В комнату Эйнштейна',onToggle:()=>E.goRoom('ein')});
     }
   },
-  onRelease(E,S,b,sp){if(sp>2.5)E.discover('hall','throw','Первый бросок');},
-  draw(E,S,add){
-    const L=[[1,.3,.3],[.3,1,.4],[.3,.5,1],[1,.85,.2],[.9,.4,1]];
-    add(E.mesh.cube,TRS(2.7,.95-S.dip,-3.7,.3,.1,.3),[.9,.15,.15],.15);
-    add(E.mesh.sphere,TRS(2.7,1.75,-3.7,.45,.45,.45),L[S.lampI],1);
-  }
+  targets(){return[];},
+  update(E,S,dt){if(S.term){VR.einplay.tick(E,S.term.G,dt);VR.einterm.poke(E,S.term);}},
+  onRelease(){},
+  draw(){}
 };
 
 /* ======================= МАТЕМАТИКА ======================= */

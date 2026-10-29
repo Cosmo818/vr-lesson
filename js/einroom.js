@@ -15,6 +15,11 @@ function favDraw(E,S,c,p){
     p.button(W-X-72,y,72,80,'✕',()=>{VR.games.favToggle('einstein',sd);S.favs.dirty=true;},{size:30,bg:'#7f1d1d'});});
   if(F.length>9)p.text('и ещё '+(F.length-9),X,176+9*92,{size:24,color:'#94a3b8'});
 }
+function applyView(S){
+  const t=S.view==='term'&&!!S.term;
+  for(const p of[S.field,S.hints,S.ctl,S.favs])if(p){p.show=!t;if(!t)p.dirty=true;}
+  if(S.term)S.term.setShown(t);
+}
 VR.einroomDrawHint=E1.drawHint;
 ROOMS.ein={
   title:'Эйнштейн',env:{floor:[.06,.07,.14],wall:[.12,.14,.3],trim:[.55,.5,1],grid:[.35,.3,.8]},spawn:{x:0,z:-.4},
@@ -32,9 +37,12 @@ ROOMS.ein={
     S.ctl=E.addPanel({w:1.4,h:1.1,res:768,pos:[-4.15,1.35,-4.2],yaw:0,accent:'#f59e0b',draw:(c,p)=>PL.drawCtl(E,S,c,p,{x:0,y:0,w:p.W,h:p.H},'wall')});
     S.favs=E.addPanel({w:1.4,h:2.4,res:768,pos:[3.95,1.55,-4.2],yaw:0,accent:'#fbbf24',draw:(c,p)=>favDraw(E,S,c,p)});
     PL.start(E,S,S.nextSeed,false,false);S.nextSeed=undefined;
+    /* терминал-стойка: второй вид той же партии; переключение G.view не сбрасывает партию */
+    S.term=VR.einterm?VR.einterm.build(E,{x:0,z:-2.0,yaw:0,G:S,toggleLabel:'Стена ⇄ Терминал',onToggle:()=>{S.view=S.view==='term'?'wall':'term';PL.savePref(E,{view:S.view});applyView(S);}}):null;
+    applyView(S);
   },
   targets(){return[];},
-  update(E,S,dt){PL.tick(E,S,dt);},
+  update(E,S,dt){PL.tick(E,S,dt);if(S.term)VR.einterm.poke(E,S.term);},
   draw(){}
 };
 })();
