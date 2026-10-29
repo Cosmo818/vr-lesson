@@ -118,7 +118,14 @@ try:
         ok(len(row2) == 1 and row2[0][0] == G2['seed'] and row2[0][1] == 0, 'устройство: решение попало в ein_solves (%s)' % (row2,))
 
         # 3. помощь по выданному номеру сжигает номер (helped:1), в рейтинг не идёт
-        pg2.click('#gNew'); pg2.wait_for_timeout(800)
+        # Э12: «Новая партия» — в меню на холсте (кнопки #gNew больше нет)
+        if pg2.is_visible('#gMenu'):
+            pg2.click('#gMenu'); pg2.wait_for_timeout(300)
+        okn = pg2.evaluate('()=>VR.einweb.press("Новая партия")')
+        pg2.wait_for_timeout(800)
+        if pg2.is_visible('#gStart') and pg2.is_enabled('#gStart'):
+            pg2.click('#gStart'); pg2.wait_for_timeout(800)
+        ok(okn, 'устройство: «Новая партия» из меню нажимается')
         pg2.click('#gOpen')
         pg2.wait_for_timeout(5600)
         solve_by_clicks(pg2); pg2.wait_for_timeout(800)
