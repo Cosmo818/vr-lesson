@@ -164,6 +164,18 @@ try:
             pg.click('#gMenu'); pg.wait_for_timeout(200)
         pg.evaluate('()=>window.scrollBy(0,VR.einweb.btnPos("A+").y-300)'); ap = pg.evaluate('VR.einweb.btnPos("A+")'); pg.mouse.click(ap['x'], ap['y']); pg.wait_for_timeout(150)
         ok(pg.evaluate('VR.games.prefs(%r).hk' % ids[0]) == 2, 'A+ в меню сохранил размер подсказок ученику')
+        # меню не прыгает при смене размера подсказок: высота холста и место кнопки те же
+        snap = 'JSON.stringify({h:document.getElementById("cf").height,y:Math.round(VR.einweb.btnPos("Новая партия").y),x:Math.round(VR.einweb.btnPos("Новая партия").x),w:Math.round(document.getElementById("cf").getBoundingClientRect().width)})'
+        m0 = pg.evaluate(snap); jumped = []
+        for lbl in ('A+', 'A+', 'A+', 'A−', 'A−', 'A−', 'A−', 'A−', 'A−'):
+            pg.evaluate('VR.einweb.press(%r)' % lbl); pg.wait_for_timeout(120)
+            m1 = pg.evaluate(snap)
+            if m1 != m0: jumped.append((lbl, m0, m1))
+        ok(not jumped, 'меню не прыгает при смене размера подсказок (A−/A+): %s' % (jumped[:2],))
+        for _ in range(8):   # вернуть размер, каким был (дальше тест проверяет его сохранение)
+            hk = pg.evaluate('VR.einweb.state().hk')
+            if hk == 2: break
+            pg.evaluate('VR.einweb.press(%r)' % ('A+' if hk < 2 else 'A−')); pg.wait_for_timeout(100)
         pg.reload(); pg.wait_for_selector('#eSchool'); login_school(pg, n1, '1111'); pg.wait_for_selector('#game:not([hidden])')
         ok(pg.evaluate('VR.einweb.state().hk') == 2, 'после перезагрузки у ученика размер подсказок прежний')
         pg.click('#gExit'); pg.wait_for_selector('#eSchool')

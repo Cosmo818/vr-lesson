@@ -140,10 +140,10 @@ function tick(){
 /* ---------- рисование ---------- */
 function redraw(){
   if(!G||!P)return;
-  const cv=$('cf'),box=cv.parentElement,cw=Math.max(300,Math.floor(box.clientWidth)||360),cfg=cfgFor(cw,x=>PL.geom(G,x,0,cfgFor(x)).cell),dpr=Math.min(2,window.devicePixelRatio||1);
+  const cv=$('cf'),box=cv.parentElement,cw=Math.max(300,Math.floor(box.clientWidth)||360),cfg=cfgFor(cw,PL.menuOn(G)&&!G.win?null:x=>PL.geom(G,x,0,cfgFor(x)).cell),dpr=Math.min(2,window.devicePixelRatio||1);
   let H=Math.max(PL.geom(G,cw,0,cfg).H,cfg.minH);
   if(G.win)H=Math.max(H,cw>=700?720:880);
-  if(PL.menuOn(G)&&!G.win)H=Math.max(H,Math.round(Math.min(window.innerHeight*.8,cw*1.1)));   /* меню — по центру окна */
+  if(PL.menuOn(G)&&!G.win)H=Math.max(cfg.minH,Math.round(Math.min(window.innerHeight*.8,cw*1.1)));   /* меню — по центру окна; высота не зависит от размера подсказок (A−/A+), иначе меню прыгает */
   const bw=Math.round(cw*dpr),bh=Math.round(H*dpr);
   if(cv.width!==bw)cv.width=bw;if(cv.height!==bh)cv.height=bh;
   const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);
