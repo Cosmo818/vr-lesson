@@ -15,6 +15,8 @@ function draw(E,T,c,p){
   const PL=VR.einplay,G=T.G;if(!G||!G.g)return;
   const g=G.g,cfg=Object.assign({},PL.CFG.term,{toggle:T.onToggle?{label:T.toggleLabel,fn:()=>T.onToggle(T)}:null});
   /* шапка 0…130 (название, время, «Начать» / «Пауза» / «Открыть клетку» / «Меню»), доска 134…1460, строка состояния */
+  /* меню (старт, пауза, проигрыш) — по центру всего экрана, поверх шапки */
+  if(PL.menuOn(G)&&!G.win){PL.drawBoard(E,G,c,p,{x:0,y:0,w:RES,h:Math.round(RES*SH/SW)},cfg);return;}
   PL.drawBar(E,G,c,p,{x:0,y:0,w:RES,h:130},cfg);
   PL.drawBoard(E,G,c,p,{x:10,y:134,w:RES-20,h:1326},cfg);
   const st=g.status==='play'?(G.msg||('Фишки — лучом и курком, убрать — курок с боковой кнопкой. Головоломка № '+g.pz.seed+(G.tid?' (турнир)':'')+PL.note(E,G))):G.msg;

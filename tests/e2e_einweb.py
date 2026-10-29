@@ -159,7 +159,10 @@ try:
         ok(pg.evaluate('VR.einweb.state().g.status') == 'lose' and len(j1) == j0 + 1 and j1[-1]['sid'] == ids[0] and j1[-1]['res'] == 'lose', 'ученик: проигрыш пишется в журнал')
 
         # размер подсказок: свой для ученика, сохраняется после перезагрузки
-        pg.click('#gMenu'); pg.wait_for_timeout(200); pg.evaluate('()=>window.scrollBy(0,VR.einweb.btnPos("A+").y-300)'); ap = pg.evaluate('VR.einweb.btnPos("A+")'); pg.mouse.click(ap['x'], ap['y']); pg.wait_for_timeout(150)
+        ok(pg.evaluate('VR.einweb.state().menu') is True and pg.evaluate('VR.einweb.btnPos("Новая партия")') is not None and pg.evaluate('VR.einweb.btnPos("Посмотреть поле")') is not None, 'после проигрыша меню открылось само: есть «Новая партия» и «Посмотреть поле»')
+        if not pg.evaluate('VR.einweb.state().menu'):
+            pg.click('#gMenu'); pg.wait_for_timeout(200)
+        pg.evaluate('()=>window.scrollBy(0,VR.einweb.btnPos("A+").y-300)'); ap = pg.evaluate('VR.einweb.btnPos("A+")'); pg.mouse.click(ap['x'], ap['y']); pg.wait_for_timeout(150)
         ok(pg.evaluate('VR.games.prefs(%r).hk' % ids[0]) == 2, 'A+ в меню сохранил размер подсказок ученику')
         pg.reload(); pg.wait_for_selector('#eSchool'); login_school(pg, n1, '1111'); pg.wait_for_selector('#game:not([hidden])')
         ok(pg.evaluate('VR.einweb.state().hk') == 2, 'после перезагрузки у ученика размер подсказок прежний')
@@ -176,7 +179,9 @@ try:
         fix_seed(pg2, 777); start_play(pg2)
         c, r, s, w = solpos(pg2); click_tile(pg2, c, r, w, 'left'); pg2.wait_for_timeout(200)
         ok(pg2.evaluate('VR.einweb.state().g.status') == 'lose' and pg2.evaluate('VR.games.load().games.length') == 0, 'гость: проиграл, журнал пуст')
-        pg2.click('#gMenu'); pg2.wait_for_timeout(200); pg2.evaluate('()=>window.scrollBy(0,VR.einweb.btnPos("Новая партия").y-300)'); nb = pg2.evaluate('VR.einweb.btnPos("Новая партия")'); pg2.mouse.click(nb['x'], nb['y']); pg2.wait_for_timeout(200)
+        if not pg2.evaluate('VR.einweb.state().menu'):   # после проигрыша меню уже открыто
+            pg2.click('#gMenu'); pg2.wait_for_timeout(200)
+        pg2.evaluate('()=>window.scrollBy(0,VR.einweb.btnPos("Новая партия").y-300)'); nb = pg2.evaluate('VR.einweb.btnPos("Новая партия")'); pg2.mouse.click(nb['x'], nb['y']); pg2.wait_for_timeout(200)
         pg2.click('#gOpen'); pg2.wait_for_timeout(100)
         ok(pg2.evaluate('VR.einweb.state().helped') is True, '«Открыть клетку» помечает партию без зачёта')
 

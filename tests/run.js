@@ -605,7 +605,7 @@ function makeCtx(xr){
       let n=0;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r)){PL.click(Ex,G,null,c,r,sol[r][c]);n++;}
       ok(n>0&&g.status==='win'&&Ex.fan===1&&/Готово/.test(G.msg),'эйнштейн-ядро: правильные клики выигрывают партию');
       PL.start(Ex,G,4242,false,true);let bad=null;for(let r=0;r<6&&!bad;r++)for(let c=0;c<6&&!bad;c++)if(!G.g.P.defined(c,r))for(let e=1;e<=6;e++)if(e!==sol[r][c]&&G.g.P.can(c,r,e)){bad=[c,r,e];break;}
-      PL.click(Ex,G,null,bad[0],bad[1],bad[2]);ok(G.g.status==='lose'&&G.sent===true,'эйнштейн-ядро: ошибка — проигрыш');
+      PL.click(Ex,G,null,bad[0],bad[1],bad[2]);ok(G.g.status==='lose'&&G.sent===true,'эйнштейн-ядро: ошибка — проигрыш');ok(G.menu===true&&PL.menuOn(G),'Е-меню: после проигрыша меню действий открывается сразу');
       PL.start(Ex,G,4242,true,true);ok(G.g.status==='play'&&G.sent===false&&G.g.pz.seed===4242,'эйнштейн-ядро: «Сначала» — та же головоломка');
       { const g2=G.g,sl=g2.pz.sol;let w=null;for(let r=0;r<6&&!w;r++)for(let c=0;c<6&&!w;c++)if(!g2.P.defined(c,r))for(let e=1;e<=6;e++)if(e!==sl[r][c]&&g2.P.can(c,r,e)){w=[c,r,e];break;}
         const grip={src:{gamepad:{buttons:[{pressed:true},{pressed:true}]}}};
@@ -629,6 +629,8 @@ function makeCtx(xr){
     /* тычок рукой по «Новая» */
     { const G=T.G;VR.einplay.begin(E,G);VR.einplay.setPause(G,true);E.paintPanel(T.panel);
       const btn=lab=>T.panel.btns.find(b=>(b.label||'').indexOf(lab)===0);
+      { const bs=T.panel.btns,y0=Math.min(...bs.map(b=>b.y)),y1=Math.max(...bs.map(b=>b.y+b.h)),c=(y0+y1)/2;
+        ok(Math.abs(c-T.panel.H/2)<T.panel.H*.12&&y0>T.panel.H*.1&&!bs.some(b=>b.y<130&&(b.label||'').indexOf('Меню')===0),'терминал: меню (пауза) — по центру всего экрана, не в нижней части ('+Math.round(c)+' из '+T.panel.H+')'); }
       const nb=btn('Новая партия');ok(!!nb&&!!btn('Сначала'),'терминал: в обычной партии есть «Новая» и «Сначала»');
       const p=T.panel,n=VR.einterm.normal(T),lx=((nb.x+nb.w/2)/p.W-.5)*p.w,ly=(.5-(nb.y+nb.h/2)/p.H)*p.h;
       const at=d=>[p.pos[0]+lx+n[0]*d,p.pos[1]+ly*Math.cos(p.tilt)+n[1]*d,p.pos[2]-ly*Math.sin(p.tilt)+n[2]*d];
@@ -677,7 +679,7 @@ function makeCtx(xr){
     /* раскладка: вертикальные подсказки под полем, горизонтальные справа */
     lab(Z.field,'Начать').fn();paint();
     { const g=Z.geo,fb=g.fy+6*g.cell,fr=g.fx+6*g.cell,hs=g.items.filter(i=>i.k==='h'),vs=g.items.filter(i=>i.k==='v');
-      ok(!!g&&hs.length>5&&vs.length>=1&&hs.every(i=>i.x>=fr)&&vs.every(i=>i.y>=fb),'Э12: вертикальные подсказки под полем (y ≥ '+fb+'), горизонтальные справа (x ≥ '+fr+')');
+      ok(!!g&&hs.length>5&&vs.length>=1&&hs.every(i=>i.x>=fr)&&vs.every(i=>i.y>=fb),'Э12: вертикальные подсказки под полем (y ≥ '+fb+'), горизонтальные справа (x ≥ '+fr+'), головоломка № '+Z.g.pz.seed+', подсказок h/v '+hs.length+'/'+vs.length+(g&&g.hUnder?', hUnder':''));
       ok(g.items.every(i=>i.x>=0&&i.y>=0&&i.x+i.w<=Z.field.W-16&&i.y+i.h<=Z.field.H-16)&&!Z.field.over.length&&!Z.ctl.over.length,'Э12: подсказки в границах доски, p.over пуст');
       ok(Z.field.btns.length>=100+hs.length+vs.length,'Э12: у фишек и подсказок есть области нажатия ('+Z.field.btns.length+')'); }
     /* курок выбирает, grip убирает */

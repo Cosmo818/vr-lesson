@@ -80,6 +80,7 @@ function openMenu(G){G.menu=true;dirty(G);}
 /* «Продолжить»: закрыть меню и снять паузу */
 function resume(G){G.menu=false;G.win=null;G.paused=false;dirty(G);}
 function lost(E,G){
+  G.menu=true;dirty(G);   /* после проигрыша меню действий появляется сразу (Айрат 29.10) */
   if(G.sent)return;G.sent=true;
   try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{res:'lose',seed:G.g.pz.seed,helped:G.helped,moves:G.g.moves,tid:G.tid||null,mid:G.mid||null});}catch(e){}
 }
@@ -219,16 +220,17 @@ function menuDraw(E,G,c,p,R,cfg){
   const fs=cfg.fs,bh=cfg.bh,gp=cfg.gap,idle=G.phase==='idle',g=G.g,arena=!!(VR.ROOMS&&VR.ROOMS.arena);
   c.fillStyle='#0b1020';c.fillRect(0,0,R.w,R.h);
   const ww=Math.min(R.w-2*gp,fs*34),pad=Math.round(fs*.6),x0=Math.round((R.w-ww)/2),bw=ww-2*pad,half=Math.floor((bw-gp)/2);
-  const titleH=Math.round(fs*1.5),stH=Math.round(fs*1.3)*(!G.tutDone?3:2),rows=cfg.toggle?5:4;
+  const titleH=Math.round(fs*1.5),stH=Math.round(fs*1.3)*((!G.tutDone?3:2)+(g.status==='lose'?2:0)),rows=cfg.toggle?5:4;
   const hh=pad*2+titleH+stH+rows*(bh+gp)-gp;
   const y0=Math.max(gp,Math.round((R.h-hh)/2));
   c.fillStyle='#111a33';c.beginPath();c.roundRect?c.roundRect(x0,y0,ww,hh,28):c.rect(x0,y0,ww,hh);c.fill();
   c.lineWidth=6;c.strokeStyle='#818cf8';c.beginPath();c.roundRect?c.roundRect(x0+3,y0+3,ww-6,hh-6,26):c.rect(x0+3,y0+3,ww-6,hh-6);c.stroke();
   let y=y0+pad;const x=x0+pad;
-  p.text(idle?'Эйнштейн':'Пауза',x,y,{size:Math.round(fs*1.2),bold:true,color:'#fde68a',maxW:bw});y+=titleH;
-  const stTxt='Головоломка № '+g.pz.seed+note(E,G)+(G.fetching?' · запрашиваю номер…':'')+(!G.tutDone?'\nВпервые? Начни с обучения — оно короткое.':'');
+  p.text(idle?'Эйнштейн':g.status==='lose'?'Проигрыш':'Пауза',x,y,{size:Math.round(fs*1.2),bold:true,color:g.status==='lose'?'#fca5a5':'#fde68a',maxW:bw});y+=titleH;
+  const stTxt=(g.status==='lose'&&G.msg?G.msg+'\n':'')+'Головоломка № '+g.pz.seed+note(E,G)+(G.fetching?' · запрашиваю номер…':'')+(!G.tutDone?'\nВпервые? Начни с обучения — оно короткое.':'');
   p.text(stTxt,x,y,{size:Math.round(fs*.85),color:'#cbd5e1',maxW:bw,lh:Math.round(fs*1.1),maxY:y+stH});y+=stH;
   if(idle)btn(p,x,y,bw,bh,'▶ Начать',()=>begin(E,G),{size:fs,bg:'#15803d',disabled:!!G.fetching});
+  else if(g.status==='lose')btn(p,x,y,bw,bh,'Посмотреть поле',()=>{G.menu=false;dirty(G);},{size:fs,bg:'#475569'});
   else btn(p,x,y,bw,bh,'▶ Продолжить',()=>resume(G),{size:fs,bg:'#15803d'});
   y+=bh+gp;
   if(!G.tid){
