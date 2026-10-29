@@ -68,8 +68,8 @@ function fresh(E,G,begin){
   start(E,G,undefined,false,begin);   /* пока ждём ответ, показана локальная головоломка; ответ её заменит */
   G.fetching=true;G.msg='Запрашиваю головоломку…';dirty(G,'ctl');
   const tok=G.rid;
-  try{R.flush(E).catch(()=>{});}catch(e){}
-  R.fetchSeed(E,srcOf(G)).then(seed=>{
+  /* ревью Opus Э8: сначала очередь решений, потом новый номер — иначе сервер сделает прежний номер void и решение из очереди пропадёт */
+  Promise.resolve().then(()=>R.flush(E)).catch(()=>{}).then(()=>R.fetchSeed(E,srcOf(G))).then(seed=>{
     if(tok!==G.rid)return;
     if(seed!=null){start(E,G,seed,false,begin);G.rated=true;G.seedSrc='rand';}
     else{G.fetching=false;G.msg='';dirty(G,'ctl');}
@@ -129,8 +129,7 @@ function begin(E,G){
   const R=RT();
   if(!G.tid&&G.seedSrc==='rand'&&!G.rated&&R&&R.enabled(E)){
     G.fetching=true;const tok=G.rid=(G.rid||0)+1;
-    try{R.flush(E).catch(()=>{});}catch(e){}
-    R.fetchSeed(E,srcOf(G)).then(seed=>{
+    Promise.resolve().then(()=>R.flush(E)).catch(()=>{}).then(()=>R.fetchSeed(E,srcOf(G))).then(seed=>{
       if(tok!==G.rid)return;
       if(seed!=null){start(E,G,seed,false,false);G.rated=true;G.seedSrc='rand';}
       G.fetching=false;go(E,G);

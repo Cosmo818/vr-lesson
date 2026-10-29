@@ -194,7 +194,7 @@ function endSession(){
   else msg='Сеанс гостя завершён.';
   try{sessionStorage.removeItem('vrl.editor');sessionStorage.removeItem('vrl.laser');}catch(e){}
   teacherOut();   /* шлем общий: учётка, введённая на экране шлема, живёт только до конца сеанса */
-  einPh='';lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);$('deskPanel').hidden=true;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
+  einPh='';lastStudent=E.student?Object.assign({},E.student,{ph:undefined}):null;   /* хэш кода ученика после выхода не держим (ревью Opus Э8) */sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);$('deskPanel').hidden=true;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
   $('summary').textContent=msg;$('summary').hidden=false;
