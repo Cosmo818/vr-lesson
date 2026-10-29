@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Проверка шлема</title>
+<style>
+body{font:20px system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:16px;max-width:900px}
+button{font:inherit;padding:14px 20px;margin:8px 8px 0 0;border-radius:12px;border:0;background:#4f46e5;color:#fff}
+pre{white-space:pre-wrap;word-break:break-word;background:#1e293b;padding:14px;border-radius:12px;font-size:16px}
+#sum{font-size:24px;line-height:1.5}
+</style>
+</head>
+<body>
+<h1>Проверка шлема для «якорения класса»</h1>
+<p>Страница только читает возможности браузера шлема. Ничего не сохраняет и никуда не отправляет; кадры камеры не записываются. Нажми кнопки 1–3 по очереди (сеанс сам закончится через 6 секунд), потом «Скопировать отчёт».</p>
+<button id="bVR" type="button">1. VR-сеанс</button>
+<button id="bAR" type="button">2. AR-сеанс</button>
+<button id="bCam" type="button">3. Камера</button>
+<button id="bCopy" type="button">Скопировать отчёт</button>
+<p id="sum"></p>
+<pre id="out"></pre>
+<script>
+'use strict';
+/* tools/xrprobe.html — разведка К0 (PLAN-anchors.md): какие функции WebXR и камеры есть в браузере этого шлема.
+   Ничего не создаёт надолго: якорь — только временный (без постоянного номера), поток камеры сразу закрывается. */
+const R={ua:navigator.userAgent,t:new Date().toISOString()};
+const out=document.getElementById('out'),sumEl=document.getElementById('sum');
+const FEAT=['local-floor','bounded-floor','anchors','plane-detection','mesh-detection','hit-test','camera-access','hand-tracking','layers'];
+function yes(v){return v===true||v==='да';}
+function show(){
+  out.textContent=JSON.stringify(R,null,1);
+  const vr=R['immersive-vr:probe']||{},ar=R['immersive-ar:probe']||{},cam=R.cam||{};
+  const en=m=>Array.isArray(m.enabled)?m.enabled:[];
+  const has=f=>en(vr).includes(f)||en(ar).includes(f);
+  const line=(n,v)=>n+': '+(v?'✅':'—');
+  sumEl.innerHTML=[
+    line('VR',R['immersive-vr']),line('AR (проходящее видео)',R['immersive-ar']),
+    line('якоря',has('anchors')),line('постоянные якоря',vr.persist==='есть'||ar.persist==='есть'),
+    line('плоскости комнаты',has('plane-detection')),line('сетка комнаты',has('mesh-detection')),
+    line('камера в XR (camera-access)',vr.camera||ar.camera),line('камера (getUserMedia)',Array.isArray(cam.tracks)&&cam.tracks.length>0),
+    line('камера во время XR',vr.gum==='да'||ar.gum==='да')
+  ].join('<br>');
+}
+async function supported(){
+  R.xr=!!navigator.xr;
+  if(navigator.xr)for(const m of['immersive-vr','immersive-ar']){try{R[m]=await navigator.xr.isSessionSupported(m);}catch(e){R[m]='err '+e.name;}}
+  show();
+}
+async function camGranted(){try{const p=await navigator.permissions.query({name:'camera'});return p.state==='granted';}catch(e){return false;}}
+async function probe(mode){
+  const r=R[mode+':probe']={};show();
+  if(!navigator.xr){r.err='нет WebXR';return show();}
+  let s;
+  try{s=await navigator.xr.requestSession(mode,{optionalFeatures:FEAT});}
+  catch(e){r.err=e.name+': '+e.message;return show();}
+  try{
+    r.enabled=s.enabledFeatures?[...s.enabledFeatures]:'нет enabledFeatures';
+    r.roomCapture=typeof s.initiateRoomCapture==='function';
+    r.restoreApi=typeof s.restorePersistentAnchor==='function';
+    const c=document.createElement('canvas'),gl=c.getContext('webgl2',{xrCompatible:true})||c.getContext('webgl',{xrCompatible:true});
+    await s.updateRenderState({baseLayer:new XRWebGLLayer(s,gl)});
+    let ref;
+    try{ref=await s.requestReferenceSpace('local-floor');r.ref='local-floor';}
+    catch(e){ref=await s.requestReferenceSpace('local');r.ref='local';}
+    /* камера во время сеанса — только если разрешение уже дано (кнопка 3), чтобы окно разрешения не выбросило из VR */
+    if(await camGranted()){
+      navigator.mediaDevices.getUserMedia({video:true}).then(st=>{const t=st.getVideoTracks()[0],g=t?t.getSettings():{};r.gum='да';r.gumSize=(g.width||0)+'×'+(g.height||0);st.getTracks().forEach(x=>x.stop());show();})
+        .catch(e=>{r.gum='err '+e.name;show();});
+    }else r.gum='не проверялась (сначала кнопка 3)';
+    let frames=0,anchorTried=false;const t0=performance.now();
+    await new Promise(done=>{
+      const f=(t,fr)=>{
+        frames++;
+        const bl=s.renderState.baseLayer;
+        gl.bindFramebuffer(gl.FRAMEBUFFER,bl.framebuffer);gl.clearColor(.08,.1,.3,mode==='immersive-ar'?0:1);gl.clear(gl.COLOR_BUFFER_BIT);
+        const p=fr.getViewerPose(ref);
+        if(p&&!r.camera){for(const v of p.views)if(v.camera){r.camera=v.camera.width+'×'+v.camera.height;break;}}
+        if(!anchorTried&&typeof fr.createAnchor==='function'){
+          anchorTried=true;
+          fr.createAnchor(new XRRigidTransform(),ref).then(a=>{
+            r.anchor='создан';r.persist=typeof a.requestPersistentHandle==='function'?'есть':'нет';
+            if(a.delete)a.delete();show();
+          }).catch(e=>{r.anchor='err '+e.name+': '+e.message;show();});
+        }
+        if(fr.detectedPlanes){
+          const L={};let n=0;
+          for(const pl of fr.detectedPlanes){n++;const k=(pl.semanticLabel||'?')+'/'+(pl.orientation||'?');L[k]=(L[k]||0)+1;}
+          r.planes={n,labels:L};
+        }else r.planes='нет detectedPlanes';
+        if(fr.detectedMeshes){const L={};for(const m of fr.detectedMeshes){const k=m.semanticLabel||'?';L[k]=(L[k]||0)+1;}r.meshes={n:fr.detectedMeshes.size,labels:L};}
+        if(performance.now()-t0<6000)s.requestAnimationFrame(f);else done();
+      };
+      s.requestAnimationFrame(f);
+    });
+    r.frames=frames;
+  }catch(e){r.err2=e.name+': '+e.message;}
+  try{await s.end();}catch(e){}
+  show();
+}
+async function cam(){
+  const r=R.cam={};show();
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280}}});
+    r.tracks=st.getVideoTracks().map(t=>{const g=t.getSettings();return{label:t.label,w:g.width,h:g.height,fps:g.frameRate,facing:g.facingMode||''};});
+    const d=await navigator.mediaDevices.enumerateDevices();
+    r.devices=d.filter(x=>x.kind==='videoinput').map(x=>x.label||'(без имени)');
+    st.getTracks().forEach(t=>t.stop());
+  }catch(e){r.err=e.name+': '+e.message;}
+  show();
+}
+document.getElementById('bVR').onclick=()=>probe('immersive-vr');
+document.getElementById('bAR').onclick=()=>probe('immersive-ar');
+document.getElementById('bCam').onclick=cam;
+document.getElementById('bCopy').onclick=async()=>{const txt=sumEl.innerText+'\n\n'+out.textContent;try{await navigator.clipboard.writeText(txt);sumEl.insertAdjacentHTML('beforeend','<br>Скопировано.');}catch(e){sumEl.insertAdjacentHTML('beforeend','<br>Не скопировалось — сфотографируй экран.');}};
+supported();
+</script>
+</body>
+</html>
