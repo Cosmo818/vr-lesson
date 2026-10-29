@@ -57,7 +57,8 @@ async function schoolEnter(e){
   if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}
     $('sErr').textContent=s&&s.hasPin&&!s.pinHash?'На этом устройстве вход в этот класс закрыт — войди через урок учителя.':'Неверный номер или код. Если забыл — подойди к учителю.';return;}
   fails=0;$('selPin').value='';$('selNum').value='';pinMem=pin;
-  begin({id:s.id,name:s.name,grade:s.grade},s.id,s.name);
+  let ph='';try{ph=await S.pinHash(s.id,pin);}catch(err){}   /* хэш кода — для зачётной игры, только в памяти */
+  begin({id:s.id,name:s.name,grade:s.grade,ph},s.id,s.name);
 }
 async function boundLogin(){
   const self=S.studentSelf();if(!self){showEnter();return;}
@@ -65,7 +66,7 @@ async function boundLogin(){
   $('bErr').textContent='';$('bGo').disabled=true;$('bGuest').hidden=true;
   let r;try{r=await S.studentLogin(pin);}catch(e){r={status:0,data:{}};}
   $('bGo').disabled=false;
-  if(r.status===200){pinMem=pin;$('bPin').value='';loggedStu=true;begin({id:self.sid,name:self.name,grade:self.grade},self.sid,self.name);return;}
+  if(r.status===200){pinMem=pin;$('bPin').value='';loggedStu=true;begin({id:self.sid,name:self.name,grade:self.grade,bound:true},self.sid,self.name);return;}
   if(r.status===0){$('bErr').textContent='Нет связи с сервером.';$('bGuest').hidden=false;return;}
   if(r.status===401){showEnter('Привязка этого устройства снята. Привяжи его заново или играй гостем.');return;}
   $('bPin').value='';$('bErr').textContent=(r.data&&r.data.error)||'Не удалось войти.';
@@ -95,14 +96,54 @@ function begin(student,pkId,label){
   $('enter').hidden=true;$('game').hidden=false;
   $('gWho').textContent=student?E.tag:(E.tag==='Учитель'?'Учитель (без зачёта)':'Гость (вне рейтинга)');
   const pf=prefsOf();
-  G={g:null,t:0,sec:0,helped:false,sent:false,used:new Set(),phase:'idle',paused:false,mode:pf.mode,hk:pf.hk,msg:'',hov:null,rules:false,last:0};
+  G={rated:false,burn:false,seedSrc:'rand',fetching:false,rid:0,g:null,t:0,sec:0,helped:false,sent:false,used:new Set(),phase:'idle',paused:false,mode:pf.mode,hk:pf.hk,msg:'',hov:null,rules:false,last:0};
   newPuzzle(undefined,false);
   startTick();
+  try{VR.einrate.flush(E);}catch(e){}
 }
 function newPuzzle(seed,play){
+  G.rid++;G.fetching=false;G.rated=false;G.burn=false;G.seedSrc=seed===undefined?'rand':'set';   /* устаревший ответ сервера игнорируется */
   const pz=E1.generate(seed);
   G.g=E1.newGame(pz);resetRun(play);
 }
+/* зачётная игра (js/einrate.js): у вошедшего ученика номер выдаёт сервер; нет связи / 404 / гость — локальный номер, вне рейтинга */
+const RT=()=>VR.einrate||null;
+function freshPuzzle(play){
+  const R=RT();
+  if(!R||!R.enabled(E)){newPuzzle(undefined,play);return;}
+  if(G.fetching)return;
+  newPuzzle(undefined,play);G.fetching=true;G.msg='Запрашиваю головоломку…';ui();
+  const tok=G.rid;try{R.flush(E).catch(()=>{});}catch(e){}
+  R.fetchSeed(E,'web').then(seed=>{
+    if(!G||tok!==G.rid)return;
+    if(seed!=null){newPuzzle(seed,play);G.rated=true;G.seedSrc='rand';}
+    else{G.fetching=false;G.msg='';ui();}
+  }).catch(()=>{if(G&&tok===G.rid){G.fetching=false;G.msg='';ui();}});
+}
+function startRun(){
+  if(!G||G.phase!=='idle'||G.fetching)return;
+  const go=()=>{G.phase='play';G.t=0;G.sec=0;G.last=performance.now();redraw();};
+  const R=RT();
+  if(G.seedSrc==='rand'&&!G.rated&&R&&R.enabled(E)){
+    G.fetching=true;ui();const tok=++G.rid;
+    try{R.flush(E).catch(()=>{});}catch(e){}
+    R.fetchSeed(E,'web').then(seed=>{
+      if(!G||tok!==G.rid)return;
+      if(seed!=null){newPuzzle(seed,false);G.rated=true;G.seedSrc='rand';}
+      G.fetching=false;go();
+    }).catch(()=>{if(G&&tok===G.rid){G.fetching=false;go();}});
+    return;
+  }
+  go();
+}
+/* победа при выданном номере (или после помощи по нему — helped:1 сжигает номер) → один solve; без связи — в очередь vrl.einq */
+function sendSolve(){
+  const R=RT();if(!R||!(G.rated||G.burn))return;
+  const gr=G.g,rec={seed:gr.pz.seed,time:Math.round(G.t),moves:Math.max(1,gr.moves|0),helped:G.helped||G.burn?1:0,src:'web'};
+  G.rated=false;G.burn=false;
+  R.submit(E,rec).then(res=>{const add=R.say(res);if(add&&G&&G.g===gr){G.msg+=add;ui();}}).catch(()=>{});
+}
+function ratedNote(){const R=RT();return R&&R.visible(E)?(G.rated?' · в рейтинг':(G.burn?' · помощь, в зачёт не идёт':' · вне рейтинга')):'';}
 function resetRun(play){
   G.t=0;G.sec=0;G.helped=false;G.sent=false;G.used=new Set();G.paused=false;G.msg='';G.rules=false;
   G.phase=play?'play':'idle';
@@ -111,6 +152,7 @@ function resetRun(play){
 function finish(info){
   if(G.sent)return;G.sent=true;
   try{VR.games.finish(E,'einstein',Object.assign({seed:G.g.pz.seed,helped:G.helped,moves:G.g.moves},info));}catch(e){}
+  if(info&&info.time!=null)sendSolve();
 }
 function pick(ev){
   if(!G||G.phase!=='play'||G.paused||G.g.status!=='play')return;
@@ -226,7 +268,8 @@ function ui(){
   $('gMode').textContent='Касание: '+(G.mode==='pick'?'выбрать фишку':'убрать фишку');
   $('gAm').disabled=G.hk<=0;$('gAp').disabled=G.hk>=HK.length-1;
   $('gRules').textContent=G.rules?'Подсказки':'Правила';
-  $('gMsg').textContent=G.msg||(G.phase==='idle'?'Партия № '+G.g.pz.seed+'. Нажми «Начать».':'Открой все фишки: исключай лишние по подсказкам.');
+  $('gMsg').textContent=G.msg||(G.phase==='idle'?'Партия № '+G.g.pz.seed+'. Нажми «Начать».':'Открой все фишки: исключай лишние по подсказкам.')+(G.g.status==='play'?ratedNote():'');
+  $('gStart').disabled=!!G.fetching;$('gNew').disabled=!!G.fetching;
   $('gTime').textContent=fmtT(G.t);
 }
 
@@ -241,13 +284,14 @@ function bind(){
   $('pCancel').onclick=()=>{$('pairForm').hidden=true;$('pErr').textContent='';};
   $('pairForm').onsubmit=pairGo;
   $('gExit').onclick=()=>{if(loggedStu){loggedStu=false;try{S.studentLogout().catch(()=>{});}catch(e){}}pinMem='';showEnter();};
-  $('gStart').onclick=()=>{if(G&&G.phase==='idle'){G.phase='play';G.t=0;G.sec=0;G.last=performance.now();redraw();}};
+  $('gStart').onclick=startRun;
   $('gPause').onclick=()=>setPause(!G.paused);
   $('gAgain').onclick=()=>{G.g=E1.newGame(G.g.pz);resetRun(true);};
-  $('gNew').onclick=()=>newPuzzle(undefined,true);
+  $('gNew').onclick=()=>freshPuzzle(true);
   $('gMode').onclick=()=>{G.mode=G.mode==='pick'?'excl':'pick';savePref({mode:G.mode});ui();};
   $('gOpen').onclick=()=>{
     if(G.g.status!=='play'||G.phase!=='play'||G.paused)return;
+    if(G.rated){G.burn=true;G.rated=false;}
     G.helped=true;E1.hint(G.g);
     if(G.g.status==='win'){G.msg='Готово! Все фишки открыты за '+fmtT(G.t)+' (с помощью — в зачёт не идёт)';finish({time:Math.round(G.t)});}
     redraw();};

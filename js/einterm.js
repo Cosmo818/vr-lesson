@@ -26,14 +26,14 @@ function draw(E,T,c,p){
   PL.drawHints(E,G,c,p,{x:1200,y:120,w:828,h:1160},.6,.72);
   /* низ 1300…1520 */
   if(G.phase==='idle'){
-    lbl(20,1300,G.tid?2008:1000,100,'▶ Начать',()=>PL.begin(E,G),{size:42,bg:'#15803d'});
-    if(!G.tid)lbl(1040,1300,988,100,'Новая',()=>PL.start(E,G,undefined,false,false),{size:38,bg:'#b45309'});
+    lbl(20,1300,G.tid?2008:1000,100,'▶ Начать',()=>PL.begin(E,G),{size:42,bg:'#15803d',disabled:!!G.fetching});
+    if(!G.tid)lbl(1040,1300,988,100,'Новая',()=>PL.fresh(E,G,false),{size:38,bg:'#b45309',disabled:!!G.fetching});
   }else if(!G.tid){
     lbl(20,1300,480,100,'Сначала',()=>PL.start(E,G,0,true),{size:38,bg:'#475569'});
-    lbl(520,1300,480,100,'Новая',()=>PL.start(E,G),{size:38,bg:'#b45309'});
+    lbl(520,1300,480,100,'Новая',()=>PL.fresh(E,G),{size:38,bg:'#b45309',disabled:!!G.fetching});
     lbl(1020,1300,1008,100,'Открыть клетку (без зачёта)',()=>PL.openOne(E,G),{size:34,bg:'#1e293b',disabled:g.status!=='play'||G.paused});
   }
-  const st=g.status==='play'?(G.msg||('Фишки — лучом и курком, кнопки — тычком руки. Головоломка № '+g.pz.seed+(G.tid?' (турнир)':''))):G.msg;
+  const st=g.status==='play'?(G.msg||('Фишки — лучом и курком, кнопки — тычком руки. Головоломка № '+g.pz.seed+(G.tid?' (турнир)':'')+PL.note(E,G))):G.msg;
   p.text(st,24,1426,{size:30,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#cbd5e1',maxW:1040,maxY:1516});
   lbl(1100,1420,440,100,G.showRules?'Подсказки':'Правила',()=>PL.toggleRules(G),{size:36,bg:'#334155'});
   if(T.onToggle)lbl(1560,1420,468,100,T.toggleLabel,()=>T.onToggle(T),{size:34,bg:'#475569'});

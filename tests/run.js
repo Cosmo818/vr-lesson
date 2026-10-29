@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/netplay.js','js/netsafe.js','js/games.js','js/einplay.js','js/einroom.js','js/einterm.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/netplay.js','js/netsafe.js','js/games.js','js/einrate.js','js/einplay.js','js/einroom.js','js/einterm.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -644,6 +644,77 @@ function makeCtx(xr){
       E.paintPanel(Q.term.panel);ok(!!tg()&&!Q.term.panel.over.length,'терминал: в комнате кнопка «Стена ⇄ Терминал», p.over пуст');
       tg().fn({});run(3);ok(Q.view==='wall'&&Q.field.show&&!Q.term.panel.show&&Q.g===g0&&V.prefs('sT').view==='wall','терминал: обратно на стену, партия цела'); }
     E.student=stuKeep;V.pending=pendKeep;V._reset();E.goRoom('hall');run(6);
+  }
+  { /* Э8: зачётная игра «Эйнштейн» — сид с сервера, solve, очередь vrl.einq (мок fetch; рабочий сервер — tests/ein_rating.py) */
+    const PL=VR.einplay,R=VR.einrate,S8=VR.Store,LS=C.sb.localStorage,realFetch=C.sb.fetch,settle=async()=>{for(let i=0;i<8;i++)await tick();};
+    ok(!!R&&['who','enabled','fetchSeed','submit','flush'].every(k=>typeof R[k]==='function')&&['einSeed','einSolve','einTop','einPlaces'].every(k=>typeof S8[k]==='function'),'Э8: VR.einrate и Store.ein* есть');
+    const calls=[];let mode='ok',nextSeed=777001;
+    C.sb.fetch=async(url,o)=>{
+      const b=o&&o.body?JSON.parse(o.body):null;calls.push({url:String(url).replace('http://t8.test',''),h:o.headers||{},b});
+      if(mode==='off')throw new Error('offline');
+      if(mode==='404')return{status:404,json:async()=>({error:'not found'})};
+      if(/\/api\/ein\/seed$/.test(url))return{status:200,json:async()=>({seed:nextSeed,issued:Date.now()})};
+      if(/\/api\/ein\/solve$/.test(url))return{status:200,json:async()=>({ok:true,rated:true,stats:{n:1,avg:30}})};
+      return{status:404,json:async()=>({})};
+    };
+    const PH='phKEY-8888',Ex={student:{id:'sE8',name:'Эля',grade:6,ph:PH},beep(){},buzz(){},fanfare(){},goRoom(){},menuOpen:false};
+    const solveAll=G=>{const g=G.g,sol=g.pz.sol;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r))PL.click(Ex,G,null,c,r,sol[r][c]);};
+    const seedC=()=>calls.filter(c=>/\/ein\/seed/.test(c.url)),solveC=()=>calls.filter(c=>/\/ein\/solve/.test(c.url));
+    S8.setServer('http://t8.test','devkey-0123456789abcdef');
+    VR.flags.set('einRating',false);
+    { /* флаг выключен: игра локальная, в сеть не ходим */
+      const G=PL.create(Ex,{onDirty(){}});PL.start(Ex,G,5151,false,false);PL.begin(Ex,G);solveAll(G);await settle();
+      ok(G.g.status==='win'&&calls.length===0&&G.rated===false,'Э8: флаг einRating выключен — ни одного запроса, партия локальная'); }
+    VR.flags.set('einRating',true);
+    { /* «Начать» с локальным номером → сид с сервера, победа → ровно один solve с верным временем */
+      const G=PL.create(Ex,{onDirty(){}});PL.start(Ex,G,undefined,false,false);calls.length=0;
+      PL.begin(Ex,G);await settle();
+      ok(seedC().length===1&&seedC()[0].h['X-Key']==='devkey-0123456789abcdef'&&seedC()[0].b.student_id==='sE8'&&seedC()[0].b.pin_hash===PH,'Э8: выдача сида шлемом школы — X-Key, student_id, pin_hash');
+      ok(G.g.pz.seed===777001&&G.rated===true&&G.phase==='play','Э8: номер от сервера, G.rated=true, партия идёт');
+      PL.tick(Ex,G,42.4);solveAll(G);await settle();
+      ok(G.g.status==='win'&&solveC().length===1,'Э8: победа — один solve');
+      const b=solveC()[0].b;
+      ok(b.seed===777001&&b.time===42&&b.helped===0&&b.moves>=1&&b.student_id==='sE8'&&b.src==='wall','Э8: solve с верными seed/time/helped/src');
+      G.sent=false;PL.start(Ex,G,777001,true,true);solveAll(G);await settle();
+      ok(solveC().length===1,'Э8: после решения повторная победа не шлёт'); }
+    { /* «Новая» при игре — сид с сервера; помощь по выданному номеру → helped:1 */
+      const G=PL.create(Ex,{onDirty(){}});PL.start(Ex,G,undefined,false,true);calls.length=0;nextSeed=777002;
+      PL.fresh(Ex,G);await settle();
+      ok(seedC().length===1&&G.g.pz.seed===777002&&G.rated===true,'Э8: «Новая» берёт номер у сервера');
+      PL.openOne(Ex,G);ok(G.rated===false&&G.burn===true,'Э8: «Открыть клетку» — G.rated=false');
+      PL.tick(Ex,G,30);solveAll(G);await settle();
+      ok(solveC().length===1&&solveC()[0].b.helped===1,'Э8: победа после помощи по выданному номеру — solve с helped:1'); }
+    { /* сохранённый номер и турнир не шлют и не берут сид */
+      const G=PL.create(Ex,{onDirty(){}});calls.length=0;PL.start(Ex,G,4321,false,true);solveAll(G);await settle();
+      ok(calls.length===0&&G.rated===false,'Э8: сохранённый номер — без сети');
+      const T=PL.create(Ex,{onDirty(){}});T.tid='T1';T.mid='1.0';PL.start(Ex,T,4322,false,true);PL.fresh(Ex,T);solveAll(T);await settle();
+      ok(calls.length===0,'Э8: турнирная партия — без сети'); }
+    { /* гость: без сети, «вне рейтинга» */
+      const Eg={student:null,beep(){},buzz(){},fanfare(){},goRoom(){}},G=PL.create(Eg,{onDirty(){}});calls.length=0;
+      PL.start(Eg,G,undefined,false,false);PL.begin(Eg,G);solveAll(G);await settle();
+      ok(calls.length===0&&G.rated===false&&G.g.status==='win','Э8: гость играет локально без запросов'); }
+    { /* сервер выключен (404): локальный номер, игра идёт */
+      mode='404';const G=PL.create(Ex,{onDirty(){}});PL.start(Ex,G,undefined,false,false);calls.length=0;
+      PL.begin(Ex,G);await settle();
+      ok(G.phase==='play'&&G.rated===false&&seedC().length===1,'Э8: 404 на сид — партия начинается локальной');
+      solveAll(G);await settle();ok(solveC().length===0,'Э8: 404 на сид — solve не шлётся'); mode='ok'; }
+    { /* нет связи: победа попадает в vrl.einq без кода, повторный вход отправляет */
+      const G=PL.create(Ex,{onDirty(){}});PL.start(Ex,G,undefined,false,false);calls.length=0;nextSeed=777003;
+      PL.begin(Ex,G);await settle();ok(G.rated===true,'Э8: номер выдан (подготовка к обрыву связи)');
+      mode='off';PL.tick(Ex,G,33);solveAll(G);await settle();
+      const q=JSON.parse(LS.getItem('vrl.einq')||'[]');
+      ok(q.length===1&&q[0].sid==='sE8'&&q[0].seed===777003&&q[0].time===33&&q[0].helped===0&&!('ph' in q[0])&&!('pin_hash' in q[0])&&LS.getItem('vrl.einq').indexOf(PH)<0,'Э8: без связи — запись в vrl.einq без поля кода');
+      ok(Object.keys(q[0]).sort().join()==='helped,moves,seed,sid,src,time,ts','Э8: запись очереди — sid,seed,time,moves,helped,src,ts');
+      mode='ok';calls.length=0;const Ex2={student:{id:'sOther',name:'Оля',grade:6,ph:'ph2'},beep(){}};
+      await R.flush(Ex2);ok(solveC().length===0&&JSON.parse(LS.getItem('vrl.einq')).length===1,'Э8: очередь отправляется только тем же учеником');
+      await R.flush(Ex);ok(solveC().length===1&&solveC()[0].b.seed===777003&&JSON.parse(LS.getItem('vrl.einq')).length===0,'Э8: при повторном входе очередь отправлена и очищена'); }
+    { /* очередь: ≤ 50, старше 24 ч выбрасывается, мусор отбрасывается */
+      const now=Date.now(),mkq=(i,ts)=>({sid:'sE8',seed:900000+i,time:30,moves:40,helped:0,src:'wall',ts});
+      const arr=[];for(let i=0;i<60;i++)arr.push(mkq(i,now-1000));arr.push(mkq(99,now-25*3600000),{sid:'x y',seed:1,ts:now},null,{sid:'sE8',seed:-1,ts:now});
+      LS.setItem('vrl.einq',JSON.stringify(arr));
+      const q=R.queue();ok(q.length===50&&q.every(x=>x.ts>now-3600000)&&q[49].seed===900059,'Э8: очередь ≤ 50, старше 24 ч и мусор отброшены');
+      LS.removeItem('vrl.einq'); }
+    VR.flags.set('einRating',false);S8.setServer('');C.sb.fetch=realFetch;
   }
   { /* эйнштейн: пауза и настройки ученика на устройстве */
     const V=VR.games,LS=C.sb.localStorage,PK='vrl.einprefs',stuKeep=E.student,pendKeep=V.pending;V._reset();

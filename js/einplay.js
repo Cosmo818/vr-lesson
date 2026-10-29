@@ -1,6 +1,6 @@
 /* einplay.js — ядро игры «Эйнштейн» отдельно от стены: состояние партии G и рисование поля, подсказок и управления в прямоугольнике rect
    (пиксели текстуры). Стена (js/einroom.js) и терминал рисуют одно и то же через VR.einplay. Логика головоломки — js/einstein.js.
-   G: g,t,helped,sec,sent,used,phase,paused,mode,hk,tid,mid,msg,showRules,rated,seedSrc. opt={prefKey, onDirty(что), state}.
+   G: g,t,helped,sec,sent,used,phase,paused,mode,hk,tid,mid,msg,showRules,rated (номер выдан сервером, решение пойдёт в зачёт),burn (помощь по выданному номеру: отправить helped:1),seedSrc ('rand'|'set'),fetching,rid. opt={prefKey, onDirty(что), state}.
    onDirty('field'|'hints'|'ctl'|'favs') — перерисовать часть; без аргумента — всё. Результат отдаётся в VR.games.finish, если он есть. */
 (function(){
 'use strict';
@@ -10,6 +10,7 @@ const fmtT=s=>{s=Math.floor(s);return Math.floor(s/60)+':'+String(s%60).padStart
 const FX=100,FY=24,CW=316,CH=232,DW=2048,DH=1445;
 const HK=[.9,1.2,1.5];/* ступени размера подсказок */
 const drawHint=E1.drawHint;
+const RT=()=>VR.einrate||null;   /* зачётная игра (js/einrate.js); нет модуля или флаг выключен — игра локальная */
 /* правила — по тексту оригинала Einstein 2.0 (res/rules_ru.txt), мышь заменена курком; ex — пример подсказки */
 const RULES=[
   {t:'Надо открыть все фишки в квадрате 6×6. В каждой строке фишки одного типа: в первой — арабские цифры, во второй — латинские буквы, в третьей — римские цифры, в четвёртой — игральные кости, в пятой — геометрические фигуры, в шестой — математические символы.'},
@@ -46,19 +47,47 @@ function create(E,opt){
 }
 /* begin===false — партия приготовлена, но не идёт: игра не включается, пока не нажато «Начать» */
 function start(E,G,seed,again,begin){
+  G.rid=(G.rid||0)+1;G.fetching=false;   /* устаревший ответ сервера на прежний запрос номера игнорируется */
+  if(!again){G.rated=false;G.burn=false;G.seedSrc=seed===undefined?'rand':'set';}   /* «Сначала» — тот же номер, зачётность сохраняется */
   const pz=again&&G.g?G.g.pz:E1.generate(seed);
   G.g=E1.newGame(pz);G.t=0;G.helped=false;G.sec=0;G.sent=false;G.used=new Set();
   G.phase=begin===false?'idle':'play';G.paused=false;G.showRules=false;
   G.msg='';dirty(G);dirty(G,'favs');
+}
+const srcOf=G=>G.view==='term'?'term':'wall';
+/* «Новая»: у вошедшего ученика вне турнира номер выдаёт сервер (G.rated=true); нет связи / 404 / гость — локальный номер, вне рейтинга */
+function fresh(E,G,begin){
+  const R=RT();
+  if(G.tid||!R||!R.enabled(E)){start(E,G,undefined,false,begin);return;}
+  if(G.fetching)return;
+  start(E,G,undefined,false,begin);   /* пока ждём ответ, показана локальная головоломка; ответ её заменит */
+  G.fetching=true;G.msg='Запрашиваю головоломку…';dirty(G,'ctl');
+  const tok=G.rid;
+  try{R.flush(E).catch(()=>{});}catch(e){}
+  R.fetchSeed(E,srcOf(G)).then(seed=>{
+    if(tok!==G.rid)return;
+    if(seed!=null){start(E,G,seed,false,begin);G.rated=true;G.seedSrc='rand';}
+    else{G.fetching=false;G.msg='';dirty(G,'ctl');}
+  }).catch(()=>{if(tok===G.rid){G.fetching=false;G.msg='';dirty(G,'ctl');}});
 }
 function setPause(G,v){G.paused=v;dirty(G);}
 function lost(E,G){
   if(G.sent)return;G.sent=true;
   try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{res:'lose',seed:G.g.pz.seed,helped:G.helped,moves:G.g.moves,tid:G.tid||null,mid:G.mid||null});}catch(e){}
 }
+/* победа при выданном номере (или после помощи по нему — тогда helped:1 сжигает номер) → один solve; без связи — в очередь vrl.einq */
+function sendSolve(E,G){
+  const R=RT();if(!R||G.tid||!(G.rated||G.burn))return;
+  const gr=G.g,rec={seed:gr.pz.seed,time:Math.round(G.t),moves:Math.max(1,gr.moves|0),helped:G.helped||G.burn?1:0,src:srcOf(G)};
+  G.rated=false;G.burn=false;
+  R.submit(E,rec).then(res=>{
+    const add=R.say(res);if(add&&G.g===gr){G.msg+=add;dirty(G,'ctl');}
+  }).catch(()=>{});
+}
 function won(E,G){
   E.fanfare();G.msg='Готово! Все фишки открыты за '+fmtT(G.t)+(G.helped?' (с помощью — в зачёт не идёт)':'');
-  if(!G.sent){G.sent=true;try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{time:Math.round(G.t),seed:G.g.pz.seed,helped:G.helped,moves:G.g.moves,tid:G.tid||null,mid:G.mid||null});}catch(e){}}
+  if(!G.sent){G.sent=true;try{if(VR.games&&VR.games.finish)VR.games.finish(E,'einstein',{time:Math.round(G.t),seed:G.g.pz.seed,helped:G.helped,moves:G.g.moves,tid:G.tid||null,mid:G.mid||null});}catch(e){}
+    sendSolve(E,G);}
   dirty(G,'ctl');dirty(G,'hints');
 }
 function click(E,G,h,c,r,e){
@@ -82,8 +111,24 @@ function tick(E,G,dt){
 }
 
 /* общие действия кнопок: терминал вызывает их так же, как панель управления на стене */
-function begin(E,G){G.phase='play';G.t=0;G.sec=0;dirty(G);E.beep(660,.08,'sine',.05);}
-function openOne(E,G){const g=G.g;if(g.status!=='play'||G.tid)return;G.helped=true;E1.hint(g);dirty(G,'field');if(g.status==='win')won(E,G);dirty(G,'ctl');}
+function go(E,G){G.phase='play';G.t=0;G.sec=0;dirty(G);E.beep(660,.08,'sine',.05);}
+/* «Начать»: если номер ещё локальный, а ученик вошёл и рейтинг включён — сначала берём номер у сервера (нет связи — играем локальным) */
+function begin(E,G){
+  if(G.fetching)return;
+  const R=RT();
+  if(!G.tid&&G.seedSrc==='rand'&&!G.rated&&R&&R.enabled(E)){
+    G.fetching=true;const tok=G.rid=(G.rid||0)+1;
+    try{R.flush(E).catch(()=>{});}catch(e){}
+    R.fetchSeed(E,srcOf(G)).then(seed=>{
+      if(tok!==G.rid)return;
+      if(seed!=null){start(E,G,seed,false,false);G.rated=true;G.seedSrc='rand';}
+      G.fetching=false;go(E,G);
+    }).catch(()=>{if(tok===G.rid){G.fetching=false;go(E,G);}});
+    return;
+  }
+  go(E,G);
+}
+function openOne(E,G){const g=G.g;if(g.status!=='play'||G.tid)return;if(G.rated){G.burn=true;G.rated=false;}G.helped=true;E1.hint(g);dirty(G,'field');if(g.status==='win')won(E,G);dirty(G,'ctl');}
 function toggleMode(E,G){G.mode=G.mode==='pick'?'excl':'pick';savePref(E,{mode:G.mode});dirty(G,'ctl');}
 function toggleRules(G){G.showRules=!G.showRules;dirty(G,'hints');dirty(G,'ctl');}
 
@@ -98,6 +143,8 @@ function rulesDraw(c,p,k){
     else y=p.text(r.t,30,y,{size:f(38),color:'#f1f5f9',maxW:p.W-60,lh:f(46)})+f(18);
   }
 }
+/* пометка о зачёте: только когда рейтинг включён (флаг школы или привязанное устройство) */
+function note(E,G){const R=RT();if(G.tid||!R||!R.visible(E))return '';return G.rated?' · в рейтинг':(G.burn?' · помощь, в зачёт не идёт':' · вне рейтинга');}
 function drawField(E,G,c,p0,rect){
   within(p0,c,rect,DW,DH,p=>{
   if(G.paused&&G.phase==='play')return pauseDraw(c,p,150);
@@ -179,21 +226,21 @@ function drawCtl(E,G,c,p0,rect,layout){
   p.text(st,X,80,{size:28,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#cbd5e1',maxW:W,maxY:canPause?154:200});
   const bw=(W-14)/2,arena=!!(VR.ROOMS&&VR.ROOMS.arena);
   if(G.phase==='idle'){
-    p.button(X,206,W,64,'▶ Начать',()=>{G.phase='play';G.t=0;G.sec=0;dirty(G);E.beep(660,.08,'sine',.05);},{size:34,bg:'#15803d'});
-    if(!G.tid)p.button(X,284,W,64,'Другая головоломка',()=>start(E,G,undefined,false,false),{size:28,bg:'#b45309'});
+    p.button(X,206,W,64,'▶ Начать',()=>begin(E,G),{size:34,bg:'#15803d',disabled:!!G.fetching});
+    if(!G.tid)p.button(X,284,W,64,'Другая головоломка',()=>fresh(E,G,false),{size:28,bg:'#b45309',disabled:!!G.fetching});
     p.button(X,440,bw,64,'Правила',()=>{},{size:26,bg:'#334155',disabled:true});
     if(arena)p.button(X+bw+14,440,bw,64,'В зал',()=>E.goRoom('arena'),{size:26,bg:'#475569'});
-    p.text('Головоломка № '+g.pz.seed,X,520,{size:22,color:'#64748b',maxW:W});return;
+    p.text('Головоломка № '+g.pz.seed+note(E,G),X,520,{size:22,color:'#64748b',maxW:W});return;
   }
   if(canPause)p.button(X,156,W,46,G.paused?'▶ Продолжить':'⏸ Пауза',()=>setPause(G,!G.paused),{size:26,bg:G.paused?'#15803d':'#334155'});
   p.button(X,206,W,64,'Курок: '+(G.mode==='pick'?'ВЫБРАТЬ фишку':'УБРАТЬ фишку'),()=>{G.mode=G.mode==='pick'?'excl':'pick';savePref(E,{mode:G.mode});dirty(G,'ctl');},{size:30,bg:G.mode==='pick'?'#166534':'#991b1b'});
   p.button(X,284,bw,64,'Сначала',()=>start(E,G,0,true),{size:30,bg:'#475569',disabled:!!G.tid});
-  p.button(X+bw+14,284,bw,64,'Новая',()=>start(E,G),{size:30,bg:'#b45309',disabled:!!G.tid});
-  p.button(X,362,W,64,'Открыть одну клетку (без зачёта)',()=>{if(g.status!=='play'||G.tid)return;G.helped=true;E1.hint(g);dirty(G,'field');if(g.status==='win')won(E,G);dirty(G,'ctl');},{size:26,bg:'#1e293b',disabled:g.status!=='play'||!!G.tid||G.paused});
+  p.button(X+bw+14,284,bw,64,'Новая',()=>fresh(E,G),{size:30,bg:'#b45309',disabled:!!G.tid||!!G.fetching});
+  p.button(X,362,W,64,'Открыть одну клетку (без зачёта)',()=>openOne(E,G),{size:26,bg:'#1e293b',disabled:g.status!=='play'||!!G.tid||G.paused});
   p.button(X,440,arena?bw:W,64,G.showRules?'Подсказки':'Правила',()=>{G.showRules=!G.showRules;dirty(G,'hints');dirty(G,'ctl');},{size:26,bg:'#334155'});
   if(arena)p.button(X+bw+14,440,bw,64,'В зал',()=>E.goRoom('arena'),{size:26,bg:'#475569'});
-  p.text((G.tid?'Турнирная партия. ':'')+'Хват во время курка — наоборот. Головоломка № '+g.pz.seed,X,520,{size:22,color:'#64748b',maxW:W});
+  p.text((G.tid?'Турнирная партия. ':'')+'Хват во время курка — наоборот. Головоломка № '+g.pz.seed+note(E,G),X,520,{size:22,color:'#64748b',maxW:W});
   });
 }
-VR.einplay={create,start,click,tick,drawField,drawHints,drawCtl,setPause,begin,openOne,toggleMode,toggleRules,savePref,fmtT,HK};
+VR.einplay={create,start,fresh,note,click,tick,drawField,drawHints,drawCtl,setPause,begin,openOne,toggleMode,toggleRules,savePref,fmtT,HK};
 })();

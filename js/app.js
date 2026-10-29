@@ -5,6 +5,7 @@ const VR=window.VR,D=VR.DATA,S=VR.Store;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let E=null,xrOk=false,chosen=null,sess=null,lastStudent=null;
+let einPh='';   /* хэш кода ученика для зачётной игры «Эйнштейн»: только в памяти, при выходе обнуляется */
 let netLive=null,netPin='',netCtx=null,netBound=false;  /* сеть: идущий урок класса, код ученика (только в памяти), параметры повторного билета */
 
 function showSection(id){for(const s of['pick','ready','fb'])$(s).hidden=s!==id;$('fbOpen').hidden=id==='fb';}
@@ -39,7 +40,7 @@ async function tryEnter(e){
   $('enterBtn').disabled=false;
   if(!ok){fails++;$('selPin').value='';if(fails>=5){lockUntil=Date.now()+30000;fails=0;}$('pickErr').textContent=s&&s.hasPin&&!s.pinHash?'На этом устройстве вход в этот класс закрыт — войди через урок учителя.':'Неверный номер или пароль. Если забыл — подойди к учителю.';return;}
   fails=0;$('selPin').value='';$('selNum').value='';try{localStorage.setItem(LKEY,$('selClass').value);}catch(err){}
-  netPin=pinTyped;choose(s);
+  netPin=pinTyped;einPh=await S.pinHash(s.id,pinTyped);choose(s);
 }
 let openPick=null;
 function choose(st){
@@ -159,7 +160,9 @@ function startSession(){
     try{sessionStorage.setItem('vrl.tclass',cid||'');}catch(e){}
   }
   const st=chosen.id?S.student(chosen.id):chosen;
-  E.student={id:st.id||null,name:st.name,grade:st.grade};if(st.role==='teacher'){E.student.role='teacher';E.student.classId=st.classId||null;E.student.className=st.className||'';}
+  E.student={id:st.id||null,name:st.name,grade:st.grade};if(st.id&&einPh&&!st.role)E.student.ph=einPh;   /* ph — зачётная игра (VR.einrate), на диск не пишется */
+  try{if(VR.einrate)VR.einrate.flush(E);}catch(e){}
+  if(st.role==='teacher'){E.student.role='teacher';E.student.classId=st.classId||null;E.student.className=st.className||'';}
   E.resetGuest();
   const set=S.settings();
   sess={t0:performance.now(),limit:st.role==='teacher'?Infinity:Math.max(1,set.minutes)*60,   /* у учителя таймера нет */
@@ -191,7 +194,7 @@ function endSession(){
   else msg='Сеанс гостя завершён.';
   try{sessionStorage.removeItem('vrl.editor');sessionStorage.removeItem('vrl.laser');}catch(e){}
   teacherOut();   /* шлем общий: учётка, введённая на экране шлема, живёт только до конца сеанса */
-  lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);$('deskPanel').hidden=true;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
+  einPh='';lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);$('deskPanel').hidden=true;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
   $('summary').textContent=msg;$('summary').hidden=false;
@@ -383,7 +386,7 @@ function bind(){
     if(!ok&&!(S.account.token()||S.server())){location.href='teacher.html?vr=1';return;}choose({id:null,name:'Учитель',grade:5,role:'teacher'});};
   $('teachBtn').onclick=teacherIn;
   VR.teacherIn=teacherIn;
-  $('back').onclick=()=>{chosen=null;netPin='';netLive=null;$('netGo').hidden=true;$('tNet').hidden=true;showSection('pick');};
+  $('back').onclick=()=>{chosen=null;netPin='';einPh='';netLive=null;$('netGo').hidden=true;$('tNet').hidden=true;showSection('pick');};
   $('netGo').onclick=joinLive;
   $('tnForm').onsubmit=teacherLogin;
   $('tnOut').onclick=()=>{teacherOut(true).then(()=>teacherNet(chosen));};
