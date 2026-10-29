@@ -30,7 +30,7 @@ try:
     t(s.get('classId')=='k9b' and s.get('grade')==9 and s.get('className')=='9Б','урок с классом 9Б: класс и параллель в сессии (%s)'%s)
     # планшет учителя: вкладка «Класс» со статистикой выбранного класса
     pg.evaluate("VR.app.E.toggleMenu(true)");pg.wait_for_timeout(400)
-    lab=pg.evaluate("(()=>{const m=VR.app.E.menu;const b=m.btns.find(b=>b.x===218&&b.y===150);if(!b)return null;b.fn();m.dirty=true;return true;})()");pg.wait_for_timeout(500)
+    lab=pg.evaluate("(()=>{const m=VR.app.E.menu;const b=m.btns.find(b=>b.y===150&&String(b.label).indexOf('Класс')===0);if(!b)return null;b.fn();m.dirty=true;return true;})()");pg.wait_for_timeout(500)
     txt=pg.evaluate("(()=>{const m=VR.app.E.menu,out=[];const c=m.ctx,f=c.fillText.bind(c);c.fillText=(t,...a)=>{out.push(String(t));return f(t,...a);};m.btns=[];m.over=[];VR.app.E.hooks.menuDraw(c,m);c.fillText=f;return out.join('|');})()")
     t(lab and 'Петров Пётр' in txt and 'Смирнова Анна' in txt and 'Чужой Ученик' not in txt and '9Б класс' in txt,'планшет учителя: вкладка «Класс» — ученики выбранного класса (9Б), чужих нет')
     # редактор своей комнаты в шлеме: автор = логин учителя

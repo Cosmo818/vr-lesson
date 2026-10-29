@@ -121,7 +121,7 @@ async function joinLead(sid,b){
   const r=await S.sessionTicket(sid);
   if(b)b.disabled=false;
   if(r.status!==200||!r.data||!r.data.ticket){$('tnErr').textContent=r.status===403?'Этот урок тебе недоступен.':'Урок сейчас недоступен. Можно начать без него.';if(r.status===401)teacherNet(chosen);return;}
-  netCtx={sid,id:'',pin:''};
+  netCtx={sid,id:'',pin:'',role:r.data.role||''};
   netStart(r.data);
   await go();
 }
@@ -130,7 +130,7 @@ function netStart(d){
   try{
     if(!netBound){netBound=true;P.attach(E,N);if(VR.netsafe)VR.netsafe.attach(E,N);if(VR.netlead)VR.netlead.attach(E,N);
       N.on('status',()=>{if(E.hud)E.hud.dirty=true;});
-      N.on('needTicket',async()=>{if(!netCtx)return;const r=await S.sessionTicket(netCtx.sid,netCtx.id,netCtx.pin);if(r.status===200&&r.data&&r.data.ticket)N.useTicket(r.data.ticket,r.data.hubs);});}
+      N.on('needTicket',async()=>{if(!netCtx)return;const r=await S.sessionTicket(netCtx.sid,netCtx.id,netCtx.pin);if(r.status===200&&r.data&&r.data.ticket){if(!netCtx.id)netCtx.role=r.data.role||netCtx.role;N.useTicket(r.data.ticket,r.data.hubs);}});}
     N.connect({hubs:d.hubs,ticket:d.ticket,caps:{quest1:P.detectQuest1(E)}}).catch(()=>{});
     return true;
   }catch(e){return false;}
@@ -253,6 +253,9 @@ function hooks(){
   /* ученик с учёткой (есть id) учителем не бывает, даже если в этой вкладке остался флаг учителя (вошёл ученик после «Назад») */
   E.hooks.isTeacher=()=>{try{if(E.student&&E.student.id)return false;return +sessionStorage.getItem('vrl.laser')>Date.now()||VR.custom.teacherOk()||(E.student&&E.student.role==='teacher');}catch(e){return false;}};
   let menuTab='main';
+  /* вкладка «Урок» учителя: lsSub — main|kick|ban; lsCode — код для дома (показывается один раз, в хранилище и логи не пишется) */
+  let lsSub='main',lsKick=-1,lsKickT=0,lsCloseT=0,lsBan=[],lsCode='',lsMsg='',lsRemote=false,lsBusy=false;
+  {const tm=E.toggleMenu;if(typeof tm==='function')E.toggleMenu=function(){lsCode='';return tm.apply(this,arguments);};}   /* код для дома виден, пока меню открыто, и стирается при закрытии меню */
   /* указка ученика в сетевом уроке (Н10): учитель не выключил указки, нет «внимания» */
   E.hooks.laserOk=()=>!!(VR.netlead&&VR.netlead.pointersOk());
   const netLive=()=>{try{return !!(VR.netlead&&VR.net&&VR.net.status().state!=='off');}catch(e){return false;}};
@@ -296,6 +299,88 @@ function hooks(){
       p.text(ratio===null?'—':Math.round(ratio*100)+'%',X+cw-12,Y+8,{size:26,align:'right',maxW:120,color:'#fde68a'});});
     p.text('Зелёный — сдано (60% и выше). Баллы: лучший тест × 50 + 2 за открытие.',36,872,{size:24,color:'#94a3b8',maxW:W-72});
   };
+  /* вкладка «Урок» (Т7): ведущему — кнопки управления классом, приглашение класса прямо из VR; роль a (помощник) кнопок не видит */
+  const lsRole=()=>netCtx&&!netCtx.id?netCtx.role||'':'';
+  const lsDirty=()=>{if(E.menu)E.menu.dirty=true;};
+  const lsReset=()=>{lsSub='main';lsKick=-1;lsCloseT=0;lsBan=[];lsMsg='';lsBusy=false;};
+  async function lsOpen(kc){
+    if(lsBusy)return;lsBusy=true;lsMsg='Открываю урок…';lsDirty();
+    const r=await S.sessionAdmin('open',{class_id:kc.id,room:E.roomId||'hall',settings:{mode:'seat',remote:lsRemote}});
+    if(r.status!==200||!r.data||!r.data.id){lsBusy=false;lsMsg=r.status===409?'У этого класса урок уже идёт: выйди и войди через «Урок идёт — войти ведущим».':(r.data&&r.data.error)||'Не удалось открыть урок.';lsDirty();return;}
+    lsCode=r.data.code||'';
+    const sid=r.data.id,t=await S.sessionTicket(sid);
+    lsBusy=false;
+    if(t.status!==200||!t.data||!t.data.ticket){lsMsg='Урок открыт, но войти не вышло. Закрой его в кабинете или войди через экран выбора.';lsDirty();return;}
+    lsMsg='';netCtx={sid,id:'',pin:'',role:t.data.role||''};netStart(t.data);lsDirty();
+  }
+  async function lsLoadBan(){
+    const k=E.student&&E.student.classId;if(!netCtx||!k)return;
+    const r=await S.sessionAdmin('list',{class_id:k});
+    const o=r.status===200&&r.data&&(r.data.open||[]).find(x=>x.id===netCtx.sid);
+    lsBan=o&&Array.isArray(o.banned_ids)?o.banned_ids:[];lsDirty();
+  }
+  async function lsClose(){
+    const sid=netCtx&&netCtx.sid;if(!sid||lsBusy)return;lsBusy=true;
+    const r=await S.sessionAdmin('close',{id:sid});lsBusy=false;
+    if(r.status!==200){lsMsg=(r.data&&r.data.error)||'Не удалось закрыть урок.';lsDirty();return;}
+    netStop();lsReset();lsMsg='Урок закрыт.';lsDirty();
+  }
+  async function lsUnkick(u){
+    if(!netCtx||lsBusy)return;lsBusy=true;
+    const r=await S.sessionAdmin('unkick',{id:netCtx.sid,uid:u});lsBusy=false;
+    if(r.status===200)lsBan=lsBan.filter(x=>x!==u);else lsMsg=(r.data&&r.data.error)||'Не получилось вернуть.';lsDirty();
+  }
+  const lsPeers=()=>{const NP=VR.netplay,o=[];try{for(const sl of NP.peerIds()){const r=NP.rosterOf(sl);if(r&&r.role==='s')o.push({slot:sl,name:String(r.name||'Ученик')});}}catch(e){}return o;};
+  const lessonTab=(p,W,kc)=>{
+    const NL=VR.netlead,role=lsRole(),bw=(W-90)/2,tx=(t,y,o)=>p.text(t,36,y,Object.assign({size:26,color:'#94a3b8',maxW:W-72},o||{}));
+    if(!netCtx||netCtx.id){
+      if(lsCode)lsCode='';
+      if(!S.server()||!VR.net){tx('Нет связи с сервером школы: открыть урок отсюда нельзя.',260);return;}
+      if(!S.account.token()){tx('Чтобы открыть урок прямо из VR, войди в учётку: выйди на экран выбора и нажми «Я учитель».',260,{size:28,color:'#b8c7ea'});return;}
+      if(!kc){tx('Класс не выбран. Выбери его при входе в VR («Я учитель» → «Класс, с которым урок»).',260,{size:28,color:'#b8c7ea'});return;}
+      p.button(36,260,W-72,100,'Открыть урок для '+S.className(kc)+' здесь',()=>lsOpen(kc),{bg:'#15803d',size:34,disabled:lsBusy});
+      p.button(36,376,W-72,76,lsRemote?'Вход из дома по коду: вкл':'Вход из дома по коду: выкл',()=>{lsRemote=!lsRemote;lsDirty();},{bg:lsRemote?'#0f766e':'#334155',size:28});
+      tx('Ученики на шлемах школы увидят кнопку «Урок идёт — войти». Комната урока — та, где ты сейчас.',470,{size:26});
+      if(lsMsg)tx(lsMsg,600,{size:28,color:'#fde68a'});
+      return;
+    }
+    if(role!=='t'){tx('Ты в этом уроке помощник: кнопки ведущего здесь недоступны.',260,{size:30,color:'#b8c7ea'});return;}
+    const st=NL.cmdState(),n=lsPeers().length;
+    p.text('Идёт урок · учеников на связи: '+n,36,258,{size:30,bold:true,maxW:W-72});
+    if(lsSub==='kick'){
+      p.button(36,306,300,70,'← Назад',()=>{lsSub='main';lsKick=-1;lsDirty();},{bg:'#334155',size:30});
+      tx('Нажми на ученика дважды, чтобы убрать его с урока.',390,{size:26});
+      const L=lsPeers().slice(0,16);
+      if(!L.length)tx('Учеников на связи нет.',440,{size:28});
+      L.forEach((x,i)=>{const X=36+(i%2)*(bw+18),Y=440+((i/2)|0)*72,arm=lsKick===x.slot&&performance.now()-lsKickT<4000;
+        p.button(X,Y,bw,62,arm?'Ещё раз: '+x.name:x.name,()=>{
+          if(arm){if(NL.command('kick',x.slot)){lsKick=-1;lsMsg='Убран: '+x.name;lsSub='main';setTimeout(lsLoadBan,1500);}else lsMsg='Нет связи с уроком.';}
+          else{lsKick=x.slot;lsKickT=performance.now();}
+          lsDirty();},{bg:arm?'#b91c1c':'#1e293b',size:26});});
+      return;
+    }
+    if(lsSub==='ban'){
+      p.button(36,306,300,70,'← Назад',()=>{lsSub='main';lsDirty();},{bg:'#334155',size:30});
+      tx(lsBan.length?'Убраны с урока. «Вернуть» — ученик сможет войти снова (hub узнаёт в течение минуты).':'Никого не убирали.',390,{size:26});
+      lsBan.slice(0,10).forEach((u,i)=>{const s0=S.student(u),Y=470+i*76;
+        p.text(s0?s0.name:u,36,Y+16,{size:28,maxW:W-340,color:'#e8efff'});
+        p.button(W-36-240,Y,240,62,'Вернуть',()=>lsUnkick(u),{bg:'#0f766e',size:28,disabled:lsBusy});});
+      if(lsMsg)tx(lsMsg,940,{size:24,color:'#fde68a'});
+      return;
+    }
+    const B=NL.buttons(role),lab={freeze:st.freeze?'Снять «Внимание»':'Внимание!',follow:st.follow?'Не следовать':'За мной'};
+    const act={gather:()=>NL.command('gather'),follow:()=>NL.command('follow'),freeze:()=>NL.command('freeze'),hall:()=>NL.command('hall'),room:()=>NL.command('room',E.roomId||'hall'),kick:()=>{lsSub='kick';lsKick=-1;return true;}};
+    const col={freeze:st.freeze?'#a16207':'#b45309',follow:st.follow?'#1d4ed8':'#0f766e',kick:'#7f1d1d'};
+    B.forEach((b,i)=>p.button(36+(i%2)*(bw+18),306+((i/2)|0)*100,bw,86,lab[b.id]||b.label,()=>{const okk=act[b.id]();if(okk===false)lsMsg='Нет связи с уроком.';else lsMsg='';lsDirty();},{bg:col[b.id]||'#1d4ed8',size:b.id==='room'?26:32}));
+    p.button(36,606,bw,76,'Убраны ('+lsBan.length+')',()=>{lsSub='ban';lsLoadBan();lsDirty();},{bg:'#334155',size:28});
+    const armC=performance.now()-lsCloseT<4000;
+    p.button(54+bw,606,bw,76,armC?'Точно закрыть? Ещё раз':'Закрыть урок',()=>{if(armC){lsCloseT=0;lsClose();}else lsCloseT=performance.now();lsDirty();},{bg:armC?'#b91c1c':'#7f1d1d',size:28,disabled:lsBusy});
+    if(lsCode){
+      tx('Код для входа из дома (запиши — больше не покажу):',712,{size:26,color:'#b8c7ea'});
+      p.text(lsCode,W/2,760,{size:96,bold:true,align:'center',color:'#fde68a',maxW:W-72});
+    }
+    if(lsMsg)tx(lsMsg,900,{size:26,color:'#fde68a'});
+  };
   /* вкладка «Калибровка» (Н9, PLAN-network.md §7.2): выбор станции → калибровка двумя контроллерами; «Я на месте» — своё место для режимов seat/stand */
   const calTab=(p,W,NS)=>{
     const sts=NS.stations(),bw=(W-90)/2;
@@ -308,12 +393,13 @@ function hooks(){
     p.text('Режим урока: '+({seat:'сижу',stand:'стою на месте',walk:'хожу'}[NS.mode()]||NS.mode()),36,y+110,{size:28,color:'#94a3b8'});
   };
   E.hooks.menuDraw=(c,p)=>{
+    if(menuTab!=='lesson')lsCode='';
     const st=E.student||{name:'Гость'},W=p.W,best=st.id?S.best(st.id):null,pts=st.id?S.points(st.id):null,l=left();
     p.text(st.name,36,24,{size:52,bold:true,maxW:W-72});
     p.text((st.className?st.className+' класс · ':st.grade?st.grade+' класс · ':'')+(pts?pts.total+' баллов · ':'')+(!isFinite(l)?'без ограничения времени':l>0?'осталось '+mmss(l):'время вышло'),36,92,{size:32,color:l>0?'#b8c7ea':'#fca5a5'});
     const tch=E.isTeacher(),kc=tch&&st.classId?S.klass(st.classId):null;
     const me=!tch&&st.id;
-    p.button(36,150,tch?170:me?(netLive()?(W-108)/3:(W-90)/2):W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
+    p.button(36,150,tch?120:me?(netLive()?(W-108)/3:(W-90)/2):W-72,86,'Холл',()=>{menuTab='main';E.toggleMenu(false);E.goRoom('hall');},{bg:'#334155',size:36,active:E.roomId==='hall',activeBg:'#1d4ed8'});
     /* безопасность (Н9): калибровка по меткам и «Я на месте» — только в шлеме и в сетевом уроке */
     const NS=VR.netsafe,calOk=!!(NS&&E.session&&VR.net&&VR.net.status().state!=='off');
     if(calOk){
@@ -331,17 +417,19 @@ function hooks(){
     }
     if(tch){
       /* планшет учителя: вкладка «Класс» — ученики выбранного при входе класса и их статистика */
-      p.button(218,150,190,86,menuTab==='class'?'← Меню':(kc?'Класс '+S.className(kc):'Класс'),()=>{menuTab=menuTab==='class'?'main':'class';E.menu.dirty=true;},{bg:menuTab==='class'?'#1d4ed8':'#0f766e',size:30});
-      p.button(W-36-444,150,220,86,E.laser.on?'Указка: выкл':'Указка: вкл',()=>E.toggleLaser(),{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:28});
+      p.button(164,150,176,86,menuTab==='class'?'← Меню':(kc?'Класс '+S.className(kc):'Класс'),()=>{menuTab=menuTab==='class'?'main':'class';E.menu.dirty=true;},{bg:menuTab==='class'?'#1d4ed8':'#0f766e',size:28});
+      p.button(352,150,150,86,menuTab==='lesson'?'← Меню':(netCtx&&!netCtx.id?'Урок ●':'Урок'),()=>{menuTab=menuTab==='lesson'?'main':'lesson';if(menuTab==='lesson')lsMsg='';E.menu.dirty=true;},{bg:menuTab==='lesson'?'#1d4ed8':'#7c3aed',size:28});
+      p.button(514,150,170,86,E.laser.on?'Указка: выкл':'Указка: вкл',()=>E.toggleLaser(),{bg:E.laser.on?'#b91c1c':'#7f1d1d',size:24});
       /* цвет указки: плитка нужного цвета; «радуга» — с переливом */
-      const lc=E.LASER_COLORS[E.laser.ci],cx=W-36-212,hov=p.area(cx,150,212,86,()=>E.nextLaserColor());
+      const lc=E.LASER_COLORS[E.laser.ci],cx=696,hov=p.area(cx,150,168,86,()=>E.nextLaserColor());
       const g=p.ctx,rgb=c=>'rgb('+c.map(v=>Math.round(v*255)).join(',')+')';
       let fill;if(lc.rainbow){fill=g.createLinearGradient(cx,0,cx+256,0);for(let k=0;k<=6;k++)fill.addColorStop(k/6,rgb(E.hsv(((k/6*.9+E.t*.3)%1),.9,1)));}else fill=rgb(lc.c);
-      g.fillStyle=fill;g.beginPath();g.roundRect?g.roundRect(cx,150,212,86,14):g.rect(cx,150,212,86);g.fill();
+      g.fillStyle=fill;g.beginPath();g.roundRect?g.roundRect(cx,150,168,86,14):g.rect(cx,150,168,86);g.fill();
       if(hov){g.strokeStyle='#fff';g.lineWidth=5;g.stroke();}
-      g.font='bold 26px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle=lc.rainbow||lc.c[0]+lc.c[1]+lc.c[2]<1.6?'#0b1020':'#0b1020';g.fillText('Цвет: '+lc.n,cx+106,193);g.textAlign='left';g.textBaseline='top';
+      g.font='bold 22px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle='#0b1020';g.fillText('Цвет: '+lc.n,cx+84,193);g.textAlign='left';g.textBaseline='top';
     }
     if(tch&&menuTab==='class'){classTab(p,W,kc);return;}
+    if(tch&&menuTab==='lesson'){lessonTab(p,W,kc);return;}
     const bw=(W-90)/2;
     VR.openRooms(st.grade||5).forEach((k,i)=>{
       const sub=D.subjects[k],b=best&&best[k].best!==null?' ✓':'';

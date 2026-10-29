@@ -61,6 +61,7 @@ const normDir=d=>{const n=Math.hypot(d[0],d[1],d[2]);return n<1e-9?null:[d[0]/n,
 
 /* ---------- состояние ---------- */
 const env={now:()=>(typeof performance!=='undefined'?performance.now():Date.now()),wall:()=>Date.now()};
+const CMD={fz:false,fw:false};                                                         /* что ведущий включил сам: «внимание», «за мной» (для подписей кнопок) */
 const S={on:false,E:null,net:null,hs:[],frozen:false,pointers:true,follow:null,go:null,points:{},ptT:0,ptOn:false,reactT:-1e9,ftT:0,drawOn:false,lastRoom:{}};
 
 const lead=slot=>{try{const r=VR.netplay&&VR.netplay.rosterOf(slot);return!!r&&r.role==='t';}catch(e){return false;}};
@@ -97,7 +98,7 @@ function toastFreeze(){try{S.E.toast('Учитель просит внимани
 function onSess(se){
   if(!se||typeof se!=='object')return;
   S.pointers=se.pointers!==false;
-  if(typeof se.freeze==='boolean'&&se.freeze!==S.frozen)setFreeze(se.freeze);
+  if(typeof se.freeze==='boolean'){CMD.fz=se.freeze;if(se.freeze!==S.frozen)setFreeze(se.freeze);}
 }
 function gather(m){
   const E=S.E,NP=VR.netplay;if(!E||!NP)return;
@@ -157,7 +158,7 @@ function onRoster(m){
   else S.lastRoom[m.slot]=rm;
 }
 function onClosed(c){
-  S.points={};S.follow=null;S.go=null;
+  S.points={};S.follow=null;S.go=null;CMD.fz=false;CMD.fw=false;
   if(S.frozen){S.frozen=false;if(S.E)S.E.frozen=false;}
   if(c&&c.code===4012&&S.E)try{S.E.toast('Учитель убрал тебя с урока','#fca5a5');}catch(e){}
 }
@@ -201,7 +202,25 @@ function attach(E,net){
 function detach(){
   if(S.net)for(const[t,f]of S.hs)try{S.net.off(t,f);}catch(e){}
   if(S.E)S.E.frozen=false;
-  S.hs=[];S.on=false;S.net=null;S.frozen=false;S.follow=null;S.go=null;S.points={};S.ptOn=false;
+  S.hs=[];S.on=false;S.net=null;S.frozen=false;S.follow=null;S.go=null;S.points={};S.ptOn=false;CMD.fz=false;CMD.fw=false;
+}
+/* кнопки ведущего на планшете: только роль t (роль a — помощник/предметник в чужом уроке — кнопок не получает; права всё равно проверяет hub) */
+const BUTTONS=[{id:'gather',label:'Все ко мне'},{id:'follow',label:'За мной'},{id:'freeze',label:'Внимание!'},{id:'hall',label:'Все в холл'},{id:'room',label:'Позвать в мою комнату'},{id:'kick',label:'Убрать'}];
+const buttons=role=>role==='t'?BUTTONS.map(b=>Object.assign({},b)):[];
+function sendEv(o){
+  const net=S.net;
+  try{if(!S.on||!net||net.status().state!=='on')return false;return net.send(Object.assign({t:'ev'},o))!==false;}catch(e){return false;}
+}
+/* команда ведущего: ровно одно сообщение ev. gather — без id (сбор вокруг позы ведущего); follow/freeze — переключатели; room — id комнаты; kick — slot ученика.
+   → true, если ушло */
+function command(k,arg){
+  if(k==='gather')return sendEv({k:'gather'});
+  if(k==='hall')return sendEv({k:'hall'});
+  if(k==='room')return typeof arg==='string'&&arg?sendEv({k:'room',id:arg}):false;
+  if(k==='kick')return typeof arg==='number'&&arg>=0?sendEv({k:'kick',slot:arg}):false;
+  if(k==='follow'){const on=!CMD.fw;if(!sendEv({k:'follow',on}))return false;CMD.fw=on;return true;}
+  if(k==='freeze'){const on=!CMD.fz;if(!sendEv({k:'freeze',on}))return false;CMD.fz=on;return true;}
+  return false;
 }
 /* реакция: код 0..11; не чаще раза в 2 с и не во время «внимания» → true, если ушла */
 function react(e){
@@ -214,7 +233,7 @@ function react(e){
 /* указка ученика разрешена: урок идёт, учитель не выключил указки, нет «внимания» */
 function pointersOk(){try{return S.on&&!!S.net&&S.net.status().state!=='off'&&S.pointers&&!S.frozen;}catch(e){return false;}}
 
-VR.netlead={attach,detach,tick,react,pointersOk,EMOJI,
+VR.netlead={attach,detach,tick,react,pointersOk,EMOJI,buttons,command,cmdState:()=>({freeze:CMD.fz,follow:CMD.fw}),
   frozen:()=>S.frozen,following:()=>S.follow!==null,pending:()=>S.go?Object.assign({},S.go):null,points:()=>Object.assign({},S.points),
   _env:env,_state:S,_on:{ev:onEv,sess:onSess,roster:onRoster,closed:onClosed},
   _pure:{wrapPi,yawOfQuat,yawTo,fanOrder,gatherSpots,pickSpot,studentIndex,boardCenter,rigYawFor,beamLen,K:{R0,RING,GAP,GO_MS,REACT_MS}}};

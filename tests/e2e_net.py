@@ -282,6 +282,141 @@ try:
         ok(ids3b == [b['id']], 'Т6: после перезагрузки вкладки токен жив, список без повторного логина (%s)' % ids3b)
         r3b = enter(h3)
         ok(r3b['st'] == 'on' and r3b['r'] == 't', 'Т6: предметник в уроке, который открыл сам, — роль t (%s)' % r3b)
+        # Т7: учитель в VR сам открывает урок с планшета, два ученика входят, кнопки ведущего
+        for pg, *_ in pages:
+            pg.context.close()
+        h3.evaluate("VR.net.close('end')")
+        st, lst = adm(tok, 'session.list', {'class_id': 'cA1'})
+        for x in lst.get('open') or []:
+            adm(tok, 'session.close', {'id': x['id']})
+        h7 = headset('t.net')
+        ok(lesson_login(h7, 't.net') == [], 'Т7: открытых уроков нет — список пуст')
+        if h7.is_visible('#tClass'):
+            h7.select_option('#tClass', 'cA1')
+        h7.click('#go'); h7.wait_for_timeout(1200)
+        TAB = """()=>{window.__tab=(label)=>{const E=VR.app.E,m=E.menu;E.paintPanel(m);const b=m.btns.find(x=>String(x.label).indexOf(label)===0);if(!b)return {ok:false,over:m.over.slice(),labels:m.btns.map(x=>x.label)};b.fn();E.paintPanel(m);return {ok:true,over:m.over.slice()};};
+          window.__labels=()=>{const m=VR.app.E.menu;VR.app.E.paintPanel(m);return {labels:m.btns.map(x=>String(x.label)),over:m.over.slice()};};
+          window.__cap=null;const sa=VR.Store.sessionAdmin.bind(VR.Store);VR.Store.sessionAdmin=async(a,b)=>{const r=await sa(a,b);if(a==='open'&&r&&r.data&&r.data.code)window.__cap=r.data.code;return r;};}"""
+        h7.evaluate(TAB)
+        r = h7.evaluate("window.__tab('Урок')")
+        ok(r['ok'] and not r['over'], 'Т7: у учителя в VR на планшете есть вкладка «Урок», рендер без выхода за край (%s)' % r)
+        lb = h7.evaluate("window.__labels()")
+        ok(any(l.startswith('Открыть урок для') for l in lb['labels']) and not lb['over'], 'Т7: урока нет — предлагается «Открыть урок для … здесь» (%s)' % lb['labels'])
+        h7.evaluate("window.__tab('Вход из дома')")
+        h7.evaluate("window.__tab('Открыть урок для')")
+        try:
+            h7.wait_for_function("VR.net.status().state==='on'", timeout=20000)
+        except Exception:
+            pass
+        info = h7.evaluate("({st:VR.net.status().state,r:window.__tk&&window.__tk.r,sid:window.__tk&&window.__tk.sid,code:window.__cap})")
+        ok(info['st'] == 'on' and info['r'] == 't', 'Т7: урок открыт из VR, учитель вошёл ведущим, роль t (%s)' % {k: v for k, v in info.items() if k != 'code'})
+        ok(info['code'] and len(info['code']) >= 4, 'Т7: «Вход из дома» — сервер выдал код (%d зн.)' % len(info['code'] or ''))
+        dump = h7.evaluate("JSON.stringify([Object.entries(localStorage),Object.entries(sessionStorage)])")
+        ok(info['code'] and info['code'] not in dump, 'Т7: код для дома не попал в localStorage/sessionStorage')
+        st, lst = adm(tok, 'session.list', {'class_id': 'cA1'})
+        o7 = (lst.get('open') or [{}])[0]
+        ok(o7.get('id') == info['sid'] and o7.get('remote') is True and o7.get('room') == 'hall', 'Т7: на сервере открыт урок класса А (комната hall, вход из дома)')
+        os.makedirs(os.path.join(ROOT, 'shots'), exist_ok=True)
+        lb = h7.evaluate("window.__labels()")
+        ok(all(x in lb['labels'] for x in ('Все ко мне', 'За мной', 'Внимание!', 'Все в холл', 'Позвать в мою комнату', 'Убрать')) and not lb['over'], 'Т7: кнопки ведущего на месте, p.over пуст (%s)' % lb['over'])
+        import base64
+        png = h7.evaluate("(()=>{const E=VR.app.E;E.paintPanel(E.menu);return E.menu.cv.toDataURL()})()")
+        open(os.path.join(ROOT, 'shots', 'tablet_lesson.png'), 'wb').write(base64.b64decode(png.split(',')[1]))
+        # ученики входят в идущий урок
+        spg = []
+        for sid, name, pin in (('st1', 'Иван П.', '1111'), ('st2', 'Мария С.', '2222')):
+            pg = br.new_context(service_workers='block', viewport={'width': 1000, 'height': 650}).new_page()
+            pg.on('pageerror', lambda e, n=sid: errs.append('T7 ' + n + ': ' + str(e)))
+            pg.goto(WEB + '/index.html'); pg.wait_for_timeout(600)
+            pg.evaluate("""([url,key,studs])=>{const n=Date.now();localStorage.setItem('vrlesson.server',JSON.stringify({url,key}));
+              localStorage.setItem('vrlesson.v1',JSON.stringify({v:5,classes:[{id:'cA1',grade:5,letter:'А',created:n,updated:n}],students:studs,results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{}}));}""",
+                        [API, DEVKEY, [{'id': q['id'], 'name': q['name'], 'grade': 5, 'classId': 'cA1', 'created': NOW, 'updated': NOW, 'pinHash': q['pinHash']} for q in studs]])
+            pg.goto(WEB + '/index.html'); pg.wait_for_timeout(1200)
+            pg.select_option('#selClass', 'cA1')
+            pg.fill('#selNum', str(pg.evaluate("VR.Store.numOf(VR.Store.student('%s'))" % sid))); pg.fill('#selPin', pin); pg.click('#enterBtn')
+            try:
+                pg.wait_for_selector('#netGo', state='visible', timeout=10000)
+            except Exception:
+                pass
+            ok(pg.is_visible('#netGo'), 'Т7: %s видит «Урок идёт — войти» (урок открыт из VR)' % sid)
+            pg.evaluate("window.__cl=null;VR.net.on('closed',c=>{window.__cl=c&&c.code;})")
+            pg.click('#netGo'); pg.wait_for_timeout(800)
+            spg.append((pg, sid))
+        for pg, sid in spg:
+            try:
+                pg.wait_for_function("VR.net.status().state==='on'&&VR.app.E.peers.length>=2", timeout=20000)
+            except Exception:
+                pass
+        ok(all(pg.evaluate("VR.net.status().state") == 'on' for pg, _ in spg), 'Т7: оба ученика в уроке')
+        # сбор
+        h7.evaluate("window.__tab('Все ко мне')")
+        DIST = """()=>{const E=VR.app.E,NP=VR.netplay;const t=NP.peerIds().map(s=>({s,r:NP.rosterOf(s)})).find(x=>x.r&&x.r.role==='t');const h=t&&NP.headOf(t.s);const me=E.headWorld().p;return h?Math.hypot(me[0]-h.p[0],me[2]-h.p[2]):-1;}"""
+        ds = []
+        for pg, sid in spg:
+            try:
+                pg.wait_for_function("d=>{const f=%s;const v=f();return v>1.2&&v<1.8}" % DIST, timeout=10000)
+            except Exception:
+                pass
+            ds.append(round(pg.evaluate("(" + DIST + ")()"), 2))
+        ok(all(1.2 < d < 1.8 for d in ds), 'Т7: «Все ко мне» — оба ученика на кольце около 1,5 м от учителя (%s)' % ds)
+        # внимание
+        h7.evaluate("window.__tab('Внимание!')")
+        for pg, sid in spg:
+            try:
+                pg.wait_for_function("VR.app.E.frozen===true", timeout=8000)
+            except Exception:
+                pass
+        ok(all(pg.evaluate("VR.app.E.frozen") is True for pg, _ in spg), 'Т7: «Внимание!» — у обоих учеников ввод заморожен')
+        ok('Снять «Внимание»' in h7.evaluate("window.__labels()")['labels'], 'Т7: у учителя кнопка стала «Снять «Внимание»»')
+        h7.evaluate("window.__tab('Снять')")
+        for pg, sid in spg:
+            try:
+                pg.wait_for_function("VR.app.E.frozen===false", timeout=8000)
+            except Exception:
+                pass
+        ok(all(pg.evaluate("VR.app.E.frozen") is False for pg, _ in spg), 'Т7: «Снять» — заморозка снята')
+        # убрать: двойное нажатие
+        h7.evaluate("window.__tab('Убрать')")
+        lb = h7.evaluate("window.__labels()")
+        ok(any('Иван' in l for l in lb['labels']) and not lb['over'], 'Т7: «Убрать» показывает список учеников (%s)' % lb['labels'])
+        h7.evaluate("window.__tab('Иван')")
+        ok(spg[0][0].evaluate("window.__cl") is None, 'Т7: одно нажатие ученика не убирает')
+        h7.evaluate("window.__tab('Ещё раз: Иван')")
+        try:
+            spg[0][0].wait_for_function("window.__cl===4012", timeout=10000)
+        except Exception:
+            pass
+        ok(spg[0][0].evaluate("window.__cl") == 4012 and spg[1][0].evaluate("window.__cl") is None, 'Т7: «Убрать» (двойное нажатие) — Ивану закрыли соединение 4012, Мария осталась')
+        h7.wait_for_timeout(2500)
+        st, lst = adm(tok, 'session.list', {'class_id': 'cA1'})
+        ok('st1' in ((lst.get('open') or [{}])[0].get('banned_ids') or []), 'Т7: на сервере ученик в списке убранных')
+        h7.evaluate("window.__tab('Убраны')"); h7.wait_for_timeout(1500)
+        lb = h7.evaluate("window.__labels()")
+        ok('Вернуть' in lb['labels'] and not lb['over'], 'Т7: «Убраны» — есть «Вернуть» (%s)' % lb['labels'])
+        h7.evaluate("window.__tab('Вернуть')"); h7.wait_for_timeout(1500)
+        st, lst = adm(tok, 'session.list', {'class_id': 'cA1'})
+        ok(not (lst.get('open') or [{}])[0].get('banned_ids'), 'Т7: «Вернуть» — запрет снят на сервере')
+        # закрыть урок: двойное нажатие
+        h7.evaluate("window.__tab('← Назад')")
+        h7.evaluate("window.__tab('Закрыть урок')")
+        st, lst = adm(tok, 'session.list', {'class_id': 'cA1'})
+        ok(len(lst.get('open') or []) == 1, 'Т7: одно нажатие «Закрыть урок» урок не закрывает')
+        h7.evaluate("window.__tab('Точно закрыть')"); h7.wait_for_timeout(1500)
+        st, lst = adm(tok, 'session.list', {'class_id': 'cA1'})
+        ok(not lst.get('open'), 'Т7: двойное нажатие — урок закрыт на сервере')
+        lb = h7.evaluate("window.__labels()")
+        ok(any(l.startswith('Открыть урок для') for l in lb['labels']) and not lb['over'], 'Т7: после закрытия планшет снова предлагает открыть урок')
+        # роль a: кнопок ведущего нет
+        st, b2 = adm(tok, 'session.open', {'class_id': 'cA1', 'room': 'hall'})
+        h8 = headset('t.sub'); lesson_login(h8, 't.sub')
+        if h8.is_visible('#tClass'):
+            h8.select_option('#tClass', 'cA1')
+        r8 = enter(h8)
+        h8.evaluate(TAB)
+        h8.evaluate("window.__tab('Урок')")
+        lb = h8.evaluate("window.__labels()")
+        ok(r8['r'] == 'a', 'Т7: предметник в уроке учителя класса — роль a (%s)' % r8)
+        ok(not any(x in lb['labels'] for x in ('Все ко мне', 'Внимание!', 'Убрать')) and not lb['over'], 'Т7: у роли a кнопок ведущего нет (%s)' % lb['labels'])
         ok(not errs, 'ошибок JS нет %s' % errs[:3])
         br.close()
 except Exception as e:  # noqa: BLE001
