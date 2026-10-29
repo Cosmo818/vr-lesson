@@ -77,13 +77,16 @@ function netProbe(st){
   }).catch(()=>{});
 }
 /* учитель в шлеме: токен учётки есть — список открытых уроков его классов и «войти ведущим»; нет — форма логин+пароль (токен только в sessionStorage вкладки) */
+/* выход из учётки, введённой на экране шлема (флаг vrl.vrlogin); вход из кабинета не трогаем */
+function teacherOut(force){let f=false;try{f=sessionStorage.getItem('vrl.vrlogin')==='1';sessionStorage.removeItem('vrl.vrlogin');}catch(e){}
+  return (f||force)?S.account.logout():Promise.resolve();}
 function teacherPass(){try{return +sessionStorage.getItem('vrl.laser')>Date.now();}catch(e){return false;}}
 function teacherNet(st){
   const box=$('tNet');if(!box)return;box.hidden=true;$('tnErr').textContent='';
   if(!st||st.role!=='teacher'||st.id||!S.server()||!VR.net||!VR.netplay)return;
   box.hidden=false;const tok=!!S.account.token();
   $('go').hidden=!tok&&!teacherPass();   /* без входа в учётку и без флага кабинета учителем в шлеме не стать */
-  $('tnForm').hidden=tok;$('tnList').hidden=!tok;
+  $('tnForm').hidden=tok;$('tnList').hidden=!tok;$('tnOut').hidden=!tok;
   if(tok)teacherLessons(st);
 }
 async function teacherLessons(st){
@@ -107,6 +110,7 @@ async function teacherLogin(e){
   const sv=S.server(),r=await S.account.login(sv?sv.url:'',$('tnLogin').value,$('tnPass').value);
   b.disabled=false;$('tnPass').value='';
   if(!r.ok){$('tnErr').textContent=r.msg;return;}
+  try{sessionStorage.setItem('vrl.vrlogin','1');}catch(e){}   /* вошли с экрана шлема — выход из учётки по концу сеанса */
   teacherNet(chosen);
 }
 /* учитель: билет по токену учётки (роль t или a — решает сервер) → подключение → обычный вход */
@@ -146,8 +150,8 @@ async function joinLive(){
   await go();
 }
 function startSession(){
-  if(!chosen)return;
-  if(chosen.role==='teacher'&&!chosen.id&&!S.account.token()&&!teacherPass())return;
+  if(!chosen)return false;
+  if(chosen.role==='teacher'&&!chosen.id&&!S.account.token()&&!teacherPass())return false;
   if(!chosen.id)chosen.grade=parseInt($('gg').value,10)||5;
   if(chosen.role==='teacher'){
     const cid=$('tClassP').hidden?'':$('tClass').value,k=cid?S.klass(cid):null;
@@ -161,10 +165,11 @@ function startSession(){
   sess={t0:performance.now(),limit:st.role==='teacher'?Infinity:Math.max(1,set.minutes)*60,   /* у учителя таймера нет */
     up:false,startPts:st.id?S.points(st.id).total:0,startPassed:st.id?S.points(st.id).passed:0,tests:0};
   E.loadRoom('hall');
+  return true;
 }
 async function go(){
   $('err').textContent='';
-  E.audio();startSession();
+  E.audio();if(!startSession())return;   /* сеанс не начат (учитель без входа) — в VR не идём */
   /* ссылка предпросмотра из конструктора: index.html?room=c-… сразу ведёт в комнату */
   let pv=null;try{VR.custom.refresh();pv=openPick||new URLSearchParams(location.search).get('room');if(pv&&E.rooms[pv]){E.goRoom(pv);if(new URLSearchParams(location.search).get('edit')==='1')VR.custom.startEdit(E,pv);}else pv=null;}catch(e){pv=null;}
   if(xrOk){
@@ -185,6 +190,7 @@ function endSession(){
   if(st&&st.id){const p=S.points(st.id);msg=`${st.name}: +${p.total-sess.startPts} баллов, тестов сдано ${p.passed} из 4 (было ${sess.startPassed}).`;}
   else msg='Сеанс гостя завершён.';
   try{sessionStorage.removeItem('vrl.editor');sessionStorage.removeItem('vrl.laser');}catch(e){}
+  teacherOut();   /* шлем общий: учётка, введённая на экране шлема, живёт только до конца сеанса */
   lastStudent=E.student;sess=null;E.student=null;E.deskInput=false;if(E.unlockMouse)E.unlockMouse();showLockHint(false);$('deskPanel').hidden=true;if(E.releaseInput)E.releaseInput();E.toggleMenu(false);S.sync();
   E.loadRoom('hall');
   $('desk').hidden=true;$('ov').hidden=false;
@@ -380,6 +386,7 @@ function bind(){
   $('back').onclick=()=>{chosen=null;netPin='';netLive=null;$('netGo').hidden=true;$('tNet').hidden=true;showSection('pick');};
   $('netGo').onclick=joinLive;
   $('tnForm').onsubmit=teacherLogin;
+  $('tnOut').onclick=()=>{teacherOut(true).then(()=>teacherNet(chosen));};
   $('go').onclick=go;
   $('deskExit').onclick=endSession;
   /* форма отзывов */

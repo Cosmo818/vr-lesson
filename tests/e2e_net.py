@@ -256,6 +256,11 @@ try:
         ok(h1.evaluate("sessionStorage.getItem('vrl.token')") and not h1.evaluate("localStorage.getItem('vrl.token')"), 'Т6: токен только в sessionStorage вкладки')
         r1 = enter(h1)
         ok(r1['st'] == 'on' and r1['r'] == 't' and r1['sid'] == sidA and r1['tch'] is True and r1['id'] is None, 'Т6: классный руководитель вошёл ведущим, роль t (%s)' % r1)
+        # ревью Opus: шлем общий — учётка, введённая на экране шлема, гаснет с концом сеанса
+        h1.evaluate("VR.app.endSession()"); h1.wait_for_timeout(300)
+        ok(not h1.evaluate("sessionStorage.getItem('vrl.token')") and not h1.evaluate("sessionStorage.getItem('vrl.vrlogin')"), 'Т6: после конца сеанса токен учётки с экрана шлема стёрт')
+        h1.click('#teachBtn'); h1.wait_for_timeout(500)
+        ok(h1.is_visible('#tnForm') and not h1.is_visible('#go') and h1.is_visible('#tnForm a[href*="teacher.html"]'), 'Т6: следующий человек видит форму логина и ссылку «Войти через кабинет», не уроки учителя')
         h2 = headset('t.other')
         ids2 = lesson_login(h2, 't.other')
         ok(ids2 == [sidB] and sidA not in ids2, 'Т6: в списке учителя другого класса нет урока чужого класса (%s)' % ids2)
