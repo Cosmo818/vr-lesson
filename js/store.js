@@ -470,6 +470,18 @@ const Store=VR.Store={
   studentDevices(sid){return Store.admin('student.device.list',{student_id:sid});},
   studentDeviceCode(sid){return Store.admin('student.device.code',{student_id:sid});},
   studentDeviceRevoke(id){return Store.admin('student.device.revoke',{id});},
+  /* зачётная игра «Эйнштейн» (PLAN-einstein.md Э8): who = {sid,ph} — шлем школы (id и хэш кода из памяти), {stu:true} — сеанс ученика, {acc:true} — учётка. ph на диск не пишется */
+  _einCall(path,who,body){
+    who=who||{};const b=Object.assign({},body);
+    if(who.stu)return Store.netCall('POST',path,b,'stu');
+    if(who.acc)return Store.netCall('POST',path,b,'user');
+    if(typeof who.sid==='string'&&typeof who.ph==='string'&&who.sid&&who.ph){b.student_id=who.sid;b.pin_hash=who.ph;return Store.netCall('POST',path,b,'dev');}
+    return Promise.resolve({status:0,data:{error:'Нет входа.'}});
+  },
+  einSeed(who,src){return Store._einCall('/api/ein/seed',who,{src:String(src||'').slice(0,20)});},
+  einSolve(who,rec){rec=rec||{};return Store._einCall('/api/ein/solve',who,{seed:rec.seed,time:rec.time,moves:rec.moves,helped:rec.helped?1:0,src:String(rec.src||'').slice(0,20)});},
+  einTop(who,q){q=q||{};const b={};for(const k of['who','scope','id','order','page'])if(q[k]!==undefined)b[k]=q[k];return Store._einCall('/api/ein/top',who,b);},
+  einPlaces(){return Store.netCall('POST','/api/ein/places',{},'user');},
   /* файл ресурса (модель, звук): только из папки assets/ этого же сайта, с ограничением размера (Б51) */
   async getAsset(url,max){
     const up=/^up:([0-9a-f]{12})$/.exec(String(url));
