@@ -69,6 +69,11 @@ SEED_SCHOOL = '''async()=>{const S=VR.Store;const k=S.addClass(5,"А");
  localStorage.setItem("vrlesson.server",JSON.stringify({url:"%s",key:"%s"}));return[a.id,b.id,k.id]}''' % (SRV, 'k' * 24)
 
 
+def gw_T_ok(pw, pm):
+    t = 'VR.einweb.state().geo.T'
+    return pm.evaluate(t) >= pw.evaluate(t)
+
+
 def start_play(pg):
     pg.click('#gStart'); pg.wait_for_timeout(100)
 
@@ -217,7 +222,11 @@ try:
         GEO = '''()=>{const g=VR.einweb.state().geo,fb=g.fy+6*g.cell,fr=g.fx+6*g.cell,W=g.W;
           return{cell:g.cell,under:g.items.filter(i=>i.k==="v").every(i=>i.y>=fb),right:g.items.filter(i=>i.k==="h").every(i=>i.x>=fr),inside:g.items.every(i=>i.x>=0&&i.x+i.w<=W&&i.y>=0&&i.y+i.h<=g.H),n:g.items.length}}'''
         gm = pm.evaluate(GEO)
-        ok(gm['under'] and gm['right'] and gm['inside'] and gm['n'] > 10, '390x844: подсказки — вертикальные под полем, горизонтальные справа, всё внутри холста %s' % gm)
+        PH = '''()=>{const g=VR.einweb.state().geo,fb=g.fy+6*g.cell,vs=g.items.filter(i=>i.k==="v"),hs=g.items.filter(i=>i.k==="h"),vb=Math.max(...vs.map(i=>i.y+i.h));
+          return{cell:g.cell,T:g.T,W:g.W,fw:g.fx+6*g.cell,vUnder:vs.every(i=>i.y>=fb),hBelow:hs.length>0&&hs.every(i=>i.y>=vb),inside:g.items.every(i=>i.x>=0&&i.x+i.w<=g.W&&i.y>=0&&i.y+i.h<=g.H),n:g.items.length}}'''
+        gm = pm.evaluate(PH)
+        ok(gm['cell'] >= 56 and gm['vUnder'] and gm['hBelow'] and gm['inside'] and gm['n'] > 10, '390x844: клетка >= 56 px, вертикальные под полем, горизонтальные ещё ниже, всё внутри холста %s' % gm)
+        ok(gm['W'] - gm['fw'] <= 12, '390x844: поле на всю ширину холста %s' % gm)
         pm.screenshot(path=os.path.join(shots, 'einweb_phone_layout.png'), full_page=True)
         pm.click('#gPause'); pm.wait_for_timeout(250)
         pm.screenshot(path=os.path.join(shots, 'einweb_phone_menu.png'), full_page=True)
@@ -252,6 +261,18 @@ try:
         pw.click('#gStart'); pw.wait_for_timeout(300); gw = pw.evaluate(GEO)
         ok(gw['under'] and gw['right'] and gw['inside'], '1280: вертикальные подсказки под полем, горизонтальные справа %s' % gw)
         pw.screenshot(path=os.path.join(shots, 'einweb_layout.png'), full_page=True)
+        ok(gw_T_ok(pw, pm), '390x844: плитки подсказок не мельче, чем на 1280')
+        SOLVE = '()=>{const E=VR.einweb.E(),G=VR.einweb.state(),g=G.g;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r))VR.einplay.click(E,G,null,c,r,g.pz.sol[r][c]);return g.status}'
+        pw.evaluate('()=>{window.scrollTo(0,0)}'); ok(not pw.is_visible('#gNew'), '1280: «Новая партия» до победы не видна')
+        ok(pw.evaluate(SOLVE) == 'win', '1280: партия решена'); pw.wait_for_timeout(300)
+        ok(pw.is_visible('#gNew') and pw.is_visible('#gMenu') and 'Новая' in pw.inner_text('#gNew'), '1280: после победы видны «Новая партия» и «Меню»')
+        pw.screenshot(path=os.path.join(shots, 'einweb_win.png'), full_page=True)
+        sd0 = pw.evaluate('VR.einweb.state().g.pz.seed'); pw.click('#gNew'); pw.wait_for_timeout(500)
+        ok(pw.evaluate('VR.einweb.state().g.pz.seed') != sd0 and pw.evaluate('VR.einweb.state().g.status') == 'play' and not pw.is_visible('#gNew'), '1280: «Новая партия» после победы даёт другой номер и новую игру')
+        pm.evaluate('()=>{window.scrollTo(0,0)}'); pm.evaluate(SOLVE); pm.wait_for_timeout(300)
+        ok(pm.is_visible('#gNew'), '390x844: после победы видна «Новая партия»')
+        v = inside(pm); ok(v['sw'] <= v['W'] and not v['bad'], '390x844: экран победы — ничего не выходит за край %s' % v)
+        pm.screenshot(path=os.path.join(shots, 'einweb_phone_win.png'), full_page=True)
         pw.evaluate('()=>{VR.einweb.state().win="tut";VR.einweb.state().tut={i:4};VR.einweb.state().opt.onDirty()}'); pw.wait_for_timeout(300)
         pw.screenshot(path=os.path.join(shots, 'einweb_tutorial.png'), full_page=True)
         ok(not pw.evaluate('VR.einweb.over()'), '1280: шаг обучения влезает')

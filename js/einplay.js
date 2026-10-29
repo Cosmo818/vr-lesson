@@ -165,6 +165,12 @@ function geom(G,W,H,cf){
         const cols=Math.floor((W-fx-6*cell-gap)/hcw),rowsH=Math.floor((H-fy)/hch);if(cols<1||cols*rowsH<nH)continue;
         cand={cell,T,gx,gy,hcw,hch,vcw,vch,perV:u.perV,UH:u.UH,cols,rowsH,H};break;
       }
+    }else if(cf.hUnder){
+      /* телефон: поле на всю ширину, под ним вертикальные, ещё ниже горизонтальные */
+      const cell=Math.min(cf.maxCell||999,Math.floor((W-fx-(cf.mr||0))/6));if(cell<30)continue;
+      const u=under(cell),cols=Math.max(1,Math.floor((W-fx-(cf.mr||0)+gx)/hcw)),rowsH=Math.max(1,Math.ceil(nH/cols)),hy=fy+6*cell+u.UH+gap;
+      cand={cell,T,gx,gy,hcw,hch,vcw,vch,perV:u.perV,UH:u.UH,cols,rowsH,hUnder:true,hy,H:hy+(nH?rowsH*hch:0)+gap};
+      if(cell<cf.minCell)cand._small=true;
     }else{
       for(let cols=cf.cols||1;cols>=1&&!cand;cols--){
         const cell=Math.min(cf.maxCell||999,Math.floor((W-fx-gap-cols*hcw)/6));if(cell<30)continue;
@@ -181,7 +187,8 @@ function geom(G,W,H,cf){
   if(!best){const T=14,hch=T+4;best={cell:30,T,gx:4,gy:4,hcw:3*T+4,hch,vcw:T+5,vch:2*T+4,perV:8,UH:gap+2*T+4,cols:1,rowsH:Math.max(1,nH),H:H||fy+180+60};}
   const geo=Object.assign({fx,fy,gap,W,items:[]},best);
   const fw=6*geo.cell,hx=fx+fw+gap;
-  hi.forEach((i,k)=>{const col=Math.floor(k/geo.rowsH),row=k%geo.rowsH;geo.items.push({i,x:hx+col*geo.hcw,y:fy+row*geo.hch,w:3*geo.T,h:geo.T,k:'h'});});
+  if(geo.hUnder)hi.forEach((i,k)=>{geo.items.push({i,x:fx+(k%geo.cols)*geo.hcw,y:geo.hy+Math.floor(k/geo.cols)*geo.hch,w:3*geo.T,h:geo.T,k:'h'});});
+  else hi.forEach((i,k)=>{const col=Math.floor(k/geo.rowsH),row=k%geo.rowsH;geo.items.push({i,x:hx+col*geo.hcw,y:fy+row*geo.hch,w:3*geo.T,h:geo.T,k:'h'});});
   const vy=fy+fw+gap;
   vi.forEach((i,k)=>{const col=k%geo.perV,row=Math.floor(k/geo.perV);geo.items.push({i,x:fx+col*geo.vcw,y:vy+row*geo.vch,w:geo.T,h:2*geo.T,k:'v'});});
   return geo;
@@ -307,8 +314,11 @@ function drawCtl(E,G,c,p0,rect){
   const arena=!!(VR.ROOMS&&VR.ROOMS.arena);
   if(G.phase==='idle')btn(p,X,206,W,64,'▶ Начать',()=>begin(E,G),{size:34,bg:'#15803d',disabled:!!G.fetching});
   else if(live&&!G.tid)btn(p,X,206,W,64,G.paused?'▶ Продолжить':'⏸ Пауза',()=>G.paused?resume(G):setPause(G,true),{size:30,bg:G.paused?'#15803d':'#334155'});
+  else if(g.status==='win'&&!G.tid){const hw=Math.floor((W-14)/2);
+    btn(p,X,206,hw,96,'Новая партия',()=>fresh(E,G),{size:32,bg:'#b45309',disabled:!!G.fetching});
+    btn(p,X+hw+14,206,hw,96,'Меню',()=>{if(G.menu)resume(G);else openMenu(G);},{size:32,bg:'#334155'});}
   else btn(p,X,206,W,64,'Меню',()=>{if(G.menu)resume(G);else openMenu(G);},{size:30,bg:'#334155'});
-  if(G.phase!=='idle'&&!G.tid)btn(p,X,284,W,64,'Открыть клетку (без зачёта)',()=>openOne(E,G),{size:26,bg:'#1e293b',disabled:g.status!=='play'||G.paused});
+  if(G.phase!=='idle'&&!G.tid&&!(g.status==='win'))btn(p,X,284,W,64,'Открыть клетку (без зачёта)',()=>openOne(E,G),{size:26,bg:'#1e293b',disabled:g.status!=='play'||G.paused});
   if(arena)btn(p,X,440,W,64,'В зал',()=>E.goRoom('arena'),{size:26,bg:'#475569'});
   p.text((G.tid?'Турнирная партия. ':'')+'Курок — выбрать фишку, боковая кнопка (grip) + курок — убрать.',X,520,{size:22,color:'#64748b',maxW:W,maxY:p.H-8});
   });
@@ -325,7 +335,10 @@ function drawBar(E,G,c,p0,rect,cfg){
   else{
     if(live&&!G.tid)put(420,'Открыть клетку',()=>openOne(E,G),{size:cfg.fs,bg:'#1e293b',disabled:G.paused});
     if(live&&!G.tid)put(360,G.paused?'▶ Дальше':'⏸ Пауза',()=>G.paused?resume(G):setPause(G,true),{size:cfg.fs,bg:G.paused?'#15803d':'#334155'});
-    else put(300,'Меню',()=>{if(G.menu)resume(G);else openMenu(G);},{size:cfg.fs,bg:'#334155'});
+    else{
+      put(300,'Меню',()=>{if(G.menu)resume(G);else openMenu(G);},{size:cfg.fs,bg:'#334155'});
+      if(g.status==='win'&&!G.tid)put(460,'Новая партия',()=>fresh(E,G),{size:cfg.fs,bg:'#b45309',disabled:!!G.fetching});
+    }
   }
   });
 }

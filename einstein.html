@@ -27,6 +27,8 @@ html,body{height:auto;min-height:100%}
 canvas.pl{display:block;width:100%;height:auto;background:#0f1730;border-radius:12px;touch-action:manipulation;user-select:none;-webkit-user-select:none}
 #ctl{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 #ctl .btn{padding:10px 14px;font-size:16px}
+#ctl .btn.big{display:block;width:auto;margin:0;padding:14px 26px;font-size:22px;background:#b45309}
+#ctl .btn.big[hidden]{display:none}
 #ctl .btn.sm{padding:10px 16px}
 .muted{color:var(--muted)}.small{font-size:14px}
 </style>
@@ -93,6 +95,7 @@ canvas.pl{display:block;width:100%;height:auto;background:#0f1730;border-radius:
       <button type="button" id="gStart" class="btn">Начать</button>
       <button type="button" id="gPause" class="btn ghost">Пауза</button>
       <button type="button" id="gOpen" class="btn ghost">Открыть клетку (без зачёта)</button>
+      <button type="button" id="gNew" class="btn big" hidden>Новая партия</button>
       <button type="button" id="gMenu" class="btn ghost">Меню</button>
     </div>
     <div id="wrap"><canvas id="cf" class="pl" width="952" height="700" aria-label="Доска: поле 6 на 6 и подсказки"></canvas></div>

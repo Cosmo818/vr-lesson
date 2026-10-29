@@ -84,10 +84,10 @@ function teacherName(){return String(S.account.who()||'').replace(/[^\w-]/g,'').
 /* E — тот же набор, что у движка, для общего ядра (js/einplay.js): звуков и комнат в вебе нет */
 const mkE=(student,pk,tag)=>({student,pk,tag,menuOpen:false,H:[],beep(){},buzz(){},fanfare(){},goRoom(){}});
 /* настройки по ширине холста: широкий экран — три колонки подсказок справа, телефон — одна */
-function cfgFor(w){
-  const wide=w>=700;
+function cfgFor(w,probe){
+  const wide=w>=700&&!(probe&&probe(w)<56);
   return wide?{web:true,fs:20,bh:54,T:44,fx:30,fy:28,gap:10,minCell:90,maxCell:112,cols:3,minH:560}
-    :{web:true,fs:15,bh:44,T:24,fx:16,fy:20,gap:6,minCell:36,maxCell:60,cols:1,minH:520};
+    :{web:true,fs:15,bh:44,T:44,fx:14,mr:4,fy:20,gap:6,minCell:56,maxCell:60,cols:1,hUnder:true,minH:520};
 }
 function begin(student,pkId,label){
   E=mkE(student,pkId||null,label||'Гость');
@@ -140,7 +140,7 @@ function tick(){
 /* ---------- рисование ---------- */
 function redraw(){
   if(!G||!P)return;
-  const cv=$('cf'),box=cv.parentElement,cw=Math.max(300,Math.floor(box.clientWidth)||360),cfg=cfgFor(cw),dpr=Math.min(2,window.devicePixelRatio||1);
+  const cv=$('cf'),box=cv.parentElement,cw=Math.max(300,Math.floor(box.clientWidth)||360),cfg=cfgFor(cw,x=>PL.geom(G,x,0,cfgFor(x)).cell),dpr=Math.min(2,window.devicePixelRatio||1);
   let H=Math.max(PL.geom(G,cw,0,cfg).H,cfg.minH);
   if(G.win)H=Math.max(H,cw>=700?720:880);
   const bw=Math.round(cw*dpr),bh=Math.round(H*dpr);
@@ -156,6 +156,7 @@ function ui(){
   $('gStart').hidden=G.phase!=='idle';$('gStart').disabled=!!G.fetching;
   $('gPause').hidden=!live||!!G.tid;$('gPause').textContent=G.paused?'Продолжить':'Пауза';
   $('gOpen').hidden=!live||!!G.tid;$('gOpen').disabled=G.paused;
+  $('gNew').hidden=!(G.g.status==='win'&&!G.tid);$('gNew').disabled=!!G.fetching;
   $('gMenu').hidden=G.phase==='idle'||(live&&!G.tid);$('gMenu').textContent=G.menu?'Закрыть меню':'Меню';
   $('gMsg').textContent=G.msg||(G.phase==='idle'?'Партия № '+G.g.pz.seed+'. Нажми «Начать».':'Открой все фишки: исключай лишние по подсказкам.')+(G.g.status==='play'?PL.note(E,G):'');
   $('gTime').textContent=PL.fmtT(G.t);
@@ -175,6 +176,7 @@ function bind(){
   $('gStart').onclick=()=>PL.begin(E,G);
   $('gPause').onclick=()=>{if(G.paused)PL.resume(G);else PL.setPause(G,true);};
   $('gMenu').onclick=()=>{if(G.menu)PL.resume(G);else PL.openMenu(G);};
+  $('gNew').onclick=()=>PL.fresh(E,G);
   $('gOpen').onclick=()=>PL.openOne(E,G);
   const cf=$('cf');
   cf.addEventListener('pointerdown',onDown);

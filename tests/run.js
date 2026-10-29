@@ -568,6 +568,10 @@ function makeCtx(xr){
       const e=sol[r][c],bt=subBtn(Z.field,Z,8,c,r,e),bi=bt?Z.field.btns.indexOf(bt):-1;if(bi>=0){Z.field.btns[bi].fn({});hit=true;}}
       if(!hit)break;}
     ok(g.status==='win'&&Z.ctl.dirty!==undefined,'эйнштейн-комната: клики по областям фишек решают головоломку ('+g.status+')');
+    { Z.ctl.dirty=true;run(3);E.paintPanel(Z.ctl);const cl=Z.ctl.btns.map(b=>b.label||'');
+      ok(cl.includes('Новая партия')&&cl.includes('Меню')&&!Z.ctl.over.length,'Новая партия: на экране победы стены (панель) есть «Новая партия» и «Меню» ('+cl.join('|')+')');
+      const sd=Z.g.pz.seed,nb=Z.ctl.btns.find(b=>b.label==='Новая партия');nb.fn({});run(3);
+      ok(Z.g.pz.seed!==sd&&Z.g.status==='play','Новая партия: кнопка на стене начинает другую партию'); }
   }
   { /* эйнштейн: ядро VR.einplay отдельно от стены (без комнаты и панелей) */
     const PL=VR.einplay,X=VR.einstein;
@@ -637,7 +641,10 @@ function makeCtx(xr){
       put(.12);VR.einterm.poke(E,T);VR.einplay.setPause(G,true);E.paintPanel(T.panel);put(.01);VR.einterm.poke(E,T);ok(G.g.pz.seed!==s1,'терминал: отход и повтор — ещё одно нажатие');
       h.has=false; }
     /* турнир: нет «Новая/Сначала/Пауза» */
-    { const G=T.G;G.tid='T1';VR.einplay.start(E,G,5,false,true);E.paintPanel(T.panel);
+    { const G=T.G;G.tid=null;VR.einplay.start(E,G,31,false,true);const sl=G.g.pz.sol;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!G.g.P.defined(c,r))VR.einplay.click(E,G,null,c,r,sl[r][c]);E.paintPanel(T.panel);
+      ok(G.g.status==='win'&&T.panel.btns.some(b=>b.label==='Новая партия')&&T.panel.btns.some(b=>b.label==='Меню')&&!T.panel.over.length,'Новая партия: на экране победы терминала есть «Новая партия» и «Меню»');
+      const sd=G.g.pz.seed;T.panel.btns.find(b=>b.label==='Новая партия').fn({});ok(G.g.pz.seed!==sd&&G.g.status==='play','Новая партия: кнопка терминала начинает другую партию'); }
+    { const G=T.G;G.tid='T1';VR.einplay.start(E,G,5,false,true);{const sl=G.g.pz.sol;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!G.g.P.defined(c,r))VR.einplay.click(E,G,null,c,r,sl[r][c]);E.paintPanel(T.panel);ok(G.g.status==='win'&&!T.panel.btns.some(b=>b.label==='Новая партия'),'Новая партия: в турнире на экране победы её нет');VR.einplay.start(E,G,5,false,true);}E.paintPanel(T.panel);
       const labs=T.panel.btns.map(b=>b.label||'');
       ok(!labs.some(l=>/Новая|Сначала|Пауза|Курок|Касание/.test(l))&&!T.panel.over.length,'терминал: в турнире нет «Новая/Сначала/Пауза» и кнопки режима курка');VR.einplay.openMenu(G);E.paintPanel(T.panel);const labs2=T.panel.btns.map(b=>b.label||'');ok(!labs2.some(l=>/Новая|Сначала/.test(l))&&labs2.some(l=>/Продолжить/.test(l))&&!T.panel.over.length,'Э12: меню в турнире — без «Новая/Сначала», с «Продолжить»');G.menu=false;G.tid=null; }
     /* комната «Эйнштейн»: вид wall/term без сброса партии */
