@@ -51,6 +51,18 @@ try:
     t(not pg.evaluate("VR.app.E.menu.over.length"),'планшет ученика: ничего не за краем')
     pg.evaluate("sessionStorage.setItem('vrl.laser',String(Date.now()+1e7))")
     t(pg.evaluate("VR.app.E.isTeacher()")==False,'ученик не получает инструменты учителя, даже если в вкладке остался флаг указки')
+    # Т6: sessionStorage при переходе из кабинета кнопкой «▶ Войти в VR как учитель» (window.open, как в teacher.html)
+    pg.goto(u+'teacher.html');pg.evaluate("sessionStorage.setItem('vrl.token','tok-t6');sessionStorage.setItem('vrl.user','t.six')")
+    with pg.expect_popup() as pop:
+        pg.evaluate("window.open('index.html?as=teacher','_blank')")
+    pp=pop.value;pp.wait_for_load_state()
+    t(pp.evaluate("sessionStorage.getItem('vrl.token')")=='tok-t6','window.open из кабинета (новая вкладка): токен учётки в sessionStorage скопирован')
+    pg.evaluate("location.href='index.html?as=teacher'");pg.wait_for_timeout(1200)
+    t(pg.evaluate("sessionStorage.getItem('vrl.token')")=='tok-t6','переход в той же вкладке: sessionStorage сохраняется')
+    # без сервера и без флага учитель в шлеме не получает указку: кнопка уводит в кабинет
+    pg.evaluate("sessionStorage.clear()");pg.goto(u+'index.html');pg.wait_for_timeout(1000)
+    pg.click('#teachBtn');pg.wait_for_timeout(1200)
+    t('teacher.html' in pg.url,'нет сервера и входа: «Я учитель» ведёт в кабинет')
     t(not errs,'ошибок JS нет')
     b.close()
 finally: srv.kill()

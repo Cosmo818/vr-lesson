@@ -61,8 +61,10 @@ function choose(st){
   else if(st.role==='teacher')$('whoInfo').textContent='Вы входите как учитель: указка включена, результаты не записываются. Выберите класс:';
   else $('whoInfo').textContent='Результаты гостя не сохраняются. Выбери класс для заданий:';
   $('go').textContent=xrOk?'Войти в VR':'Начать на экране';
+  $('go').hidden=false;
   showSection('ready');
   netProbe(st);
+  teacherNet(st);
 }
 /* урок идёт — войти: кнопка только когда сервер ответил, что у класса ученика открыт урок; иначе всё как раньше (без сети) */
 function netProbe(st){
@@ -73,6 +75,50 @@ function netProbe(st){
     const l=r.data.sessions.find(x=>x&&x.class_id===st.classId&&x.kind==='lesson');
     if(l){netLive=l;b.hidden=false;}
   }).catch(()=>{});
+}
+/* учитель в шлеме: токен учётки есть — список открытых уроков его классов и «войти ведущим»; нет — форма логин+пароль (токен только в sessionStorage вкладки) */
+function teacherPass(){try{return +sessionStorage.getItem('vrl.laser')>Date.now();}catch(e){return false;}}
+function teacherNet(st){
+  const box=$('tNet');if(!box)return;box.hidden=true;$('tnErr').textContent='';
+  if(!st||st.role!=='teacher'||st.id||!S.server()||!VR.net||!VR.netplay)return;
+  box.hidden=false;const tok=!!S.account.token();
+  $('go').hidden=!tok&&!teacherPass();   /* без входа в учётку и без флага кабинета учителем в шлеме не стать */
+  $('tnForm').hidden=tok;$('tnList').hidden=!tok;
+  if(tok)teacherLessons(st);
+}
+async function teacherLessons(st){
+  const L=$('tnList');L.textContent='Ищу открытые уроки…';
+  const r=await S.sessionAdmin('list',{});
+  if(chosen!==st)return;
+  if(r.status===401||r.data&&r.data.expired){teacherNet(st);return;}
+  const op=r.status===200&&r.data&&Array.isArray(r.data.open)?r.data.open.filter(x=>x&&x.kind==='lesson'):null;
+  L.textContent='';
+  if(!op){L.textContent='Уроки сейчас недоступны. Можно начать без урока.';return;}
+  if(!op.length){L.textContent='Открытых уроков у твоих классов нет.';return;}
+  for(const x of op){
+    const k=S.klass(x.class_id),b=document.createElement('button');b.type='button';b.className='btn big';
+    b.textContent='Урок идёт'+(k?' · '+S.className(k):'')+' — войти ведущим';b.dataset.sid=x.id;
+    b.onclick=()=>joinLead(x.id,b);L.appendChild(b);
+  }
+}
+async function teacherLogin(e){
+  if(e)e.preventDefault();
+  const b=$('tnBtn');b.disabled=true;$('tnErr').textContent='';
+  const sv=S.server(),r=await S.account.login(sv?sv.url:'',$('tnLogin').value,$('tnPass').value);
+  b.disabled=false;$('tnPass').value='';
+  if(!r.ok){$('tnErr').textContent=r.msg;return;}
+  teacherNet(chosen);
+}
+/* учитель: билет по токену учётки (роль t или a — решает сервер) → подключение → обычный вход */
+async function joinLead(sid,b){
+  if(!chosen||chosen.id)return;
+  $('tnErr').textContent='';if(b)b.disabled=true;
+  const r=await S.sessionTicket(sid);
+  if(b)b.disabled=false;
+  if(r.status!==200||!r.data||!r.data.ticket){$('tnErr').textContent=r.status===403?'Этот урок тебе недоступен.':'Урок сейчас недоступен. Можно начать без него.';if(r.status===401)teacherNet(chosen);return;}
+  netCtx={sid,id:'',pin:''};
+  netStart(r.data);
+  await go();
 }
 function netStart(d){
   const N=VR.net,P=VR.netplay;if(!N||!P||!E||!d||!d.ticket)return false;
@@ -101,6 +147,7 @@ async function joinLive(){
 }
 function startSession(){
   if(!chosen)return;
+  if(chosen.role==='teacher'&&!chosen.id&&!S.account.token()&&!teacherPass())return;
   if(!chosen.id)chosen.grade=parseInt($('gg').value,10)||5;
   if(chosen.role==='teacher'){
     const cid=$('tClassP').hidden?'':$('tClass').value,k=cid?S.klass(cid):null;
@@ -327,11 +374,12 @@ function bind(){
   };}}).catch(()=>{});
   /* вход учителя: если в этой вкладке уже открыт кабинет (флаг указки) — сразу к кнопке «Войти в VR», иначе в кабинет на вход */
   const teacherIn=()=>{let ok=false;try{ok=+sessionStorage.getItem('vrl.laser')>Date.now();}catch(e){}
-    if(!ok){location.href='teacher.html?vr=1';return;}choose({id:null,name:'Учитель',grade:5,role:'teacher'});};
+    if(!ok&&!(S.account.token()||S.server())){location.href='teacher.html?vr=1';return;}choose({id:null,name:'Учитель',grade:5,role:'teacher'});};
   $('teachBtn').onclick=teacherIn;
   VR.teacherIn=teacherIn;
-  $('back').onclick=()=>{chosen=null;netPin='';netLive=null;$('netGo').hidden=true;showSection('pick');};
+  $('back').onclick=()=>{chosen=null;netPin='';netLive=null;$('netGo').hidden=true;$('tNet').hidden=true;showSection('pick');};
   $('netGo').onclick=joinLive;
+  $('tnForm').onsubmit=teacherLogin;
   $('go').onclick=go;
   $('deskExit').onclick=endSession;
   /* форма отзывов */
