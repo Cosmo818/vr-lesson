@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1020">
+<title>Эйнштейн в браузере</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+<style>
+html,body{height:auto;min-height:100%}
+#app{max-width:1400px;margin:0 auto;padding:12px 16px 28px}
+#app header{margin-bottom:6px}
+#app h1{font-size:26px}
+.box{width:min(560px,100%);padding:18px;border-radius:16px;background:var(--card);border:1px solid var(--line)}
+.col{display:flex;flex-direction:column;gap:10px}
+.col label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:15px}
+.col input,.col select{padding:12px;border-radius:12px;border:1px solid var(--line);background:#0e1730;color:var(--text);font-size:18px;width:100%}
+.col .btn{width:100%}
+.btn:disabled{opacity:.45;cursor:default}
+.warn{color:var(--warn)}.ok{color:var(--ok)}
+#bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin:6px 0}
+#gWho{font-size:18px}
+#gTime{font-size:26px;font-weight:700;color:#fde68a;margin-left:auto}
+#gMsg{min-height:1.4em;margin:4px 0 8px;color:#cbd5e1}
+#wrap{display:flex;flex-direction:column;gap:12px}
+#fieldBox,#hintBox{min-width:0;width:100%}
+canvas.pl{display:block;width:100%;height:auto;background:#0f1730;border-radius:12px;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+#rules{padding:12px 14px;border-radius:12px;background:#0f1730;border:1px solid var(--line)}
+#rules p{margin:6px 0;font-size:16px}
+#ctl{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+#ctl .btn{padding:10px 14px;font-size:16px}
+#ctl .btn.sm{padding:10px 16px}
+.muted{color:var(--muted)}.small{font-size:14px}
+@media(min-width:900px){
+  #wrap{flex-direction:row;align-items:flex-start}
+  #fieldBox{flex:1 1 58%}#hintBox{flex:1 1 42%}
+}
+</style>
+</head>
+<body>
+<main id="app">
+  <header>
+    <h1>Эйнштейн</h1>
+    <span class="links"><a class="link" href="index.html">VR-урок</a><a class="link" href="teacher.html">Кабинет учителя</a></span>
+  </header>
+
+  <section id="enter">
+    <p id="enterMsg" class="warn"></p>
+
+    <div id="eSchool" class="box" hidden>
+      <h2>Кто играет?</h2>
+      <form id="fSchool" class="col" autocomplete="off">
+        <label>Класс<select id="selClass"></select></label>
+        <label>Номер в классе<input id="selNum" inputmode="numeric" maxlength="3" placeholder="например, 7" autocomplete="off"></label>
+        <label>Код<input id="selPin" type="password" inputmode="numeric" maxlength="8" placeholder="4 цифры" autocomplete="off"></label>
+        <button id="enterBtn" class="btn">Дальше</button>
+      </form>
+      <p id="sErr" class="warn"></p>
+      <button type="button" id="sGuest" class="btn ghost">Играть гостем (вне рейтинга)</button>
+    </div>
+
+    <div id="eBound" class="box" hidden>
+      <h2 id="boundWho"></h2>
+      <div class="col">
+        <label>Код<input id="bPin" type="password" inputmode="numeric" maxlength="8" placeholder="4 цифры" autocomplete="off"></label>
+        <button type="button" id="bGo" class="btn">Войти</button>
+        <button type="button" id="bGuest" class="btn ghost" hidden>Нет связи — играть гостем</button>
+        <button type="button" id="bUnpair" class="btn ghost">Это не я — отвязать</button>
+      </div>
+      <p id="bErr" class="warn"></p>
+    </div>
+
+    <div id="eFree" class="box" hidden>
+      <h2>Играть в «Эйнштейна»</h2>
+      <div class="col">
+        <button type="button" id="guestBtn" class="btn">Играть гостем (вне рейтинга)</button>
+        <button type="button" id="pairBtn" class="btn ghost">Привязать устройство</button>
+      </div>
+      <form id="pairForm" class="col" autocomplete="off" hidden style="margin-top:14px">
+        <label>Код привязки (8 знаков, его выдаёт учитель)<input id="pCode" maxlength="8" autocapitalize="characters" autocomplete="off"></label>
+        <label>Название устройства<input id="pName" maxlength="40" autocomplete="off"></label>
+        <button id="pGo" class="btn">Привязать</button>
+        <button type="button" id="pCancel" class="btn ghost">Отмена</button>
+      </form>
+      <p id="pErr" class="warn"></p>
+    </div>
+
+    <div id="eTeacher" class="box" hidden>
+      <h2>Вы — учитель</h2>
+      <p class="muted">Игра идёт без зачёта в рейтинг.</p>
+      <button type="button" id="tGo" class="btn">Играть</button>
+    </div>
+  </section>
+
+  <section id="game" hidden>
+    <div id="bar"><b id="gWho"></b><button type="button" id="gExit" class="btn ghost sm">Выйти</button><span id="gTime">0:00</span></div>
+    <p id="gMsg"></p>
+    <div id="wrap">
+      <div id="fieldBox"><canvas id="cf" class="pl" width="952" height="700" aria-label="Поле 6 на 6"></canvas></div>
+      <div id="hintBox">
+        <canvas id="ch" class="pl" width="640" height="400" aria-label="Подсказки"></canvas>
+        <div id="rules" hidden></div>
+      </div>
+    </div>
+    <div id="ctl">
+      <button type="button" id="gStart" class="btn">Начать</button>
+      <button type="button" id="gPause" class="btn ghost">Пауза</button>
+      <button type="button" id="gAgain" class="btn ghost">Сначала</button>
+      <button type="button" id="gNew" class="btn ghost">Новая</button>
+      <button type="button" id="gMode" class="btn ghost">Касание: выбрать фишку</button>
+      <button type="button" id="gOpen" class="btn ghost">Открыть клетку (без зачёта)</button>
+      <button type="button" id="gRules" class="btn ghost">Правила</button>
+      <button type="button" id="gAm" class="btn ghost sm">A−</button>
+      <button type="button" id="gAp" class="btn ghost sm">A+</button>
+    </div>
+    <p class="muted small">Мышь: левая кнопка — выбрать фишку, правая — исключить. На сенсорном экране режим переключает кнопка «Касание». Нажми подсказку, чтобы она потускнела.</p>
+  </section>
+</main>
+<script src="js/errors.js"></script>
+<script src="js/schema.js"></script>
+<script src="js/store.js"></script>
+<script src="js/einstein.js"></script>
+<script src="js/games.js"></script>
+<script src="js/einweb.js"></script>
+</body>
+</html>
