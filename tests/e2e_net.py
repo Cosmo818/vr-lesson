@@ -41,6 +41,13 @@ try:
                  {'id': 'st2', 'name': 'Сидорова Мария', 'grade': 5, 'classId': 'cA1', 'created': NOW, 'updated': NOW, 'school': 's-a', 'pinHash': pin_hash('st2', '2222')}]
         inc = {'classes': [{'id': 'cA1', 'grade': 5, 'letter': 'А', 'created': NOW, 'updated': NOW, 'school': 's-a'}], 'students': studs, 'results': [], 'disc': {}, 'settings': {'updated': NOW, 'minutes': 8}}
         app.merge_in(c, inc, 'teacher', '', None)
+        # Т6: класс другого учителя и предметник (учитель без своего класса)
+        uid2 = app.user_create(c, 't.other', 'Учитель Чужой', TPW, ('cli', 'test', ''))
+        app.role_add(c, uid2, 'teacher', 's-a', ('cli', 'test', ''))
+        uid3 = app.user_create(c, 't.sub', 'Учитель Предметник', TPW, ('cli', 'test', ''))
+        app.role_add(c, uid3, 'teacher', 's-a', ('cli', 'test', ''))
+        app.merge_in(c, {'classes': [{'id': 'cB1', 'grade': 6, 'letter': 'Б', 'created': NOW, 'updated': NOW, 'school': 's-a'}], 'students': [], 'results': [], 'disc': {}, 'settings': {'updated': NOW}}, 'teacher', '', None)
+        c.execute("UPDATE classes SET teacherId = ?, doc = json_set(doc, '$.teacherId', ?) WHERE id = 'cB1'", (uid2, uid2))
         c.execute("UPDATE classes SET teacherId = ?, doc = json_set(doc, '$.teacherId', ?) WHERE id = 'cA1'", (uid, uid))
         c.execute("INSERT INTO devices(id, school, key_hash, name, status, created, created_by, last_seen) VALUES('dvA', 's-a', ?, 'шлем А', 'active', ?, 'x', 0)", (app.thash(DEVKEY), NOW))
     app.save_config({'accounts': True, 'legacyTeacher': True, 'sessionMinutes': 15, 'net': True, 'hubSecret': SECRET,
@@ -202,6 +209,74 @@ try:
         tp.check('#lsRemote'); tp.click('#lsOpen'); tp.wait_for_selector('#lsClose', timeout=10000)
         code = tp.evaluate("(document.querySelector('#lsBox span[style*=letter-spacing]')||{}).textContent||''")
         ok(len(code) >= 4, 'кабинет: урок открыт заново, код для дома показан (%d зн.)' % len(code))
+        # Т6: учитель логинится прямо на экране шлема и входит ведущим по билету учётки
+        def adm(tk, act, body):
+            return req('POST', '/api/admin/' + act, body, {'Authorization': 'Bearer ' + tk})
+        st, b = req('POST', '/api/auth/login', {'login': 't.other', 'password': TPW}); tok2 = b.get('token', '')
+        st, b = req('POST', '/api/auth/login', {'login': 't.sub', 'password': TPW}); tok3 = b.get('token', '')
+        st, b = adm(tok2, 'session.open', {'class_id': 'cB1', 'room': 'hall'})
+        sidB = b.get('id', '')
+        ok(st == 200 and sidB, 'Т6: другой учитель открыл урок своего класса cB1 (%s)' % st)
+        st, lst = adm(tok, 'session.list', {})
+        sidA = (lst.get('open') or [{}])[0].get('id', '')
+        ok(sidA and sidB and sidA != sidB, 'Т6: у класса А идёт свой урок')
+        TKJS = """()=>{window.__tk=null;const c=VR.net.connect.bind(VR.net);VR.net.connect=o=>{try{window.__tk=JSON.parse(atob(o.ticket.split('.')[0].replace(/-/g,'+').replace(/_/g,'/')));}catch(e){}return c(o);};}"""
+
+        def headset(login):
+            pg = br.new_context(service_workers='block', viewport={'width': 1000, 'height': 650}).new_page()
+            pg.on('pageerror', lambda e: errs.append('headset ' + login + ': ' + str(e)))
+            pg.goto(WEB + '/index.html'); pg.wait_for_timeout(500)
+            pg.evaluate("""([url,key,n])=>{localStorage.setItem('vrlesson.server',JSON.stringify({url,key}));
+              localStorage.setItem('vrlesson.v1',JSON.stringify({v:5,classes:[{id:'cA1',grade:5,letter:'А',created:n,updated:n}],students:[],results:[],disc:{},tests:[],feedback:[],deleted:{},settings:{}}));}""", [API, DEVKEY, NOW])
+            pg.goto(WEB + '/index.html'); pg.wait_for_timeout(1200)
+            pg.evaluate(TKJS)
+            pg.click('#teachBtn'); pg.wait_for_timeout(800)
+            return pg
+
+        def lesson_login(pg, login):
+            pg.fill('#tnLogin', login); pg.fill('#tnPass', TPW); pg.click('#tnBtn')
+            try:
+                pg.wait_for_function("document.getElementById('tnList').textContent.indexOf('Ищу')<0&&!document.getElementById('tnList').hidden", timeout=10000)
+            except Exception:
+                pass
+            return pg.evaluate("[...document.querySelectorAll('#tnList button')].map(b=>b.dataset.sid)")
+
+        def enter(pg):
+            pg.click('#tnList button')
+            try:
+                pg.wait_for_function("VR.net.status().state==='on'", timeout=15000)
+            except Exception:
+                pass
+            return pg.evaluate("({st:VR.net.status().state,r:window.__tk&&window.__tk.r,sid:window.__tk&&window.__tk.sid,tch:VR.app.E.isTeacher(),id:VR.app.E.student.id})")
+
+        h1 = headset('t.net')
+        ok('teacher.html' not in h1.url and h1.is_visible('#tnForm') and not h1.is_visible('#go'), 'Т6: «Я учитель» без входа на сервере — форма логина на экране шлема, «Войти в VR» скрыта')
+        ids1 = lesson_login(h1, 't.net')
+        ok(ids1 == [sidA] and h1.is_visible('#go') and not h1.is_visible('#tnForm'), 'Т6: после логина виден один урок — своего класса (%s)' % ids1)
+        ok(h1.evaluate("sessionStorage.getItem('vrl.token')") and not h1.evaluate("localStorage.getItem('vrl.token')"), 'Т6: токен только в sessionStorage вкладки')
+        r1 = enter(h1)
+        ok(r1['st'] == 'on' and r1['r'] == 't' and r1['sid'] == sidA and r1['tch'] is True and r1['id'] is None, 'Т6: классный руководитель вошёл ведущим, роль t (%s)' % r1)
+        h2 = headset('t.other')
+        ids2 = lesson_login(h2, 't.other')
+        ok(ids2 == [sidB] and sidA not in ids2, 'Т6: в списке учителя другого класса нет урока чужого класса (%s)' % ids2)
+        st, b = adm(tok, 'class.teacher.add', {'class_id': 'cA1', 'user_id': uid3, 'subject': 'Информатика'})
+        ok(st == 200, 'Т6: предметник назначен (%s %s)' % (st, b))
+        h3 = headset('t.sub')
+        ids3 = lesson_login(h3, 't.sub')
+        ok(ids3 == [sidA], 'Т6: предметник видит урок класса, где ведёт, и не видит чужой (%s)' % ids3)
+        r3 = enter(h3)
+        ok(r3['st'] == 'on' and r3['r'] == 'a' and r3['tch'] is True, 'Т6: предметник в чужом уроке — роль a (%s)' % r3)
+        h3.evaluate("VR.net.close('end')")
+        adm(tok, 'session.close', {'id': sidA})
+        st, b = adm(tok3, 'session.open', {'class_id': 'cA1', 'room': 'hall'})
+        ok(st == 200 and b.get('id'), 'Т6: предметник открыл свой урок (%s)' % st)
+        h3.reload(); h3.wait_for_timeout(1200)
+        h3.evaluate(TKJS)
+        h3.click('#teachBtn'); h3.wait_for_timeout(1500)
+        ids3b = h3.evaluate("[...document.querySelectorAll('#tnList button')].map(b=>b.dataset.sid)")
+        ok(ids3b == [b['id']], 'Т6: после перезагрузки вкладки токен жив, список без повторного логина (%s)' % ids3b)
+        r3b = enter(h3)
+        ok(r3b['st'] == 'on' and r3b['r'] == 't', 'Т6: предметник в уроке, который открыл сам, — роль t (%s)' % r3b)
         ok(not errs, 'ошибок JS нет %s' % errs[:3])
         br.close()
 except Exception as e:  # noqa: BLE001
