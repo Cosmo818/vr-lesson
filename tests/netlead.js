@@ -138,6 +138,27 @@ ok(NL.react(12)===false&&NL.react(-1)===false,'код реакции вне 0..1
 fire('ev',{t:'ev',k:'react',slot:3,e:2});ok(reacts.at(-1)[0]===3&&reacts.at(-1)[1]==='👏','реакция соседа — над его головой');
 fire('ev',{t:'ev',k:'react',slot:3,e:44});ok(reacts.length===1,'неизвестный код реакции не рисуется');
 
+/* ---- Т7: кнопки ведущего ---- */
+{
+  ok(NL.buttons('a').length===0&&NL.buttons('s').length===0&&NL.buttons('').length===0,'Т7: у роли a (и ученика) кнопок ведущего нет');
+  ok(NL.buttons('t').map(b=>b.id).join()==='gather,follow,freeze,hall,room,kick','Т7: у роли t шесть кнопок: сбор, за мной, внимание, холл, моя комната, убрать');
+  const one=(f,want,m)=>{sent.length=0;const r=f();ok(r===true&&sent.length===1&&JSON.stringify(sent[0])===JSON.stringify(want),'Т7: '+m+' — ровно одно сообщение '+JSON.stringify(want)+' (получено '+JSON.stringify(sent)+')');};
+  one(()=>NL.command('gather'),{t:'ev',k:'gather'},'«Все ко мне» (без id)');
+  one(()=>NL.command('hall'),{t:'ev',k:'hall'},'«Все в холл»');
+  one(()=>NL.command('room','phys'),{t:'ev',k:'room',id:'phys'},'«Позвать в мою комнату»');
+  one(()=>NL.command('follow'),{t:'ev',k:'follow',on:true},'«За мной»');
+  one(()=>NL.command('follow'),{t:'ev',k:'follow',on:false},'«Не следовать»');
+  one(()=>NL.command('freeze'),{t:'ev',k:'freeze',on:true},'«Внимание!»');
+  ok(NL.cmdState().freeze===true,'Т7: подпись «Снять» после включения «внимания»');
+  one(()=>NL.command('freeze'),{t:'ev',k:'freeze',on:false},'«Снять»');
+  one(()=>NL.command('kick',3),{t:'ev',k:'kick',slot:3},'«Убрать» (slot ученика)');
+  sent.length=0;
+  ok(NL.command('kick')===false&&NL.command('kick',-1)===false&&NL.command('room')===false&&NL.command('nosuch')===false&&sent.length===0,'Т7: команда без slot/id или неизвестная — ничего не уходит');
+  state='connecting';ok(NL.command('gather')===false&&NL.command('freeze')===false&&sent.length===0&&NL.cmdState().freeze===false,'Т7: нет связи — ничего не уходит, состояние переключателя не меняется');state='on';
+  fire('sess',{t:'sess',sess:{pointers:true,freeze:true}});ok(NL.cmdState().freeze===true,'Т7: «внимание» из настроек урока видно в подписи кнопки');
+  fire('sess',{t:'sess',sess:{pointers:true,freeze:false}});
+}
+
 /* ---- удаление ---- */
 fire('ev',{t:'ev',k:'freeze',slot:1,on:true});
 fire('closed',{code:4012,fatal:true});

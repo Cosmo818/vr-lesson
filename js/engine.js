@@ -227,7 +227,7 @@ void main(){
     };
     p.area=(x,y,w,h,fn,dis)=>{const i=p.btns.length;p.btns.push({x,y,w,h,fn,disabled:!!dis});return p.hover===i&&!dis;};
     p.button=(x,y,w,h,label,fn,t)=>{
-      t=t||{};const c=p.ctx,hov=p.area(x,y,w,h,fn,t.disabled);if(x<0||y<0||x+w>p.W+1||y+h>p.H+1)p.over.push('кнопка за краем: '+label);
+      t=t||{};const c=p.ctx,hov=p.area(x,y,w,h,fn,t.disabled);p.btns[p.btns.length-1].label=label;if(x<0||y<0||x+w>p.W+1||y+h>p.H+1)p.over.push('кнопка за краем: '+label);
       c.fillStyle=t.disabled?'#283250':(t.active?(t.activeBg||'#16a34a'):(t.bg||'#2563eb'));rrect(c,x,y,w,h,t.r||18);c.fill();
       if(hov){c.fillStyle='rgba(255,255,255,.22)';rrect(c,x,y,w,h,t.r||18);c.fill();c.lineWidth=6;c.strokeStyle='#fff';rrect(c,x+3,y+3,w-6,h-6,t.r||18);c.stroke();}
       let size=t.size||40,lines;
