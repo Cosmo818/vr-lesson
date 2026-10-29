@@ -23,19 +23,12 @@ html,body{height:auto;min-height:100%}
 #gWho{font-size:18px}
 #gTime{font-size:26px;font-weight:700;color:#fde68a;margin-left:auto}
 #gMsg{min-height:1.4em;margin:4px 0 8px;color:#cbd5e1}
-#wrap{display:flex;flex-direction:column;gap:12px}
-#fieldBox,#hintBox{min-width:0;width:100%}
+#wrap{width:100%;min-width:0;margin-top:10px}
 canvas.pl{display:block;width:100%;height:auto;background:#0f1730;border-radius:12px;touch-action:manipulation;user-select:none;-webkit-user-select:none}
-#rules{padding:12px 14px;border-radius:12px;background:#0f1730;border:1px solid var(--line)}
-#rules p{margin:6px 0;font-size:16px}
-#ctl{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+#ctl{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 #ctl .btn{padding:10px 14px;font-size:16px}
 #ctl .btn.sm{padding:10px 16px}
 .muted{color:var(--muted)}.small{font-size:14px}
-@media(min-width:900px){
-  #wrap{flex-direction:row;align-items:flex-start}
-  #fieldBox{flex:1 1 58%}#hintBox{flex:1 1 42%}
-}
 </style>
 </head>
 <body>
@@ -96,25 +89,14 @@ canvas.pl{display:block;width:100%;height:auto;background:#0f1730;border-radius:
   <section id="game" hidden>
     <div id="bar"><b id="gWho"></b><button type="button" id="gExit" class="btn ghost sm">Выйти</button><span id="gTime">0:00</span></div>
     <p id="gMsg"></p>
-    <div id="wrap">
-      <div id="fieldBox"><canvas id="cf" class="pl" width="952" height="700" aria-label="Поле 6 на 6"></canvas></div>
-      <div id="hintBox">
-        <canvas id="ch" class="pl" width="640" height="400" aria-label="Подсказки"></canvas>
-        <div id="rules" hidden></div>
-      </div>
-    </div>
     <div id="ctl">
       <button type="button" id="gStart" class="btn">Начать</button>
       <button type="button" id="gPause" class="btn ghost">Пауза</button>
-      <button type="button" id="gAgain" class="btn ghost">Сначала</button>
-      <button type="button" id="gNew" class="btn ghost">Новая</button>
-      <button type="button" id="gMode" class="btn ghost">Касание: выбрать фишку</button>
       <button type="button" id="gOpen" class="btn ghost">Открыть клетку (без зачёта)</button>
-      <button type="button" id="gRules" class="btn ghost">Правила</button>
-      <button type="button" id="gAm" class="btn ghost sm">A−</button>
-      <button type="button" id="gAp" class="btn ghost sm">A+</button>
+      <button type="button" id="gMenu" class="btn ghost">Меню</button>
     </div>
-    <p class="muted small">Мышь: левая кнопка — выбрать фишку, правая — исключить. На сенсорном экране режим переключает кнопка «Касание». Нажми подсказку, чтобы она потускнела.</p>
+    <div id="wrap"><canvas id="cf" class="pl" width="952" height="700" aria-label="Доска: поле 6 на 6 и подсказки"></canvas></div>
+    <p class="muted small">Мышь: левая кнопка — выбрать фишку, правая — убрать. На сенсорном экране: касание выбирает, долгое нажатие убирает. Нажми подсказку, чтобы она потускнела. Меню, правила и обучение — на доске по кнопке «Пауза» или «Меню».</p>
   </section>
 </main>
 <script src="js/errors.js"></script>
@@ -124,6 +106,8 @@ canvas.pl{display:block;width:100%;height:auto;background:#0f1730;border-radius:
 <script src="js/einstein.js"></script>
 <script src="js/games.js"></script>
 <script src="js/einrate.js"></script>
+<script src="js/eintut.js"></script>
+<script src="js/einplay.js"></script>
 <script src="js/einweb.js"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ import base64, hashlib, os, subprocess, sys, tempfile, time, urllib.request
 from playwright.sync_api import sync_playwright
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+shots = os.path.join(root, 'shots'); os.makedirs(shots, exist_ok=True)
 tmp = tempfile.mkdtemp(); fails = []
 sys.path.insert(0, os.path.join(root, 'server'))
 os.environ['DATA_DIR'] = tmp
@@ -127,8 +128,12 @@ try:
         ok(t1 > t0 + .8, 'таймер идёт (%.1f -> %.1f)' % (t0, t1))
         pg.click('#gPause'); pg.wait_for_timeout(300); ta = pg.evaluate('VR.einweb.state().t'); pg.wait_for_timeout(1300); tb = pg.evaluate('VR.einweb.state().t')
         ok(abs(tb - ta) < .01 and pg.get_attribute('#cf', 'data-paused') == '1', 'пауза: таймер стоит, поле скрыто')
-        c2, r2, s2, w2 = solpos(pg); click_tile(pg, c2, r2, w2, 'right'); pg.wait_for_timeout(100)
+        labs = pg.evaluate('VR.einweb.labels()')
+        ok(pg.evaluate('VR.einweb.state().geo') is None and '▶ Продолжить' in labs and 'Сначала' in labs and 'Новая партия' in labs and 'Обучение' in labs and 'Правила' in labs and 'A+' in labs, 'пауза: поле скрыто, на холсте окно меню (%s)' % labs)
+        c2, r2, s2, w2 = solpos(pg)
+        pg.evaluate('([c,r,w])=>VR.einplay.click(VR.einweb.E(),VR.einweb.state(),{wbtn:3},c,r,w)', [c2, r2, w2])
         ok(pg.evaluate('([c,r,w])=>VR.einweb.state().g.P.can(c,r,w)', [c2, r2, w2]), 'на паузе клики по полю не работают')
+        ok(not any(l in labs for l in ('Курок', 'Касание')) and not pg.query_selector('#gMode'), 'кнопки режима касания нет')
         pg.click('#gPause'); pg.wait_for_timeout(200)
         ok(pg.get_attribute('#cf', 'data-paused') == '' and pg.evaluate('!VR.einweb.state().paused'), 'продолжение снимает паузу')
         pg.evaluate('()=>{Object.defineProperty(document,"hidden",{value:true,configurable:true});document.dispatchEvent(new Event("visibilitychange"))}')
@@ -136,7 +141,7 @@ try:
         pg.evaluate('()=>{Object.defineProperty(document,"hidden",{value:false,configurable:true})}'); pg.click('#gPause')
 
         # подсказка гасится кликом
-        pg.locator('#ch').scroll_into_view_if_needed()
+        pg.locator('#cf').scroll_into_view_if_needed()
         hp = pg.evaluate('VR.einweb.hintPos()'); pg.mouse.click(hp['x'], hp['y']); pg.wait_for_timeout(100)
         ok(pg.evaluate('VR.einweb.state().used.size') == 1, 'клик по подсказке гасит её')
         pg.mouse.click(hp['x'], hp['y']); pg.wait_for_timeout(100)
@@ -149,8 +154,8 @@ try:
         ok(pg.evaluate('VR.einweb.state().g.status') == 'lose' and len(j1) == j0 + 1 and j1[-1]['sid'] == ids[0] and j1[-1]['res'] == 'lose', 'ученик: проигрыш пишется в журнал')
 
         # размер подсказок: свой для ученика, сохраняется после перезагрузки
-        pg.click('#gAp'); pg.wait_for_timeout(100)
-        ok(pg.evaluate('VR.games.prefs(%r).hk' % ids[0]) == 2, 'A+ сохранил размер подсказок ученику')
+        pg.click('#gMenu'); pg.wait_for_timeout(200); pg.evaluate('()=>window.scrollBy(0,VR.einweb.btnPos("A+").y-300)'); ap = pg.evaluate('VR.einweb.btnPos("A+")'); pg.mouse.click(ap['x'], ap['y']); pg.wait_for_timeout(150)
+        ok(pg.evaluate('VR.games.prefs(%r).hk' % ids[0]) == 2, 'A+ в меню сохранил размер подсказок ученику')
         pg.reload(); pg.wait_for_selector('#eSchool'); login_school(pg, n1, '1111'); pg.wait_for_selector('#game:not([hidden])')
         ok(pg.evaluate('VR.einweb.state().hk') == 2, 'после перезагрузки у ученика размер подсказок прежний')
         pg.click('#gExit'); pg.wait_for_selector('#eSchool')
@@ -166,7 +171,8 @@ try:
         fix_seed(pg2, 777); start_play(pg2)
         c, r, s, w = solpos(pg2); click_tile(pg2, c, r, w, 'left'); pg2.wait_for_timeout(200)
         ok(pg2.evaluate('VR.einweb.state().g.status') == 'lose' and pg2.evaluate('VR.games.load().games.length') == 0, 'гость: проиграл, журнал пуст')
-        pg2.click('#gNew'); pg2.click('#gOpen'); pg2.wait_for_timeout(100)
+        pg2.click('#gMenu'); pg2.wait_for_timeout(200); pg2.evaluate('()=>window.scrollBy(0,VR.einweb.btnPos("Новая партия").y-300)'); nb = pg2.evaluate('VR.einweb.btnPos("Новая партия")'); pg2.mouse.click(nb['x'], nb['y']); pg2.wait_for_timeout(200)
+        pg2.click('#gOpen'); pg2.wait_for_timeout(100)
         ok(pg2.evaluate('VR.einweb.state().helped') is True, '«Открыть клетку» помечает партию без зачёта')
 
         # 3. привязка устройства (живой сервер) и вход привязанного
@@ -208,16 +214,47 @@ try:
         v = inside(pm); ok(v['sw'] <= v['W'] and not v['bad'], '390x844: вход — ничего не выходит за край %s' % v)
         pm.click('#guestBtn'); pm.wait_for_selector('#game:not([hidden])'); start_play(pm)
         v = inside(pm); ok(v['sw'] <= v['W'] and not v['bad'], '390x844: игра — ничего не выходит за край %s' % v)
-        fb, hb = pm.evaluate('()=>[document.getElementById("cf").getBoundingClientRect().bottom,document.getElementById("ch").getBoundingClientRect().top]')
-        ok(hb >= fb - 1, '390x844: подсказки под полем')
-        pm.click('#gRules'); v = inside(pm); ok(v['sw'] <= v['W'] and not v['bad'], '390x844: правила — ничего не выходит за край %s' % v)
-        pm.click('#gRules')
-        pm.click('#gMode'); pm.locator('#cf').scroll_into_view_if_needed()
-        c, r, s, w = solpos(pm); pp = pm.evaluate('([c,r,e])=>VR.einweb.cellPos(c,r,e)', [c, r, w]); pm.touchscreen.tap(pp['x'], pp['y']); pm.wait_for_timeout(150)
-        ok(pm.evaluate('([c,r,w])=>!VR.einweb.state().g.P.can(c,r,w)', [c, r, w]), 'касание в режиме «убрать» исключает фишку')
+        GEO = '''()=>{const g=VR.einweb.state().geo,fb=g.fy+6*g.cell,fr=g.fx+6*g.cell,W=g.W;
+          return{cell:g.cell,under:g.items.filter(i=>i.k==="v").every(i=>i.y>=fb),right:g.items.filter(i=>i.k==="h").every(i=>i.x>=fr),inside:g.items.every(i=>i.x>=0&&i.x+i.w<=W&&i.y>=0&&i.y+i.h<=g.H),n:g.items.length}}'''
+        gm = pm.evaluate(GEO)
+        ok(gm['under'] and gm['right'] and gm['inside'] and gm['n'] > 10, '390x844: подсказки — вертикальные под полем, горизонтальные справа, всё внутри холста %s' % gm)
+        pm.screenshot(path=os.path.join(shots, 'einweb_phone_layout.png'), full_page=True)
+        pm.click('#gPause'); pm.wait_for_timeout(250)
+        pm.screenshot(path=os.path.join(shots, 'einweb_phone_menu.png'), full_page=True)
+        v = inside(pm); ok(v['sw'] <= v['W'] and not v['bad'] and not pm.evaluate('VR.einweb.over()'), '390x844: окно меню — ничего не выходит за край %s' % v)
+        for lbl, shot in (('Правила', 'einweb_phone_rules.png'), ('Обучение', 'einweb_phone_tutorial.png')):
+            ok(pm.evaluate('l=>VR.einweb.press(l)', lbl), '390x844: «%s» нажимается' % lbl); pm.wait_for_timeout(250)
+            v = inside(pm); ok(v['sw'] <= v['W'] and not v['bad'] and not pm.evaluate('VR.einweb.over()'), '390x844: %s — ничего не выходит за край %s' % (lbl, v))
+            pm.screenshot(path=os.path.join(shots, shot), full_page=True)
+            if lbl == 'Обучение':
+                n = 0
+                while pm.evaluate('VR.einweb.state().win') == 'tut' and n < 30:
+                    ok_o = not pm.evaluate('VR.einweb.over()')
+                    if not ok_o: fails.append('обучение: переполнение на шаге %d' % n); print('FAIL: обучение: переполнение на шаге %d %s' % (n, pm.evaluate('VR.einweb.over()')))
+                    pm.evaluate('VR.einweb.press("Дальше")||VR.einweb.press("Готово")'); pm.wait_for_timeout(120); n += 1
+                ok(pm.evaluate('VR.einweb.state().win') is None and pm.evaluate('VR.einweb.state().tutDone') is True and n >= 10, '390x844: обучение прошло до конца за %d шагов' % n)
+            else:
+                pm.evaluate('VR.einweb.press("Назад")'); pm.wait_for_timeout(200)
+        pm.evaluate('VR.einweb.press("Продолжить")'); pm.wait_for_timeout(250)
+        ok(pm.evaluate('!VR.einweb.state().paused'), '390x844: «Продолжить» из меню')
+        # долгое нажатие убирает, короткое выбирает (касание)
+        pm.locator('#cf').scroll_into_view_if_needed()
+        c, r, s, w = solpos(pm)
+        TOUCH = '''([x,y,ms])=>new Promise(res=>{const el=document.getElementById("cf"),o={clientX:x,clientY:y,pointerType:"touch",bubbles:true,button:0,pointerId:7};
+          el.dispatchEvent(new PointerEvent("pointerdown",o));setTimeout(()=>{el.dispatchEvent(new PointerEvent("pointerup",o));res(1)},ms)})'''
+        pp = pm.evaluate('([c,r,e])=>VR.einweb.cellPos(c,r,e)', [c, r, w]); pm.evaluate(TOUCH, [pp['x'], pp['y'], 700]); pm.wait_for_timeout(150)
+        ok(pm.evaluate('([c,r,w])=>!VR.einweb.state().g.P.can(c,r,w)', [c, r, w]), 'долгое нажатие на касании убирает фишку')
+        pp = pm.evaluate('([c,r,e])=>VR.einweb.cellPos(c,r,e)', [c, r, s]); pm.evaluate(TOUCH, [pp['x'], pp['y'], 60]); pm.wait_for_timeout(150)
+        ok(pm.evaluate('([c,r,s])=>VR.einweb.state().g.P.defined(c,r)&&VR.einweb.state().g.P.value(c,r)===s', [c, r, s]), 'короткое касание выбирает фишку')
         pw = fresh(b, viewport={'width': 1280, 'height': 900}); pw.click('#guestBtn'); pw.wait_for_selector('#game:not([hidden])')
-        fr, hr = pw.evaluate('()=>[document.getElementById("cf").getBoundingClientRect(),document.getElementById("ch").getBoundingClientRect()].map(r=>[r.left,r.top,r.right])')
-        ok(hr[0] >= fr[2] - 1 and abs(hr[1] - fr[1]) < 40, '1280: поле и подсказки рядом')
+        pw.screenshot(path=os.path.join(shots, 'einweb_menu.png'), full_page=True)
+        ok(pw.evaluate('VR.einweb.labels().includes("▶ Начать")') and pw.evaluate('VR.einweb.state().geo') is None, '1280: до старта на холсте меню, поле скрыто')
+        pw.click('#gStart'); pw.wait_for_timeout(300); gw = pw.evaluate(GEO)
+        ok(gw['under'] and gw['right'] and gw['inside'], '1280: вертикальные подсказки под полем, горизонтальные справа %s' % gw)
+        pw.screenshot(path=os.path.join(shots, 'einweb_layout.png'), full_page=True)
+        pw.evaluate('()=>{VR.einweb.state().win="tut";VR.einweb.state().tut={i:4};VR.einweb.state().opt.onDirty()}'); pw.wait_for_timeout(300)
+        pw.screenshot(path=os.path.join(shots, 'einweb_tutorial.png'), full_page=True)
+        ok(not pw.evaluate('VR.einweb.over()'), '1280: шаг обучения влезает')
 
         # 6. офлайн из кэша
         ctx = b.new_context(); po = ctx.new_page(); watch(po)

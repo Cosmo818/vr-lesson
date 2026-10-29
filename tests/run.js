@@ -43,7 +43,7 @@ function makeCtx(xr){
   sb.window.window=sb.window;sb.globalThis=sb;
   vm.createContext(sb);
   sb.window=sb;sb.addEventListener=()=>{};sb.devicePixelRatio=1;
-  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/netplay.js','js/netsafe.js','js/games.js','js/einrate.js','js/einplay.js','js/einroom.js','js/einterm.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
+  for(const f of['js/data.js','js/questions.js','js/errors.js','js/roomspec.js','js/schema.js','js/flags.js','js/store.js','js/engine.js','js/rooms.js','js/rooms2.js','js/chem.js','js/chemtree.js','js/inf.js','js/chess.js','js/play.js','js/einstein.js','js/netproto.js','js/net.js','js/netplay.js','js/netsafe.js','js/games.js','js/einrate.js','js/eintut.js','js/einplay.js','js/einroom.js','js/einterm.js','js/arena.js','js/custom.js','js/app.js'])vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),sb,{filename:f});
   return{sb,els,calls,rafQ,xrQ,hands,frame,session,store,mat,head};
 }
 
@@ -545,32 +545,33 @@ function makeCtx(xr){
       if(s.t==='near'&&Math.abs(col(...s.a)-col(...s.b))!==1)bad++;if(s.t==='dir'&&!(col(...s.a)<col(...s.b)))bad++;if(s.t==='under'&&col(...s.a)!==col(...s.b))bad++;
       if(s.t==='btw'){const a=col(...s.a),b=col(...s.b),m=col(...s.c);if(!(Math.abs(a-m)===1&&Math.abs(b-m)===1&&a!==b))bad++;}if(s.t==='open'&&pz.sol[s.row][s.col]!==s.thing)bad++;}}
     ok(bad===0,'эйнштейн: все подсказки 120 головоломок верны для решения'); }
+  const lab=(P,t)=>P.btns.find(b=>(b.label||'').replace(/^[^A-Za-zА-Яа-я]+/,'').indexOf(t)===0);
+  const subBtn=(P,S,off,c,r,e)=>{const q=VR.einplay.subPos(S.geo,c,r,e);return P.btns.find(b=>Math.abs(b.x-(q.x+off))<.01&&Math.abs(b.y-(q.y+off))<.01&&Math.abs(b.w-q.w)<.01);};
   E.goRoom('ein');run(25);
   { const Z=E.S,X=VR.einstein;
-    ok(Z.g&&Z.g.status==='play'&&Z.field&&Z.hints&&Z.ctl&&Z.favs,'эйнштейн-комната: четыре панели и приготовленная партия');
+    ok(Z.g&&Z.g.status==='play'&&Z.field&&!Z.hints&&Z.ctl&&Z.favs,'эйнштейн-комната: доска, управление, сохранённые и приготовленная партия');
     ok(Z.phase==='idle','эйнштейн-комната: при входе игра не включается (ждёт «Начать»)');
-    { const t0=Z.t;run(60);ok(Z.t===t0&&Z.field.btns.length===0,'эйнштейн-комната: до «Начать» время стоит, фишки не нажимаются'); }
+    { const t0=Z.t;run(60);ok(Z.t===t0&&Z.field.btns.length>0&&Z.field.btns.length<20&&Z.field.btns.every(b=>b.label)&&!!lab(Z.field,'Начать')&&!!lab(Z.field,'Новая партия')&&!!lab(Z.field,'Обучение')&&!!lab(Z.field,'Правила')&&!!lab(Z.field,'A+')&&!!lab(Z.field,'A−')&&!!lab(Z.field,'Стена')&&Z.geo===null,'Э12: до «Начать» на доске меню (Начать, Новая партия, Обучение, Правила, A−/A+, Стена ⇄ Терминал), поле скрыто, время стоит ['+Z.t+'/'+t0+' geo='+(Z.geo?1:0)+' n='+Z.field.btns.length+' over='+Z.field.over.join('|')+' '+Z.field.btns.map(b=>b.label).join(',')+']'); }
     { const sb=Z.ctl.btns.find(b=>b.y===206&&!b.disabled);ok(!!sb,'эйнштейн-комната: есть кнопка «Начать»');sb.fn({});run(4); ok(Z.phase==='play','эйнштейн-комната: «Начать» запускает партию'); }
     { const sd=Z.g.pz.seed,V=VR.games;ok(V.favToggle('einstein',sd)===true&&V.favs('einstein').includes(sd),'эйнштейн: сид сохраняется');ok(V.favToggle('einstein',sd)===false&&!V.favs('einstein').includes(sd),'эйнштейн: сид убирается из сохранённых');V.favToggle('einstein',123456);Z.favs.dirty=true;run(4);ok(!Z.favs.over.length&&Z.favs.btns.length>=3,'эйнштейн: панель сохранённых: кнопки есть, за край не выходит');V.favToggle('einstein',123456); }
-    { const w0=Z.hints.btns.length;for(const k of [0,2,1]){Z.hk=k;Z.hints.dirty=true;run(4);ok(!Z.hints.over.length&&Z.hints.btns.length>=w0-1,'эйнштейн: размер подсказок '+k+': области на месте, за край не выходят');}
-      const ab=Z.hints.btns.filter(b=>b.y===10);ok(ab.length===2,'эйнштейн: кнопки A− / A+');Z.hk=1;ab[1].fn();run(2);ok(Z.hk===2,'эйнштейн: A+ увеличивает подсказки');Z.hints.dirty=true;run(4);Z.hints.btns.find(b=>b.y===10).fn();run(2);ok(Z.hk===1,'эйнштейн: A− уменьшает');Z.hints.dirty=true;run(4); }
-    Z.field.dirty=true;Z.hints.dirty=true;Z.ctl.dirty=true;run(4);
-    { const cv=Z.hints.cv,fake={n:0};const calls=[];const cx={fillRect:(x,y,w,h)=>calls.push([x,y,w,h]),strokeRect(){},beginPath(){},moveTo(){},lineTo(){},closePath(){},fill(){},stroke(){},arc(){},fillText(){},save(){},restore(){},measureText:()=>({width:10})};
+    { VR.einplay.setPause(Z,true);run(3);Z.hk=1;lab(Z.field,'A+').fn();run(3);ok(Z.hk===2,'эйнштейн: A+ в меню увеличивает подсказки');lab(Z.field,'A−').fn();run(3);ok(Z.hk===1,'эйнштейн: A− в меню уменьшает');VR.einplay.resume(Z);run(3);
+      const w0=Z.field.btns.length;for(const k of [0,2,1]){Z.hk=k;Z.field.dirty=true;run(4);ok(!Z.field.over.length&&Z.field.btns.length>=w0-3,'эйнштейн: размер подсказок '+k+': области на месте, за край не выходят');} }
+    Z.field.dirty=true;Z.ctl.dirty=true;run(4);
+    { const cv=Z.field.cv,fake={n:0};const calls=[];const cx={fillRect:(x,y,w,h)=>calls.push([x,y,w,h]),strokeRect(){},beginPath(){},moveTo(){},lineTo(){},closePath(){},fill(){},stroke(){},arc(){},fillText(){},save(){},restore(){},measureText:()=>({width:10})};
       const ug=VR.einstein;void ug;const R0={t:'under',a:[1,2],b:[5,1]};if(VR.einroomDrawHint){VR.einroomDrawHint(cx,R0,0,0,50,false);ok(calls.some(c=>c[1]===0&&c[2]===50)&&calls.some(c=>c[1]===50&&c[2]===50),'эйнштейн: вертикальная подсказка рисует обе фишки');} }
-    ok(Z.field.btns.length>=100&&Z.hints.btns.length>=15,'эйнштейн-комната: у поля и подсказок есть области нажатия ('+Z.field.btns.length+' / '+Z.hints.btns.length+')');
-    ok(!Z.field.over.length&&!Z.hints.over.length&&!Z.ctl.over.length,'эйнштейн-комната: ничего не за краем панели');
+    ok(Z.field.btns.length>=115,'эйнштейн-комната: у поля и подсказок есть области нажатия ('+Z.field.btns.length+')');
+    ok(!Z.field.over.length&&!Z.ctl.over.length&&!Z.favs.over.length,'эйнштейн-комната: ничего не за краем панели');
     const g=Z.g,sol=g.pz.sol;let done=false;
-    Z.mode='pick';let tries=0;
+    let tries=0;
     while(g.status==='play'&&tries++<40){let hit=false;for(let r=0;r<6&&!hit;r++)for(let c=0;c<6&&!hit;c++)if(!g.P.defined(c,r)){Z.field.dirty=true;run(3);
       /* найти область нужной фишки: перебор областей клетки (c,r) */
-      const x0=100+c*316,y0=24+r*232,e=sol[r][c],k=e-1,want=[x0+8+(k%3)*100,y0+16+((k/3)|0)*104];
-      const bi=Z.field.btns.findIndex(b=>b.x===want[0]&&b.y===want[1]);if(bi>=0){Z.field.btns[bi].fn({});hit=true;}}
+      const e=sol[r][c],bt=subBtn(Z.field,Z,8,c,r,e),bi=bt?Z.field.btns.indexOf(bt):-1;if(bi>=0){Z.field.btns[bi].fn({});hit=true;}}
       if(!hit)break;}
     ok(g.status==='win'&&Z.ctl.dirty!==undefined,'эйнштейн-комната: клики по областям фишек решают головоломку ('+g.status+')');
   }
   { /* эйнштейн: ядро VR.einplay отдельно от стены (без комнаты и панелей) */
     const PL=VR.einplay,X=VR.einstein;
-    ok(!!PL&&['create','start','click','tick','drawField','drawHints','drawCtl'].every(k=>typeof PL[k]==='function'),'эйнштейн-ядро: VR.einplay с нужными функциями');
+    ok(!!PL&&['create','start','click','tick','drawBoard','drawBar','drawCtl'].every(k=>typeof PL[k]==='function'),'эйнштейн-ядро: VR.einplay с нужными функциями');
     ok(typeof X.drawHint==='function'&&VR.einroomDrawHint===X.drawHint,'эйнштейн-ядро: drawHint в einstein.js, алиас einroomDrawHint');
     { const calls=[],cx=new Proxy({},{get(_,k){if(k==='measureText')return t=>({width:String(t).length*10});if(k==='fillRect')return(x,y,w,h)=>calls.push([x,y,w,h]);return()=>{};},set(){return true;}});
       X.drawHint(cx,{t:'under',a:[1,2],b:[5,1]},0,0,50,false);ok(calls.some(c=>c[1]===0&&c[2]===50)&&calls.some(c=>c[1]===50&&c[2]===50),'эйнштейн-ядро: drawHint работает без комнат'); }
@@ -582,27 +583,33 @@ function makeCtx(xr){
     ok(G.phase==='idle'&&G.g===null&&G.used instanceof Set&&G.rated===false&&G.seedSrc===null&&G.paused===false,'эйнштейн-ядро: create — пустая партия с полями G');
     PL.start(Ex,G,4242,false,false);ok(G.g&&G.g.pz.seed===4242&&G.phase==='idle'&&dirt.length>0,'эйнштейн-ядро: start готовит партию и просит перерисовку');
     for(const[W,H]of[[1152,1152],[2048,1445]]){
-      const p=mk(W,H),rect={x:0,y:0,w:W,h:H};PL.drawField(Ex,G,cx,p,rect);
-      ok(p.btns.length===0,'эйнштейн-ядро: до «Начать» областей поля нет ('+W+')');
-      G.phase='play';const p2=mk(W,H);PL.drawField(Ex,G,cx,p2,rect);
+      const p=mk(W,H),rect={x:0,y:0,w:W,h:H};PL.drawBoard(Ex,G,cx,p,rect,PL.CFG.term);
+      ok(p.btns.length>0&&p.btns.length<20&&p.btns.every(b=>b.label)&&!p.over.length,'эйнштейн-ядро: до «Начать» только меню, поля нет ('+W+')');
+      G.phase='play';const p2=mk(W,H);PL.drawBoard(Ex,G,cx,p2,rect,PL.CFG.term);
       ok(p2.btns.length>=100&&p2.btns.every(b=>b.x>=rect.x&&b.y>=rect.y&&b.x+b.w<=rect.x+rect.w+.001&&b.y+b.h<=rect.y+rect.h+.001),'эйнштейн-ядро: области поля внутри rect '+W+'×'+H+' ('+p2.btns.length+')');
       G.phase='idle'; }
     { /* rect внутри большой панели: сдвиг учитывается */
-      G.phase='play';const p=mk(3000,2000),rect={x:500,y:300,w:1152,h:1152};PL.drawField(Ex,G,cx,p,rect);
+      G.phase='play';const p=mk(3000,2000),rect={x:500,y:300,w:1152,h:1152};PL.drawBoard(Ex,G,cx,p,rect,PL.CFG.term);
       ok(p.btns.length>=100&&p.btns.every(b=>b.x>=500&&b.y>=300&&b.x+b.w<=1652.001&&b.y+b.h<=1452.001),'эйнштейн-ядро: rect со сдвигом — области внутри него');
-      const pa=mk(3000,2000);PL.drawHints(Ex,G,cx,pa,{x:100,y:50,w:1536,h:1675},1);ok(pa.btns.length>=15&&pa.btns.every(b=>b.x>=100&&b.y>=50),'эйнштейн-ядро: подсказки в rect со сдвигом');
-      const pc=mk(768,603);PL.drawCtl(Ex,G,cx,pc,{x:0,y:0,w:768,h:603},'wall');ok(pc.btns.length>=5&&!pc.over.length,'эйнштейн-ядро: управление — кнопки есть, за край не выходят'); }
+      const pa=mk(3000,2000);PL.drawBoard(Ex,G,cx,pa,{x:100,y:50,w:1536,h:1675},PL.CFG.wall);ok(pa.btns.length>=115&&pa.btns.every(b=>b.x>=100&&b.y>=50),'эйнштейн-ядро: доска в rect со сдвигом');
+      const pc=mk(768,603);PL.drawCtl(Ex,G,cx,pc,{x:0,y:0,w:768,h:603});ok(pc.btns.length>=3&&!pc.over.length,'эйнштейн-ядро: управление — кнопки есть, за край не выходят'); }
     { /* игра: клики по областям решают, время идёт, пауза держит */
-      G.phase='play';PL.start(Ex,G,4242,false,true);G.mode='pick';const g=G.g,sol=g.pz.sol;
+      G.phase='play';PL.start(Ex,G,4242,false,true);const g=G.g,sol=g.pz.sol;
       PL.tick(Ex,G,2.5);ok(Math.abs(G.t-2.5)<1e-9,'эйнштейн-ядро: tick двигает время');
       G.paused=true;PL.tick(Ex,G,5);ok(Math.abs(G.t-2.5)<1e-9,'эйнштейн-ядро: на паузе время стоит');G.paused=false;
       Ex.menuOpen=true;PL.tick(Ex,G,1);ok(G.paused===true,'эйнштейн-ядро: открытое меню включает паузу');Ex.menuOpen=false;G.paused=false;
       let n=0;for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!g.P.defined(c,r)){PL.click(Ex,G,null,c,r,sol[r][c]);n++;}
       ok(n>0&&g.status==='win'&&Ex.fan===1&&/Готово/.test(G.msg),'эйнштейн-ядро: правильные клики выигрывают партию');
-      PL.start(Ex,G,4242,false,true);G.mode='pick';let bad=null;for(let r=0;r<6&&!bad;r++)for(let c=0;c<6&&!bad;c++)if(!G.g.P.defined(c,r))for(let e=1;e<=6;e++)if(e!==sol[r][c]&&G.g.P.can(c,r,e)){bad=[c,r,e];break;}
+      PL.start(Ex,G,4242,false,true);let bad=null;for(let r=0;r<6&&!bad;r++)for(let c=0;c<6&&!bad;c++)if(!G.g.P.defined(c,r))for(let e=1;e<=6;e++)if(e!==sol[r][c]&&G.g.P.can(c,r,e)){bad=[c,r,e];break;}
       PL.click(Ex,G,null,bad[0],bad[1],bad[2]);ok(G.g.status==='lose'&&G.sent===true,'эйнштейн-ядро: ошибка — проигрыш');
       PL.start(Ex,G,4242,true,true);ok(G.g.status==='play'&&G.sent===false&&G.g.pz.seed===4242,'эйнштейн-ядро: «Сначала» — та же головоломка');
-      G.mode='excl';PL.click(Ex,G,null,0,0,1);ok(G.g.moves<=1,'эйнштейн-ядро: режим «убрать» — клик считается');
+      { const g2=G.g,sl=g2.pz.sol;let w=null;for(let r=0;r<6&&!w;r++)for(let c=0;c<6&&!w;c++)if(!g2.P.defined(c,r))for(let e=1;e<=6;e++)if(e!==sl[r][c]&&g2.P.can(c,r,e)){w=[c,r,e];break;}
+        const grip={src:{gamepad:{buttons:[{pressed:true},{pressed:true}]}}};
+        PL.click(Ex,G,grip,w[0],w[1],w[2]);ok(G.g.status==='play'&&!G.g.P.can(w[0],w[1],w[2]),'Э12: grip + курок на неверной фишке убирает её (ошибки нет)');
+        const sol2=G.g.pz.sol;PL.click(Ex,G,{src:{gamepad:{buttons:[{pressed:true},{pressed:false}]}}},0,0,sol2[0][0]);ok(G.g.moves>=1||G.g.P.defined(0,0)||G.g.status==='win','Э12: курок без grip выбирает фишку');
+        PL.setPause(G,true);const m0=G.g.moves;PL.click(Ex,G,null,0,0,sol2[0][0]);ok(G.g.moves===m0,'Э12: на паузе клик по полю не работает');PL.resume(G);
+        PL.start(Ex,G,4242,false,true);const sl3=G.g.pz.sol;let w3=null;for(let r=0;r<6&&!w3;r++)for(let c=0;c<6&&!w3;c++)if(!G.g.P.defined(c,r))for(let e=1;e<=6;e++)if(e!==sl3[r][c]&&G.g.P.can(c,r,e)){w3=[c,r,e];break;}
+        PL.click(Ex,G,{src:{gamepad:{buttons:[{pressed:true},{pressed:false}]}}},w3[0],w3[1],w3[2]);ok(G.g.status==='lose','Э12: курок (выбрать) на неверной фишке — ошибка'); }
     }
   }
   { /* терминал-стойка: холл без стендов, геометрия, тычок рукой, вид в комнате «Эйнштейн» */
@@ -616,9 +623,9 @@ function makeCtx(xr){
     { const bad=[];for(const p of E.panels){E.paintPanel(p);if(p.over.length)bad.push(p.over.join('|'));}
       ok(!bad.length,'терминал: p.over пуст у всех панелей холла и терминала '+bad.join(';')); }
     /* тычок рукой по «Новая» */
-    { const G=T.G;VR.einplay.begin(E,G);E.paintPanel(T.panel);
-      const btn=lab=>T.panel.btns.find(b=>b.label===lab);
-      const nb=btn('Новая');ok(!!nb&&!!btn('Сначала'),'терминал: в обычной партии есть «Новая» и «Сначала»');
+    { const G=T.G;VR.einplay.begin(E,G);VR.einplay.setPause(G,true);E.paintPanel(T.panel);
+      const btn=lab=>T.panel.btns.find(b=>(b.label||'').indexOf(lab)===0);
+      const nb=btn('Новая партия');ok(!!nb&&!!btn('Сначала'),'терминал: в обычной партии есть «Новая» и «Сначала»');
       const p=T.panel,n=VR.einterm.normal(T),lx=((nb.x+nb.w/2)/p.W-.5)*p.w,ly=(.5-(nb.y+nb.h/2)/p.H)*p.h;
       const at=d=>[p.pos[0]+lx+n[0]*d,p.pos[1]+ly*Math.cos(p.tilt)+n[1]*d,p.pos[2]-ly*Math.sin(p.tilt)+n[2]*d];
       const h=E.H[1];h.has=true;h.src=null;h.hit=null;
@@ -627,22 +634,59 @@ function makeCtx(xr){
       put(.12);VR.einterm.poke(E,T);ok(G.g.pz.seed===seed0,'терминал: рука далеко — ничего');
       put(.01);VR.einterm.poke(E,T);const s1=G.g.pz.seed;ok(s1!==seed0,'терминал: тычок по «Новая» меняет партию');
       E.paintPanel(T.panel);VR.einterm.poke(E,T);VR.einterm.poke(E,T);ok(G.g.pz.seed===s1,'терминал: задержка руки не повторяет нажатие');
-      put(.12);VR.einterm.poke(E,T);put(.01);VR.einterm.poke(E,T);ok(G.g.pz.seed!==s1,'терминал: отход и повтор — ещё одно нажатие');
+      put(.12);VR.einterm.poke(E,T);VR.einplay.setPause(G,true);E.paintPanel(T.panel);put(.01);VR.einterm.poke(E,T);ok(G.g.pz.seed!==s1,'терминал: отход и повтор — ещё одно нажатие');
       h.has=false; }
     /* турнир: нет «Новая/Сначала/Пауза» */
     { const G=T.G;G.tid='T1';VR.einplay.start(E,G,5,false,true);E.paintPanel(T.panel);
       const labs=T.panel.btns.map(b=>b.label||'');
-      ok(!labs.some(l=>/Новая|Сначала|Пауза/.test(l))&&!T.panel.over.length,'терминал: в турнире нет «Новая/Сначала/Пауза»');G.tid=null; }
+      ok(!labs.some(l=>/Новая|Сначала|Пауза|Курок|Касание/.test(l))&&!T.panel.over.length,'терминал: в турнире нет «Новая/Сначала/Пауза» и кнопки режима курка');VR.einplay.openMenu(G);E.paintPanel(T.panel);const labs2=T.panel.btns.map(b=>b.label||'');ok(!labs2.some(l=>/Новая|Сначала/.test(l))&&labs2.some(l=>/Продолжить/.test(l))&&!T.panel.over.length,'Э12: меню в турнире — без «Новая/Сначала», с «Продолжить»');G.menu=false;G.tid=null; }
     /* комната «Эйнштейн»: вид wall/term без сброса партии */
     E.student={id:'sT',name:'Тест',grade:5};E.goRoom('ein');run(25);
     { const Q=E.S;ok(Q.view==='wall'&&Q.field.show&&Q.term&&!Q.term.panel.show&&!E.statics.includes(Q.term.statics[0]),'терминал: в комнате по умолчанию стена, терминал скрыт');
       VR.einplay.begin(E,Q);run(120);const t0=Q.t,g0=Q.g;
       const tg=()=>Q.term.panel.btns.find(b=>b.label==='Стена ⇄ Терминал');
       Q.term.onToggle(Q.term);run(3);
-      ok(Q.view==='term'&&Q.term.panel.show&&!Q.field.show&&!Q.hints.show&&!Q.ctl.show&&E.statics.includes(Q.term.statics[0])&&E.boxes.includes(Q.term.boxes[0]),'терминал: вид term — терминал виден, стена скрыта');
+      ok(Q.view==='term'&&Q.term.panel.show&&!Q.field.show&&!Q.ctl.show&&E.statics.includes(Q.term.statics[0])&&E.boxes.includes(Q.term.boxes[0]),'терминал: вид term — терминал виден, стена скрыта');
       ok(Q.t>=t0&&Q.g===g0&&Q.phase==='play','терминал: переключение вида не сбрасывает партию');
-      E.paintPanel(Q.term.panel);ok(!!tg()&&!Q.term.panel.over.length,'терминал: в комнате кнопка «Стена ⇄ Терминал», p.over пуст');
-      tg().fn({});run(3);ok(Q.view==='wall'&&Q.field.show&&!Q.term.panel.show&&Q.g===g0&&V.prefs('sT').view==='wall','терминал: обратно на стену, партия цела'); }
+      VR.einplay.setPause(Q,true);E.paintPanel(Q.term.panel);ok(!!tg()&&!Q.term.panel.over.length,'терминал: в комнате кнопка «Стена ⇄ Терминал», p.over пуст');
+      tg().fn({});VR.einplay.resume(Q);run(3);ok(Q.view==='wall'&&Q.field.show&&!Q.term.panel.show&&Q.g===g0&&V.prefs('sT').view==='wall','терминал: обратно на стену, партия цела'); }
+    E.student=stuKeep;V.pending=pendKeep;V._reset();E.goRoom('hall');run(6);
+  }
+  { /* Э12: раскладка доски, меню (до старта и на паузе), обучение, нет кнопки режима курка */
+    const V=VR.games,PL=VR.einplay,stuKeep=E.student,pendKeep=V.pending;V._reset();V.pending=null;E.student={id:'sE12',name:'Тест',grade:5};
+    E.goRoom('ein');run(25);const Z=E.S,paint=()=>{Z.field.dirty=true;Z.ctl.dirty=true;run(3);};
+    const allBtns=()=>Z.field.btns.concat(Z.ctl.btns,Z.favs.btns,Z.term.panel.btns);
+    ok(Z.tutDone===false&&Z.phase==='idle'&&Z.win===null,'Э12: первый запуск — обучение не пройдено, партия не идёт, окно меню (предлагается, не навязывается)');
+    ok(!!lab(Z.field,'Обучение')&&!allBtns().some(b=>/Курок:|Касание:|ВЫБРАТЬ|УБРАТЬ/.test(b.label||'')),'Э12: кнопки режима курка нет (панели доски и управления)');
+    /* обучение: до конца, партию и журнал не трогает */
+    { const seed0=Z.g.pz.seed,mv0=Z.g.moves,gl0=V.load().games.length,t0=Z.t;
+      lab(Z.field,'Обучение').fn();paint();ok(Z.win==='tut'&&!Z.field.over.length,'Э12: «Обучение» открывает обучение, ничего не за краем');
+      let steps=0,badOver=0;while(Z.win==='tut'&&steps<40){const nb=lab(Z.field,'Дальше')||lab(Z.field,'Готово');if(!nb)break;if(Z.field.over.length)badOver++;nb.fn();paint();steps++;}
+      ok(Z.win===null&&steps===VR.eintut.count()&&badOver===0,'Э12: обучение проходится за '+steps+' шагов, текст везде влезает ('+badOver+' переполнений)');
+      ok(Z.tutDone===true&&V.prefs('sE12').tutorialDone===true,'Э12: обучение отмечено пройденным в vrl.einprefs');
+      ok(Z.g.pz.seed===seed0&&Z.g.moves===mv0&&V.load().games.length===gl0&&Z.phase==='idle'&&Z.t===t0,'Э12: обучение не трогает партию и журнал игр');
+      lab(Z.field,'Обучение').fn();paint();const sk=lab(Z.field,'Пропустить');ok(!!sk,'Э12: в обучении есть «Пропустить»');sk.fn();paint();ok(Z.win===null,'Э12: «Пропустить» возвращает в меню');
+      lab(Z.field,'Правила').fn();paint();ok(Z.win==='rules'&&!Z.field.over.length,'Э12: «Правила» — экран правил влезает');lab(Z.field,'Назад').fn();paint(); }
+    /* раскладка: вертикальные подсказки под полем, горизонтальные справа */
+    lab(Z.field,'Начать').fn();paint();
+    { const g=Z.geo,fb=g.fy+6*g.cell,fr=g.fx+6*g.cell,hs=g.items.filter(i=>i.k==='h'),vs=g.items.filter(i=>i.k==='v');
+      ok(!!g&&hs.length>5&&vs.length>=1&&hs.every(i=>i.x>=fr)&&vs.every(i=>i.y>=fb),'Э12: вертикальные подсказки под полем (y ≥ '+fb+'), горизонтальные справа (x ≥ '+fr+')');
+      ok(g.items.every(i=>i.x>=0&&i.y>=0&&i.x+i.w<=Z.field.W-16&&i.y+i.h<=Z.field.H-16)&&!Z.field.over.length&&!Z.ctl.over.length,'Э12: подсказки в границах доски, p.over пуст');
+      ok(Z.field.btns.length>=100+hs.length+vs.length,'Э12: у фишек и подсказок есть области нажатия ('+Z.field.btns.length+')'); }
+    /* курок выбирает, grip убирает */
+    { const g=Z.g,sl=g.pz.sol;let w=null;for(let r=0;r<6&&!w;r++)for(let c=0;c<6&&!w;c++)if(!g.P.defined(c,r))for(let e=1;e<=6;e++)if(e!==sl[r][c]&&g.P.can(c,r,e)){w=[c,r,e];break;}
+      const bt=subBtn(Z.field,Z,8,w[0],w[1],w[2]);bt.fn({src:{gamepad:{buttons:[{pressed:true},{pressed:true}]}}});
+      ok(Z.g.status==='play'&&!Z.g.P.can(w[0],w[1],w[2]),'Э12: grip + курок убирает фишку в комнате'); }
+    /* пауза: окно меню, поле скрыто, время стоит */
+    PL.setPause(Z,true);paint();
+    { const t=Z.t;run(120);ok(Z.t===t&&Z.geo===null&&Z.field.btns.length<20&&!!lab(Z.field,'Продолжить')&&!!lab(Z.field,'Сначала')&&!!lab(Z.field,'Новая партия')&&!!lab(Z.field,'Обучение')&&!Z.field.over.length,'Э12: на паузе меню (Продолжить, Сначала, Новая партия, Обучение…), поле скрыто, время стоит ['+Z.t+'/'+t+' geo='+(Z.geo?1:0)+' n='+Z.field.btns.length+' over='+Z.field.over.join('|')+' '+Z.field.btns.map(b=>b.label).join(',')+']'); }
+    lab(Z.field,'Продолжить').fn();paint();ok(Z.paused===false&&Z.geo&&Z.field.btns.length>100,'Э12: «Продолжить» возвращает доску');
+    /* терминал в комнате: та же раскладка, клетка ≥ 187 px */
+    Z.term.onToggle(Z.term);run(3);E.paintPanel(Z.term.panel);
+    { const g=Z.geo,fb=g.fy+6*g.cell,fr=g.fx+6*g.cell;
+      ok(Z.view==='term'&&g.cell>=187&&g.items.filter(i=>i.k==='v').every(i=>i.y>=fb)&&g.items.filter(i=>i.k==='h').every(i=>i.x>=fr)&&!Z.term.panel.over.length,'Э12: терминал: клетка '+g.cell+' px (≥187), подсказки под полем и справа, p.over пуст');
+      ok(!Z.term.panel.btns.some(b=>/Курок:|Касание:/.test(b.label||'')),'Э12: на терминале кнопки режима нет'); }
+    Z.term.onToggle(Z.term);run(3);
     E.student=stuKeep;V.pending=pendKeep;V._reset();E.goRoom('hall');run(6);
   }
   { /* Э8: зачётная игра «Эйнштейн» — сид с сервера, solve, очередь vrl.einq (мок fetch; рабочий сервер — tests/ein_rating.py) */
@@ -720,39 +764,39 @@ function makeCtx(xr){
     const V=VR.games,LS=C.sb.localStorage,PK='vrl.einprefs',stuKeep=E.student,pendKeep=V.pending;V._reset();
     const startPlay=()=>{E.goRoom('ein');run(25);const Q=E.S;Q.ctl.btns.find(b=>b.y===206&&!b.disabled).fn({});run(4);return Q;};
     E.student={id:'sA',name:'Аня',grade:5};let Q=startPlay();
-    const pb=()=>Q.ctl.btns.find(b=>b.y===156);
+    const pb=()=>Q.ctl.btns.find(b=>b.y===206);
     ok(Q.phase==='play'&&!!pb()&&/Пауза/.test(pb().label||'Пауза'),'эйнштейн: кнопка паузы есть в обычной партии');
     run(300);const t1=Q.t;ok(t1>3,'эйнштейн: время идёт без паузы ('+t1.toFixed(1)+')');
     pb().fn();run(4);ok(Q.paused===true,'эйнштейн: пауза включена');
     const t2=Q.t;run(310);ok(Q.t===t2,'эйнштейн: на паузе время стоит (5 с кадров)');
     { const calls=[];const rc=Q.field.ctx||null;void rc;
-      Q.field.dirty=Q.hints.dirty=Q.ctl.dirty=true;run(4);
-      ok(Q.field.btns.length===0&&Q.hints.btns.length===0,'эйнштейн: на паузе нет областей поля и подсказок');
-      ok(!Q.field.over.length&&!Q.hints.over.length&&!Q.ctl.over.length,'эйнштейн: панели паузы не за краем');
+      Q.field.dirty=Q.ctl.dirty=true;run(4);
+      ok(Q.field.btns.length>0&&Q.field.btns.length<20&&Q.field.btns.every(b=>b.label)&&!!lab(Q.field,'Продолжить'),'эйнштейн: на паузе вместо поля окно меню (только кнопки)');
+      ok(!Q.field.over.length&&!Q.ctl.over.length,'эйнштейн: панели паузы не за краем');
       const g=Q.g,before=JSON.stringify(g.moves);Q.g.moves=Q.g.moves;void before; }
     pb().fn();run(4);ok(Q.paused===false&&Q.field.btns.length>=100,'эйнштейн: «Продолжить» возвращает поле');
     run(60);ok(Q.t>t2,'эйнштейн: после паузы время идёт');
-    pb().fn();run(2);Q.ctl.btns.find(b=>b.y===284&&b.x<200).fn({});run(2);ok(Q.paused===false,'эйнштейн: «Сначала» снимает паузу');
+    pb().fn();run(3);lab(Q.field,'Сначала').fn({});run(2);ok(Q.paused===false,'эйнштейн: «Сначала» снимает паузу');
     E.toggleMenu(true);run(4);ok(Q.paused===true,'эйнштейн: открытое меню включает паузу');E.toggleMenu(false);run(4);ok(Q.paused===true,'эйнштейн: закрытие меню паузу не снимает');
-    { const bs=Q.ctl.btns.filter(b=>b.y===156);bs[0].fn();run(2);ok(Q.paused===false,'эйнштейн: паузу снимает только кнопка'); }
+    { const bs=Q.ctl.btns.filter(b=>b.y===206);bs[0].fn();run(2);ok(Q.paused===false,'эйнштейн: паузу снимает только кнопка'); }
     /* турнир: кнопки нет, меню не включает паузу */
     V.pending={game:'einstein',tid:'T1',r:0,i:0,seed:77};Q=startPlay();
-    ok(Q.tid==='T1'&&Q.phase==='play'&&!pb(),'эйнштейн: в турнире кнопки паузы нет');
+    ok(Q.tid==='T1'&&Q.phase==='play'&&!/Пауза|Продолжить/.test((pb()||{}).label||''),'эйнштейн: в турнире кнопки паузы нет');
     E.toggleMenu(true);run(4);ok(Q.paused===false,'эйнштейн: в турнире меню паузу не включает');const t3=Q.t;run(60);ok(Q.t>t3,'эйнштейн: в турнире время идёт при меню');E.toggleMenu(false);run(2);
     /* настройки: два ученика на одном шлеме */
     V._reset();E.student={id:'sA',name:'Аня',grade:5};Q=startPlay();
-    Q.hints.btns.find(b=>b.y===10&&b.x>1300).fn();run(2);Q.ctl.btns.find(b=>b.y===206).fn();run(2);
-    ok(Q.hk===2&&Q.mode==='excl','эйнштейн: ученик A выставил крупно и режим «убрать»');
-    E.student={id:'sB',name:'Боря',grade:5};Q=startPlay();ok(Q.hk===1&&Q.mode==='pick','эйнштейн: у ученика B свои настройки (по умолчанию)');
-    Q.hints.btns.find(b=>b.y===10&&b.x<1300).fn();run(2);ok(Q.hk===0,'эйнштейн: B уменьшил подсказки');
-    E.student={id:'sA',name:'Аня',grade:5};Q=startPlay();ok(Q.hk===2&&Q.mode==='excl','эйнштейн: A после перезахода: настройки сохранились');
+    VR.einplay.setPause(Q,true);run(3);lab(Q.field,'A+').fn();run(2);
+    ok(Q.hk===2,'эйнштейн: ученик A выставил крупно и режим «убрать»');
+    E.student={id:'sB',name:'Боря',grade:5};Q=startPlay();ok(Q.hk===1,'эйнштейн: у ученика B свои настройки (по умолчанию)');
+    VR.einplay.setPause(Q,true);run(3);lab(Q.field,'A−').fn();run(2);ok(Q.hk===0,'эйнштейн: B уменьшил подсказки');
+    E.student={id:'sA',name:'Аня',grade:5};Q=startPlay();ok(Q.hk===2,'эйнштейн: A после перезахода: настройки сохранились');
     E.student=null;Q=startPlay();ok(Q.hk===1,'эйнштейн: гость — по умолчанию, настройки не чужие');
     ok(V.prefs('sB').hk===0&&V.prefs('sA').hk===2&&V.prefs('nobody').hk===1,'игры: prefs по id ученика');
     /* испорченные данные */
     for(const bad of ['{{не json','[1,2,3]','"строка"','null','{"v":1,"u":[1]}','{"v":1,"u":{"sA":{"hk":99,"mode":"zzz","view":5,"tab":{},"order":null}}}']){
       LS.setItem(PK,bad);const pf=V.prefs('sA');ok(pf.hk===1&&pf.mode==='pick'&&pf.view==='wall'&&pf.tab==='school'&&pf.order==='avg','игры: испорченный vrl.einprefs ('+bad.slice(0,14)+') — значения по умолчанию');}
     LS.setItem(PK,'[1]');ok(V.setPrefs('sA',{hk:2}).hk===2&&V.prefs('sA').hk===2,'игры: setPrefs после порчи пишет заново');
-    ok(V.setPrefs('sA',{hk:99,mode:'bad'}).hk===2&&V.prefs('sA').mode==='pick','игры: неверное в setPrefs отбрасывается');
+    ok(V.setPrefs('sA',{hk:99,mode:'bad'}).hk===2&&V.prefs('sA').mode==='pick','игры: неверное в setPrefs отбрасывается');ok(V.setPrefs('sA',{tutorialDone:true}).tutorialDone===true&&V.setPrefs('sA',{tutorialDone:'да'}).tutorialDone===true&&V.prefs('sZ').tutorialDone===false,'Э12: tutorialDone — булево, по умолчанию false');
     /* 201-й ученик вытесняет самого старого */
     { const u={};for(let i=1;i<=200;i++)u['k'+i]={hk:2,mode:'excl',ts:1000+i};LS.setItem(PK,JSON.stringify({v:1,u}));
       V.setPrefs('new201',{hk:0});const raw=JSON.parse(LS.getItem(PK)).u,ks=Object.keys(raw);
@@ -816,8 +860,8 @@ function makeCtx(xr){
     play.fn();run(20);
     { const sb=E.S.ctl.btns.find(b=>b.y===206&&!b.disabled);if(sb){sb.fn({});run(4);} }
     ok(E.S.tid===t4.id&&E.S.mid==='0.0'&&E.S.g&&E.S.g.pz.seed===G.matchSeed(T.get(t4.id),0,0),'арена: «Играть» открывает турнирную головоломку с сидом матча');
-    const sol=E.S.g.pz.sol;E.S.mode='pick';
-    for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!E.S.g.P.defined(c,r)&&E.S.g.status==='play'){E.S.field.dirty=true;run(3);const x0=100+c*316,y0=24+r*232,k=sol[r][c]-1;const bi=E.S.field.btns.findIndex(b=>b.x===x0+8+(k%3)*100&&b.y===y0+16+((k/3)|0)*104);if(bi>=0)E.S.field.btns[bi].fn({});}
+    const sol=E.S.g.pz.sol;
+    for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!E.S.g.P.defined(c,r)&&E.S.g.status==='play'){E.S.field.dirty=true;run(3);const bt=subBtn(E.S.field,E.S,8,c,r,sol[r][c]);if(bt)bt.fn({});}
     const rm=T.get(t4.id).rounds[0][0];
     ok(E.S.g.status==='win'&&(rm.ra||rm.rb),'арена: победа в турнирной партии записана в матч');
     E.student=prevStu;G._reset();

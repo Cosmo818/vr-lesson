@@ -3,21 +3,11 @@
    всё через Store.*. Код ученика живёт только в памяти страницы. Запуск при загрузке — в конце файла (TDZ). */
 (function(){
 'use strict';
-const VR=window.VR,S=VR.Store,E1=VR.einstein,N=E1.N;
+const VR=window.VR,S=VR.Store,PL=VR.einplay;
 const $=id=>document.getElementById(id);
 const fmtT=s=>{s=Math.floor(s);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
-const HK=[.9,1.2,1.5];
-/* геометрия поля и подсказок (пиксели полотен; на экране полотна масштабируются по ширине) */
-const FX=36,FY=26,CW=148,CH=108,FW=952,FH=700,HW=640;
-const SUBW=(CW-8)/3,SUBH=(CH-12)/2;
-const RULES=[
-  'Надо открыть все фишки в квадрате 6×6. В каждой строке фишки одного типа: цифры, латинские буквы, римские цифры, кости, фигуры, математические знаки.',
-  'Открывать фишки надо методом исключения. Пока фишка не открыта, на её месте показаны все возможные варианты. Левая кнопка мыши открывает фишку, правая исключает её. На сенсорном экране — как выбрано кнопкой «Касание».',
-  'Вертикальная подсказка: две фишки в одной колонке. Красная двойная стрелка: фишки в соседних колонках. Три красные точки: левая фишка левее правой. Синяя стрелка над тремя фишками: средняя стоит между двумя другими, все три рядом.',
-  'Использованную подсказку нажми — она потускнеет. Ошибка (убрана верная фишка или выбрана неверная) — проигрыш.'];
-
 let E={student:null,pk:null,tag:'guest'};   /* E.student → VR.games.finish; нет ученика — запись в журнал не пишется */
-let G=null,tickT=0,loggedStu=false,fails=0,lockUntil=0,pinMem='';
+let G=null,P=null,tickT=0,drawQ=0,press=null,loggedStu=false,fails=0,lockUntil=0,pinMem='';
 
 function show(id){for(const k of ['eSchool','eBound','eFree','eTeacher'])$(k).hidden=k!==id;}
 function prefsOf(){return VR.games.prefs(E.pk);}
@@ -91,186 +81,84 @@ async function pairGo(e){
 function teacherName(){return String(S.account.who()||'').replace(/[^\w-]/g,'').slice(0,40)||'x';}
 
 /* ---------- игра ---------- */
+/* E — тот же набор, что у движка, для общего ядра (js/einplay.js): звуков и комнат в вебе нет */
+const mkE=(student,pk,tag)=>({student,pk,tag,menuOpen:false,H:[],beep(){},buzz(){},fanfare(){},goRoom(){}});
+/* настройки по ширине холста: широкий экран — три колонки подсказок справа, телефон — одна */
+function cfgFor(w){
+  const wide=w>=700;
+  return wide?{web:true,fs:20,bh:54,T:44,fx:30,fy:28,gap:10,minCell:90,maxCell:112,cols:3,minH:560}
+    :{web:true,fs:15,bh:44,T:24,fx:16,fy:20,gap:6,minCell:36,maxCell:60,cols:1,minH:520};
+}
 function begin(student,pkId,label){
-  E={student:student,pk:pkId||null,tag:label||'Гость'};
+  E=mkE(student,pkId||null,label||'Гость');
   $('enter').hidden=true;$('game').hidden=false;
   $('gWho').textContent=student?E.tag:(E.tag==='Учитель'?'Учитель (без зачёта)':'Гость (вне рейтинга)');
-  const pf=prefsOf();
-  G={rated:false,burn:false,seedSrc:'rand',fetching:false,rid:0,g:null,t:0,sec:0,helped:false,sent:false,used:new Set(),phase:'idle',paused:false,mode:pf.mode,hk:pf.hk,msg:'',hov:null,rules:false,last:0};
-  newPuzzle(undefined,false);
+  G=PL.create(E,{onDirty:onDirty});G.view='web';
+  P=PL.canvasPanel($('cf'));
+  PL.start(E,G,undefined,false,false);
   startTick();
   try{VR.einrate.flush(E);}catch(e){}
 }
-function newPuzzle(seed,play){
-  G.rid++;G.fetching=false;G.rated=false;G.burn=false;G.seedSrc=seed===undefined?'rand':'set';   /* устаревший ответ сервера игнорируется */
-  const pz=E1.generate(seed);
-  G.g=E1.newGame(pz);resetRun(play);
+function onDirty(w){
+  ui();
+  if(w==='ctl')return;
+  if(!drawQ){drawQ=1;const f=()=>{drawQ=0;redraw();};if(window.requestAnimationFrame)requestAnimationFrame(f);else setTimeout(f,16);}
 }
-/* зачётная игра (js/einrate.js): у вошедшего ученика номер выдаёт сервер; нет связи / 404 / гость — локальный номер, вне рейтинга */
-const RT=()=>VR.einrate||null;
-function freshPuzzle(play){
-  const R=RT();
-  if(!R||!R.enabled(E)){newPuzzle(undefined,play);return;}
-  if(G.fetching)return;
-  newPuzzle(undefined,play);G.fetching=true;G.msg='Запрашиваю головоломку…';ui();
-  const tok=G.rid;try{R.flush(E).catch(()=>{});}catch(e){}
-  R.fetchSeed(E,'web').then(seed=>{
-    if(!G||tok!==G.rid)return;
-    if(seed!=null){newPuzzle(seed,play);G.rated=true;G.seedSrc='rand';}
-    else{G.fetching=false;G.msg='';ui();}
-  }).catch(()=>{if(G&&tok===G.rid){G.fetching=false;G.msg='';ui();}});
+function logical(ev){
+  const r0=$('cf').getBoundingClientRect(),k=P.W/r0.width;
+  return{x:(ev.clientX-r0.left)*k,y:(ev.clientY-r0.top)*k};
 }
-function startRun(){
-  if(!G||G.phase!=='idle'||G.fetching)return;
-  const go=()=>{G.phase='play';G.t=0;G.sec=0;G.last=performance.now();redraw();};
-  const R=RT();
-  if(G.seedSrc==='rand'&&!G.rated&&R&&R.enabled(E)){
-    G.fetching=true;ui();const tok=++G.rid;
-    try{R.flush(E).catch(()=>{});}catch(e){}
-    R.fetchSeed(E,'web').then(seed=>{
-      if(!G||tok!==G.rid)return;
-      if(seed!=null){newPuzzle(seed,false);G.rated=true;G.seedSrc='rand';}
-      G.fetching=false;go();
-    }).catch(()=>{if(G&&tok===G.rid){G.fetching=false;go();}});
-    return;
-  }
-  go();
+function hit(ev){
+  if(!G||!P)return -1;const q=logical(ev);
+  for(let i=P.btns.length-1;i>=0;i--){const b=P.btns[i];if(q.x>=b.x&&q.x<=b.x+b.w&&q.y>=b.y&&q.y<=b.y+b.h)return i;}
+  return -1;
 }
-/* победа при выданном номере (или после помощи по нему — helped:1 сжигает номер) → один solve; без связи — в очередь vrl.einq */
-function sendSolve(){
-  const R=RT();if(!R||!(G.rated||G.burn))return;
-  const gr=G.g,rec={seed:gr.pz.seed,time:Math.round(G.t),moves:Math.max(1,gr.moves|0),helped:G.helped||G.burn?1:0,src:'web'};
-  G.rated=false;G.burn=false;
-  R.submit(E,rec).then(res=>{const add=R.say(res);if(add&&G&&G.g===gr){G.msg+=add;ui();}}).catch(()=>{});
+function fire(i,btn){const b=P&&P.btns[i];if(!b||b.disabled)return;try{b.fn({wbtn:btn});}catch(e){}}
+function onDown(ev){
+  ev.preventDefault();const i=hit(ev);if(i<0)return;
+  if(ev.pointerType==='mouse'){const b=ev.button===2?3:ev.button===0?1:0;if(b)fire(i,b);return;}
+  clearTimeout(press&&press.t);
+  const pr={i,done:false};pr.t=setTimeout(()=>{if(press===pr&&!pr.done){pr.done=true;fire(i,3);}},450);press=pr;
 }
-function ratedNote(){const R=RT();return R&&R.visible(E)?(G.rated?' · в рейтинг':(G.burn?' · помощь, в зачёт не идёт':' · вне рейтинга')):'';}
-function resetRun(play){
-  G.t=0;G.sec=0;G.helped=false;G.sent=false;G.used=new Set();G.paused=false;G.msg='';G.rules=false;
-  G.phase=play?'play':'idle';
-  redraw();
+function onUp(ev){
+  const pr=press;if(!pr)return;press=null;clearTimeout(pr.t);
+  if(!pr.done&&hit(ev)===pr.i)fire(pr.i,1);
 }
-function finish(info){
-  if(G.sent)return;G.sent=true;
-  try{VR.games.finish(E,'einstein',Object.assign({seed:G.g.pz.seed,helped:G.helped,moves:G.g.moves},info));}catch(e){}
-  if(info&&info.time!=null)sendSolve();
+function onMove(ev){
+  if(!G||ev.pointerType!=='mouse')return;const i=hit(ev);
+  if(i!==P.hover){P.hover=i;redraw();}
 }
-function pick(ev){
-  if(!G||G.phase!=='play'||G.paused||G.g.status!=='play')return;
-  const r0=$('cf').getBoundingClientRect(),k=FW/r0.width;
-  const x=(ev.clientX-r0.left)*k,y=(ev.clientY-r0.top)*k;
-  const c=Math.floor((x-FX)/CW),r=Math.floor((y-FY)/CH);
-  if(c<0||c>=N||r<0||r>=N)return;
-  const sx=Math.floor((x-FX-c*CW-4)/SUBW),sy=Math.floor((y-FY-r*CH-6)/SUBH);
-  if(sx<0||sx>2||sy<0||sy>1)return;
-  const e=sy*3+sx+1,g=G.g;
-  if(g.P.defined(c,r)||!g.P.can(c,r,e))return;
-  const btn=ev.pointerType==='mouse'?(ev.button===2?3:ev.button===0?1:0):(G.mode==='pick'?1:3);
-  if(!btn)return;
-  const res=E1.click(g,c,r,e,btn);
-  if(res==='noop')return;
-  if(res==='fail'){G.msg='Ошибка: так не может быть. Начни сначала или возьми новую.';finish({res:'lose'});}
-  else if(res==='win'){G.msg='Готово! Все фишки открыты за '+fmtT(G.t)+(G.helped?' (с помощью — в зачёт не идёт)':'');finish({time:Math.round(G.t)});}
-  redraw();
-}
-function hover(ev){
-  if(!G||ev.pointerType!=='mouse')return;
-  const r0=$('cf').getBoundingClientRect(),k=FW/r0.width,x=(ev.clientX-r0.left)*k,y=(ev.clientY-r0.top)*k;
-  const c=Math.floor((x-FX)/CW),r=Math.floor((y-FY)/CH),sx=Math.floor((x-FX-c*CW-4)/SUBW),sy=Math.floor((y-FY-r*CH-6)/SUBH);
-  const h=c>=0&&c<N&&r>=0&&r<N&&sx>=0&&sx<=2&&sy>=0&&sy<=1?c+','+r+','+(sy*3+sx+1):null;
-  if(h!==G.hov){G.hov=h;drawField();}
-}
-function setPause(v){if(!G||G.phase!=='play'||G.g.status!=='play')return;G.paused=v;redraw();}
 
 /* ---------- время ---------- */
 function startTick(){stopTick();G.last=performance.now();tickT=setInterval(tick,200);}
 function stopTick(){if(tickT){clearInterval(tickT);tickT=0;}}
 function tick(){
   if(!G)return;const now=performance.now(),dt=(now-G.last)/1000;G.last=now;
-  if(G.paused||G.phase!=='play'||G.g.status!=='play')return;
-  G.t+=Math.min(dt,1);const s=Math.floor(G.t);
-  if(s!==G.sec){G.sec=s;$('gTime').textContent=fmtT(G.t);}
+  PL.tick(E,G,Math.min(dt,1));
 }
 
 /* ---------- рисование ---------- */
-function redraw(){drawField();drawHints();ui();}
-function pauseFill(c,w,h,sz){c.fillStyle='#0b1020';c.fillRect(0,0,w,h);c.fillStyle='#fde68a';c.font='bold '+sz+'px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('Пауза',w/2,h/2);}
-function drawField(){
-  if(!G)return;const cv=$('cf'),c=cv.getContext('2d'),g=G.g,P=g.P,over=g.status==='lose';
-  const pz=G.paused&&G.phase==='play';cv.dataset.paused=pz?'1':'';
-  c.clearRect(0,0,FW,FH);
-  if(pz){pauseFill(c,FW,FH,90);return;}
-  c.font='bold 18px sans-serif';c.fillStyle='#94a3b8';c.textAlign='center';c.textBaseline='middle';
-  for(let i=0;i<N;i++)c.fillText(String(i+1),FX+i*CW+CW/2,12);
-  for(let r=0;r<N;r++){
-    c.fillStyle='#64748b';c.font='bold 22px sans-serif';c.textAlign='center';c.fillText('ABCDEF'[r],FX/2,FY+r*CH+CH/2);
-    for(let col=0;col<N;col++){
-      const x=FX+col*CW,y=FY+r*CH;
-      c.fillStyle=over?'#2b1b1b':(r+col)%2?'#16213e':'#1b2a4e';c.fillRect(x+2,y+2,CW-4,CH-4);
-      if(G.phase==='idle')continue;
-      if(P.defined(col,r)){c.fillStyle='#14532d';c.fillRect(x+2,y+2,CW-4,CH-4);E1.drawTile(c,r,P.value(col,r),x+(CW-80)/2,y+(CH-80)/2,80,'#f0fdf4');continue;}
-      c.strokeStyle='#475569';c.lineWidth=1;c.beginPath();
-      for(let i=0;i<=3;i++){c.moveTo(x+4+i*SUBW,y+6);c.lineTo(x+4+i*SUBW,y+6+2*SUBH);}
-      for(let j=0;j<=2;j++){c.moveTo(x+4,y+6+j*SUBH);c.lineTo(x+4+3*SUBW,y+6+j*SUBH);}
-      c.stroke();
-      for(let e=1;e<=N;e++){
-        if(!P.can(col,r,e))continue;
-        const k=e-1,tx=x+4+(k%3)*SUBW,ty=y+6+((k/3)|0)*SUBH,hov=G.hov===col+','+r+','+e&&G.phase==='play'&&g.status==='play';
-        if(hov){c.fillStyle=G.mode==='pick'?'#166534':'#991b1b';c.fillRect(tx+1,ty+1,SUBW-2,SUBH-2);}
-        E1.drawTile(c,r,e,tx+3,ty+3,Math.min(SUBW,SUBH)-6,hov?'#fde68a':'#cbd5e1');
-      }
-    }
-  }
-  c.strokeStyle='#e2e8f0';c.lineWidth=2.5;c.beginPath();
-  for(let i=0;i<=N;i++){c.moveTo(FX+i*CW,FY);c.lineTo(FX+i*CW,FY+N*CH);c.moveTo(FX,FY+i*CH);c.lineTo(FX+N*CW,FY+i*CH);}
-  c.stroke();c.lineWidth=4;c.strokeRect(FX,FY,N*CW,N*CH);
-  if(G.phase==='idle'){
-    c.fillStyle='rgba(8,12,28,.78)';c.fillRect(FX,FY,N*CW,N*CH);
-    c.fillStyle='#fde68a';c.font='bold 44px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('Нажми «Начать»',FX+N*CW/2,FY+N*CH/2-20);
-    c.fillStyle='#cbd5e1';c.font='22px sans-serif';c.fillText('Партия № '+g.pz.seed,FX+N*CW/2,FY+N*CH/2+30);
-  }
-}
-/* раскладка подсказок: общая для рисования и нажатия */
-function hintLayout(){
-  const rules=G.g.pz.rules,T=Math.round(52*HK[G.hk]),horiz=[],vert=[],items=[];
-  rules.forEach((s,i)=>{const k=E1.showOf(s);if(k==='horiz')horiz.push(i);else if(k==='vert')vert.push(i);});
-  const BW=3*T,cw=BW+24,rh=T+14,perH=Math.max(1,Math.floor((HW-20)/cw)),vs=T+24,perV=Math.max(1,Math.floor((HW-20)/vs));
-  let y=30;const heads=[];
-  heads.push({t:'По горизонтали:',y:y});y+=26;
-  horiz.forEach((i,k)=>items.push({i,x:10+(k%perH)*cw,y:y+((k/perH)|0)*rh,w:BW,h:T,T}));
-  y+=Math.ceil(horiz.length/perH)*rh+12;
-  heads.push({t:'По вертикали (в одной колонке):',y:y});y+=26;
-  vert.forEach((i,k)=>items.push({i,x:10+(k%perV)*vs,y:y+((k/perV)|0)*(2*T+14),w:T,h:2*T,T}));
-  y+=Math.ceil(vert.length/perV)*(2*T+14)+8;
-  return{items,heads,H:Math.max(120,y)};
-}
-function drawHints(){
-  if(!G)return;const cv=$('ch'),c=cv.getContext('2d');
-  cv.hidden=G.rules;$('rules').hidden=!G.rules;if(G.rules)return;
-  if(G.phase==='idle'){if(cv.height!==160)cv.height=160;c.clearRect(0,0,HW,160);c.fillStyle='#94a3b8';c.font='24px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('Подсказки появятся после «Начать»',HW/2,80);return;}
-  if(G.paused){if(cv.height!==260)cv.height=260;c.clearRect(0,0,HW,260);pauseFill(c,HW,260,70);return;}
-  const L=hintLayout();if(cv.height!==L.H)cv.height=L.H;
-  c.clearRect(0,0,HW,L.H);
-  c.fillStyle='#e8efff';c.font='bold 24px sans-serif';c.textAlign='left';c.textBaseline='middle';c.fillText('Подсказки',10,14);
-  c.fillStyle='#94a3b8';c.font='18px sans-serif';for(const h of L.heads)c.fillText(h.t,10,h.y+8);
-  for(const it of L.items)E1.drawHint(c,G.g.pz.rules[it.i],it.x,it.y,it.T,G.used.has(it.i));
-}
-function hintClick(ev){
-  if(!G||G.phase!=='play'||G.paused||G.rules)return;
-  const r0=$('ch').getBoundingClientRect(),k=HW/r0.width,x=(ev.clientX-r0.left)*k,y=(ev.clientY-r0.top)*k;
-  for(const it of hintLayout().items)if(x>=it.x-4&&x<=it.x+it.w+4&&y>=it.y-4&&y<=it.y+it.h+4){
-    if(G.used.has(it.i))G.used.delete(it.i);else G.used.add(it.i);drawHints();return;}
+function redraw(){
+  if(!G||!P)return;
+  const cv=$('cf'),box=cv.parentElement,cw=Math.max(300,Math.floor(box.clientWidth)||360),cfg=cfgFor(cw),dpr=Math.min(2,window.devicePixelRatio||1);
+  let H=Math.max(PL.geom(G,cw,0,cfg).H,cfg.minH);
+  if(G.win)H=Math.max(H,cw>=700?720:880);
+  const bw=Math.round(cw*dpr),bh=Math.round(H*dpr);
+  if(cv.width!==bw)cv.width=bw;if(cv.height!==bh)cv.height=bh;
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);
+  P.W=cw;P.H=H;P.ctx=c;P.begin();
+  c.clearRect(0,0,cw,H);c.fillStyle='#0f1730';c.fillRect(0,0,cw,H);
+  cv.dataset.paused=G.paused&&G.phase==='play'?'1':'';
+  PL.drawBoard(E,G,c,P,{x:0,y:0,w:cw,h:H},cfg);
 }
 function ui(){
-  if(!G)return;const play=G.phase==='play',live=play&&G.g.status==='play';
-  $('gStart').hidden=G.phase!=='idle';
-  $('gPause').disabled=!live;$('gPause').textContent=G.paused?'Продолжить':'Пауза';
-  $('gAgain').disabled=G.phase==='idle';$('gOpen').disabled=!live||G.paused;
-  $('gMode').textContent='Касание: '+(G.mode==='pick'?'выбрать фишку':'убрать фишку');
-  $('gAm').disabled=G.hk<=0;$('gAp').disabled=G.hk>=HK.length-1;
-  $('gRules').textContent=G.rules?'Подсказки':'Правила';
-  $('gMsg').textContent=G.msg||(G.phase==='idle'?'Партия № '+G.g.pz.seed+'. Нажми «Начать».':'Открой все фишки: исключай лишние по подсказкам.')+(G.g.status==='play'?ratedNote():'');
-  $('gStart').disabled=!!G.fetching;$('gNew').disabled=!!G.fetching;
-  $('gTime').textContent=fmtT(G.t);
+  if(!G||!G.g)return;const live=G.phase==='play'&&G.g.status==='play';
+  $('gStart').hidden=G.phase!=='idle';$('gStart').disabled=!!G.fetching;
+  $('gPause').hidden=!live||!!G.tid;$('gPause').textContent=G.paused?'Продолжить':'Пауза';
+  $('gOpen').hidden=!live||!!G.tid;$('gOpen').disabled=G.paused;
+  $('gMenu').hidden=G.phase==='idle'||(live&&!G.tid);$('gMenu').textContent=G.menu?'Закрыть меню':'Меню';
+  $('gMsg').textContent=G.msg||(G.phase==='idle'?'Партия № '+G.g.pz.seed+'. Нажми «Начать».':'Открой все фишки: исключай лишние по подсказкам.')+(G.g.status==='play'?PL.note(E,G):'');
+  $('gTime').textContent=PL.fmtT(G.t);
 }
 
 /* ---------- кнопки ---------- */
@@ -284,36 +172,26 @@ function bind(){
   $('pCancel').onclick=()=>{$('pairForm').hidden=true;$('pErr').textContent='';};
   $('pairForm').onsubmit=pairGo;
   $('gExit').onclick=()=>{if(loggedStu){loggedStu=false;try{S.studentLogout().catch(()=>{});}catch(e){}}pinMem='';showEnter();};
-  $('gStart').onclick=startRun;
-  $('gPause').onclick=()=>setPause(!G.paused);
-  $('gAgain').onclick=()=>{G.g=E1.newGame(G.g.pz);resetRun(true);};
-  $('gNew').onclick=()=>freshPuzzle(true);
-  $('gMode').onclick=()=>{G.mode=G.mode==='pick'?'excl':'pick';savePref({mode:G.mode});ui();};
-  $('gOpen').onclick=()=>{
-    if(G.g.status!=='play'||G.phase!=='play'||G.paused)return;
-    if(G.rated){G.burn=true;G.rated=false;}
-    G.helped=true;E1.hint(G.g);
-    if(G.g.status==='win'){G.msg='Готово! Все фишки открыты за '+fmtT(G.t)+' (с помощью — в зачёт не идёт)';finish({time:Math.round(G.t)});}
-    redraw();};
-  $('gRules').onclick=()=>{G.rules=!G.rules;drawHints();ui();};
-  $('gAm').onclick=()=>{G.hk=Math.max(0,G.hk-1);savePref({hk:G.hk});drawHints();ui();};
-  $('gAp').onclick=()=>{G.hk=Math.min(HK.length-1,G.hk+1);savePref({hk:G.hk});drawHints();ui();};
+  $('gStart').onclick=()=>PL.begin(E,G);
+  $('gPause').onclick=()=>{if(G.paused)PL.resume(G);else PL.setPause(G,true);};
+  $('gMenu').onclick=()=>{if(G.menu)PL.resume(G);else PL.openMenu(G);};
+  $('gOpen').onclick=()=>PL.openOne(E,G);
   const cf=$('cf');
-  cf.addEventListener('pointerdown',e=>{e.preventDefault();pick(e);});
-  cf.addEventListener('pointermove',hover);
-  cf.addEventListener('pointerleave',()=>{if(G&&G.hov){G.hov=null;drawField();}});
+  cf.addEventListener('pointerdown',onDown);
+  cf.addEventListener('pointerup',onUp);
+  cf.addEventListener('pointercancel',()=>{if(press){clearTimeout(press.t);press=null;}});
+  cf.addEventListener('pointermove',onMove);
+  cf.addEventListener('pointerleave',()=>{if(press){clearTimeout(press.t);press=null;}if(P&&P.hover!==-1){P.hover=-1;redraw();}});
   cf.addEventListener('contextmenu',e=>e.preventDefault());
-  $('ch').addEventListener('pointerdown',e=>{e.preventDefault();hintClick(e);});
-  $('ch').addEventListener('contextmenu',e=>e.preventDefault());
-  document.addEventListener('visibilitychange',()=>{if(document.hidden&&G&&!G.paused)setPause(true);});
-  const ru=$('rules');ru.textContent='';for(const t of RULES){const p=document.createElement('p');p.textContent=t;ru.appendChild(p);}
+  window.addEventListener('resize',()=>{if(G)redraw();});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden&&G&&G.phase==='play'&&G.g.status==='play'&&!G.tid&&!G.paused)PL.setPause(G,true);});
 }
-/* для проверок: позиция фишки (c,r,e) в координатах окна */
-function cellPos(c,r,e){
-  const r0=$('cf').getBoundingClientRect(),k=r0.width/FW,i=e-1;
-  return{x:r0.left+(FX+c*CW+4+((i%3)+.5)*SUBW)*k,y:r0.top+(FY+r*CH+6+(((i/3)|0)+.5)*SUBH)*k};
-}
-VR.einweb={state:()=>G,cellPos,E:()=>E,hintPos:()=>{const L=hintLayout(),it=L.items[0],r0=$('ch').getBoundingClientRect(),k=r0.width/HW;return{x:r0.left+(it.x+it.w/2)*k,y:r0.top+(it.y+it.h/2)*k,i:it.i};}};
+/* для проверок: позиции в координатах окна */
+function toWin(x,y,w,h){const r0=$('cf').getBoundingClientRect(),k=r0.width/P.W;return{x:r0.left+(x+w/2)*k,y:r0.top+(y+h/2)*k};}
+function cellPos(c,r,e){const s=PL.subPos(G.geo,c,r,e);return toWin(s.x,s.y,s.w,s.h);}
+function btnPos(label){const b=P.btns.find(q=>(q.label||'').replace(/^[^A-Za-zА-Яа-я]+/,'')===label);return b?toWin(b.x,b.y,b.w,b.h):null;}
+function pressBtn(label){const b=P.btns.find(q=>(q.label||'').replace(/^[^A-Za-zА-Яа-я]+/,'').indexOf(label)===0);if(!b||b.disabled)return false;b.fn({wbtn:1});return true;}
+VR.einweb={state:()=>G,cellPos,btnPos,press:pressBtn,over:()=>P.over.slice(),E:()=>E,labels:()=>P.btns.map(b=>b.label||'').filter(Boolean),hintPos:()=>{const it=G.geo.items[0],q=toWin(it.x,it.y,it.w,it.h);return{x:q.x,y:q.y,i:it.i};}};
 
 /* ---------- запуск (в конце файла) ---------- */
 bind();showEnter();
