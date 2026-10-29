@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const VR=window.VR,TRS=VR.TRS;
-const TILT=.52,SW=.8,SH=.6,RES=2048,CY=1.10;/* наклон назад ~30°, размер экрана, центр по высоте */
+const TILT=.45,SW=1.2,SH=.9,RES=2048,CY=1.24;/* наклон назад ~26°, экран 1,2×0,9 м (низ ≈0,84, верх ≈1,64 м), центр по высоте */
 const POKE_IN=.02,POKE_OUT=.05,LIFT=.05;/* глубина нажатия, отход для повтора, сдвиг точки наружу вдоль нормали */
 
 /* внешняя нормаль экрана (мир): совпадает с поворотом в E.rayPanel */
@@ -27,8 +27,8 @@ function build(E,opt){
   const x=opt.x||0,z=opt.z||0,yaw=opt.yaw||0,G=opt.G;
   const T={x,z,yaw,G,onToggle:opt.onToggle||null,toggleLabel:opt.toggleLabel||'Стена ⇄ Терминал',shown:true,panel:null,statics:[],boxes:[]};
   const sw=Math.abs(Math.sin(yaw))>.7;
-  T.statics.push(E.addStatic(E.mesh.cube,TRS(x,.41,z,.5,.82,.3,yaw),[.2,.22,.32]));
-  T.boxes.push(E.addBox({x,z,hx:sw?.15:.25,hz:sw?.25:.15,top:.82}));
+  T.statics.push(E.addStatic(E.mesh.cube,TRS(x,.41,z,.8,.82,.3,yaw),[.2,.22,.32]));
+  T.boxes.push(E.addBox({x,z,hx:sw?.15:.4,hz:sw?.4:.15,top:.82}));
   T.panel=E.addPanel({w:SW,h:SH,res:RES,pos:[x,CY,z],yaw,tilt:TILT,accent:'#818cf8',draw:(c,p)=>draw(E,T,c,p)});
   /* перерисовка терминала при любом изменении партии (одна текстура, только по dirty) */
   if(G){const o=G.opt||(G.opt={}),prev=o.onDirty;o.onDirty=w=>{if(prev)prev(w);if(T.panel)T.panel.dirty=true;};}

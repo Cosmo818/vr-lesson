@@ -110,8 +110,8 @@ ROOMS.hall={
     }});
     const gr=E.student&&E.student.grade?E.student.grade:5;
     for(const [k,x,z,yaw] of DOORS)if(VR.Store.roomOn(k,gr))E.door(x,z,yaw,entryOf(k),D.subjects[k].title,D.subjects[k].color);
-    E.door(4.2,5.88,Math.PI,'play','Игровая','#fbbf24');
-    E.door(4.2,-5.88,0,'ein','Эйнштейн','#818cf8');
+    /* Э13: дверь «Игровая» — на месте прежней двери «Эйнштейн»; старые двери (4.2,5.88)→play и ein убраны из сборки холла, комната ein доступна кнопкой на терминале */
+    E.door(4.2,-5.88,0,'play','Игровая','#fbbf24');
     E.door(-4.2,-5.88,0,'arena','Турниры','#f472b6');
     makeQuiz(E,'gen',[0,1.6,5.86],Math.PI,{teacherOnly:true});
     if(VR.custom)VR.custom.hallPanel(E,gr);

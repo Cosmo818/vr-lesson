@@ -616,7 +616,7 @@ function makeCtx(xr){
     const V=VR.games,stuKeep=E.student,pendKeep=V.pending;V._reset();V.pending=null;
     E.goRoom('hall');run(6);
     ok(E.bodies.length===0&&E.room.targets(E,E.S).length===0&&Array.isArray(E.room.targets(E,E.S)),'терминал: в холле нет тел, targets() пуст');
-    let T=E.S.term;ok(!!T&&T.panel&&Math.abs(T.panel.tilt-.52)<1e-6&&Math.abs(T.panel.pos[1]-1.10)<=.02&&T.panel.pos[0]===2.7&&T.panel.pos[2]===-3.7,'терминал: в холле панель tilt≈0,52 с центром 1,10 м');
+    let T=E.S.term;ok(!!T&&T.panel&&Math.abs(T.panel.tilt-.45)<1e-6&&Math.abs(T.panel.pos[1]-1.24)<=.02&&T.panel.pos[0]===2.7&&T.panel.pos[2]===-3.7,'терминал: в холле панель tilt≈0,45 с центром 1,24 м');
     ok(!E.panels.some(p=>p!==T.panel&&Math.abs(p.pos[0]-2.7)<.1&&Math.abs(p.pos[2]+3.95)<.1)&&!E.panels.some(p=>Math.abs(p.pos[0]+2.7)<.1&&Math.abs(p.pos[2]+3.95)<.1)&&E.tables.length===0,'терминал: нет таблички «Возьми и брось», красной кнопки и стола разминки');
     { const n=VR.einterm.normal(T);const ang=eyeY=>{const d=[T.x-T.x,eyeY-T.panel.pos[1],(T.z+.55)-T.panel.pos[2]],l=Math.hypot(...d);return Math.acos((d[0]*n[0]+d[1]*n[1]+d[2]*n[2])/l)*180/Math.PI;};
       ok(ang(1.6)<=35&&ang(1.2)<=35,'терминал: угол к глазам стоя '+ang(1.6).toFixed(1)+'° и сидя '+ang(1.2).toFixed(1)+'° (≤35°)'); }
@@ -687,6 +687,51 @@ function makeCtx(xr){
       ok(Z.view==='term'&&g.cell>=187&&g.items.filter(i=>i.k==='v').every(i=>i.y>=fb)&&g.items.filter(i=>i.k==='h').every(i=>i.x>=fr)&&!Z.term.panel.over.length,'Э12: терминал: клетка '+g.cell+' px (≥187), подсказки под полем и справа, p.over пуст');
       ok(!Z.term.panel.btns.some(b=>/Курок:|Касание:/.test(b.label||'')),'Э12: на терминале кнопки режима нет'); }
     Z.term.onToggle(Z.term);run(3);
+    E.student=stuKeep;V.pending=pendKeep;V._reset();E.goRoom('hall');run(6);
+  }
+  { /* Э13: терминал 1,2×0,9 м, «Эйнштейн» в Игровой, дверь «Игровая» на месте двери «Эйнштейн» */
+    const V=VR.games,PL=VR.einplay,stuKeep=E.student,pendKeep=V.pending;V._reset();V.pending=null;E.student={id:'sE13',name:'Тест',grade:5};
+    E.goRoom('hall');run(6);
+    { const ds=E.staticTargets.filter(t=>/^door-/.test(t.id)),pl=ds.filter(t=>t.id==='door-play');
+      ok(pl.length===1&&Math.abs(pl[0].c[0]-4.2)<.01&&Math.abs(pl[0].c[2]+5.73)<.01,'Э13: в холле одна дверь «Игровая» на месте двери «Эйнштейн» (4,2; −5,88)');
+      ok(!ds.some(t=>t.id==='door-ein')&&!ds.some(t=>Math.abs(t.c[0]-4.2)<.01&&t.c[2]>0),'Э13: двери «Эйнштейн» и старой двери «Игровой» в холле нет'); }
+    const chk=(T,where)=>{
+      const p=T.panel,ex=Math.cos(p.tilt)*p.h/2;
+      ok(p.w>=1.2&&p.h>=.9,'Э13: терминал '+where+': экран '+p.w+'×'+p.h+' м (≥1,2×0,9)');
+      ok(p.pos[1]-ex>=.82&&p.pos[1]+ex<=1.66,'Э13: терминал '+where+': нижний край '+(p.pos[1]-ex).toFixed(2)+', верхний '+(p.pos[1]+ex).toFixed(2)+' м');
+      const n=VR.einterm.normal(T),ang=eyeY=>{const d=[0,eyeY-p.pos[1],.7],l=Math.hypot(...d);return Math.acos((d[1]*n[1]+d[2]*n[2])/l)*180/Math.PI;};
+      ok(ang(1.6)<=35&&ang(1.2)<=35,'Э13: терминал '+where+': угол к глазам стоя '+ang(1.6).toFixed(1)+'°, сидя '+ang(1.2).toFixed(1)+'° (≤35°)');
+      PL.begin(E,T.G);E.paintPanel(p);
+      const g=T.G.geo,pxm=p.W/p.w;
+      ok(!!g&&g.cell/pxm>=.11,'Э13: терминал '+where+': клетка '+(g?(g.cell/pxm*100).toFixed(1):'?')+' см (≥11)');
+      PL.setPause(T.G,true);E.paintPanel(p);
+      const small=p.btns.filter(b=>b.label&&b.h/pxm<.0695);
+      ok(p.btns.filter(b=>b.label).length>=6&&!small.length&&!p.over.length,'Э13: терминал '+where+': кнопки ≥7 см, p.over пуст'+(small.length?' (мелкие: '+small.map(b=>b.label).join(',')+')':''));
+      PL.resume(T.G);E.paintPanel(p);
+    };
+    chk(E.S.term,'в холле');
+    /* Игровая: терминал рядом с шахматами */
+    E.goRoom('play');run(25);
+    { const S=E.S,T=S.term;ok(!!T&&T.G&&T.G.tid===null&&!!T.panel,'Э13: в Игровой есть терминал «Эйнштейн» со своей партией (не турнир)');
+      chk(T,'в Игровой');
+      const dx=Math.abs(T.x-0)-.6,dz=Math.max(0,Math.abs(T.z+2.4)-.6),dist=Math.hypot(Math.max(0,dx),dz);
+      ok(dist>=1.5&&dist<=2.5&&E.boxes.includes(T.boxes[0])&&Math.hypot(T.x,T.z-5.88)>3,'Э13: терминал в '+dist.toFixed(1)+' м от шахматного стола, не у двери, тумба — препятствие');
+      ok(!!S.panel&&!!S.cpanel&&E.targets.filter(t=>/^c\d+$/.test(t.id)).length===64,'Э13: шахматы на месте (панель, настройки, 64 клетки)');
+      { const bad=[];for(const p of E.panels){E.paintPanel(p);if(p.over.length)bad.push(p.over.join('|'));}ok(!bad.length,'Э13: Игровая: p.over пуст у всех панелей '+bad.join(';')); }
+      /* тычок по «Новая партия» меняет сид один раз */
+      { const G=T.G;PL.begin(E,G);PL.setPause(G,true);E.paintPanel(T.panel);
+        const nb=T.panel.btns.find(b=>b.label==='Новая партия'),p=T.panel,n=VR.einterm.normal(T),lx=((nb.x+nb.w/2)/p.W-.5)*p.w,ly=(.5-(nb.y+nb.h/2)/p.H)*p.h;
+        const at=d=>[p.pos[0]+lx+n[0]*d,p.pos[1]+ly*Math.cos(p.tilt)+n[1]*d,p.pos[2]-ly*Math.sin(p.tilt)+n[2]*d];
+        const h=E.H[1];h.has=true;h.src=null;h.hit=null;const q=at(.01);h.g=new Float32Array(16);h.g[12]=q[0];h.g[13]=q[1];h.g[14]=q[2];
+        const s0=G.g.pz.seed;VR.einterm.poke(E,T);const s1=G.g.pz.seed;VR.einterm.poke(E,T);VR.einterm.poke(E,T);
+        ok(s1!==s0&&G.g.pz.seed===s1,'Э13: тычок по «Новая партия» меняет сид один раз');h.has=false; }
+      /* победа на терминале Игровой уходит в журнал */
+      { const G=T.G,gl0=V.load().games.length;PL.start(E,G,31337,false,true);const sl=G.g.pz.sol;
+        for(let r=0;r<6;r++)for(let c=0;c<6;c++)if(!G.g.P.defined(c,r))PL.click(E,G,null,c,r,sl[r][c]);
+        ok(G.g.status==='win'&&V.load().games.length===gl0+1,'Э13: победа на терминале Игровой записана через VR.games.finish'); }
+    }
+    ok(!!E.rooms.ein,'Э13: комната «Эйнштейн» (E.rooms.ein) на месте');
+    E.goRoom('ein');run(25);ok(E.S.field&&E.S.term&&E.S.g,'Э13: комната «Эйнштейн» собирается (доска, терминал)');
     E.student=stuKeep;V.pending=pendKeep;V._reset();E.goRoom('hall');run(6);
   }
   { /* Э8: зачётная игра «Эйнштейн» — сид с сервера, solve, очередь vrl.einq (мок fetch; рабочий сервер — tests/ein_rating.py) */
