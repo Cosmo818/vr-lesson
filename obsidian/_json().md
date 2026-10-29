@@ -1,0 +1,21 @@
+---
+source_file: "server/ai.py"
+type: "code"
+community: "Community 29"
+location: "L162"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Community_29
+---
+
+# _json()
+
+## Connections
+- [[AiError]] - `calls` [EXTRACTED]
+- [[json]] - `calls` [EXTRACTED]
+- [[re]] - `calls` [EXTRACTED]
+- [[run_task()]] - `calls` [EXTRACTED]
+- [[serverai.py]] - `contains` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Community_29

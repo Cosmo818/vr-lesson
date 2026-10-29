@@ -1,0 +1,32 @@
+---
+source_file: "tests/open.py"
+type: "code"
+community: "Community 34"
+location: "L1"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Community_34
+---
+
+# open.py
+
+## Connections
+- [[H()_1]] - `contains` [EXTRACTED]
+- [[adm()_1]] - `contains` [EXTRACTED]
+- [[app]] - `imports` [EXTRACTED]
+- [[call()_2]] - `contains` [EXTRACTED]
+- [[clear()_3]] - `contains` [EXTRACTED]
+- [[json]] - `imports` [EXTRACTED]
+- [[ok()_16]] - `contains` [EXTRACTED]
+- [[os]] - `imports` [EXTRACTED]
+- [[sqlite3]] - `imports` [EXTRACTED]
+- [[subprocess]] - `imports` [EXTRACTED]
+- [[sys]] - `imports` [EXTRACTED]
+- [[tempfile]] - `imports` [EXTRACTED]
+- [[time]] - `imports` [EXTRACTED]
+- [[urllib_error]] - `imports` [EXTRACTED]
+- [[urllib_request]] - `imports` [EXTRACTED]
+- [[Открытые комнаты (Б54) и закрытые результаты тестов (Б56) публикация,…]] - `rationale_for` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Community_34
