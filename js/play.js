@@ -144,6 +144,12 @@ ROOMS.play={
     S.cfg=false;
     S.cpanel=E.addPanel({w:1.1,h:.9,res:768,pos:[1.7,1.45,-3.3],yaw:0,accent:'#f59e0b',show:false,draw:(c,p)=>cfgDraw(E,S,c,p)});
     fresh(E,S);
+    /* Э13: терминал «Эйнштейн» у левой стены, в ~2 м от шахматного стола; своя партия (не турнир), победа — в VR.games.finish */
+    S.term=null;
+    if(VR.einterm&&VR.einplay){
+      const hg=VR.einplay.create(E,{state:{},onDirty(){}});VR.einplay.start(E,hg,undefined,false,false);
+      S.term=VR.einterm.build(E,{x:-2.7,z:-3.6,yaw:0,G:hg,toggleLabel:'В комнату Эйнштейна',onToggle:()=>E.goRoom('ein')});
+    }
   },
   targets(E,S){
     const t=[];
@@ -151,6 +157,7 @@ ROOMS.play={
     return t;
   },
   update(E,S,dt){
+    if(S.term){VR.einplay.tick(E,S.term.G,dt);VR.einterm.poke(E,S.term);}
     if(S.duel||S.over||S.promo||!S.pos||S.pos.t===S.me)return;
     S.wait+=dt;
     if(S.thinking){compMove(E,S);return;}

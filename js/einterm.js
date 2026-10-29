@@ -1,11 +1,11 @@
-/* einterm.js — терминал-стойка «Эйнштейн»: тумба и наклонный экран 0,8×0,6 м (2048×1536), на нём поле, подсказки и кнопки.
+/* einterm.js — терминал-стойка «Эйнштейн»: тумба и наклонный экран (2048×1536), на нём шапка, доска (поле, подсказки под ним и справа) и окно меню.
    Рисует через VR.einplay.draw*; партия G общая с комнатой (стена и терминал — два вида одной партии).
-   Кнопки нажимаются тычком руки (VR.einterm.poke из update комнаты), фишки — лучом и курком.
+   Кнопки нажимаются тычком руки (VR.einterm.poke из update комнаты), фишки — лучом и курком (grip — убрать).
    Используется в комнате «Эйнштейн» (js/einroom.js) и в холле (ROOMS.hall в js/rooms.js). */
 (function(){
 'use strict';
 const VR=window.VR,TRS=VR.TRS;
-const TILT=.52,SW=.8,SH=.6,RES=2048,CY=1.10;/* наклон назад ~30°, размер экрана, центр по высоте */
+const TILT=.45,SW=1.2,SH=.9,RES=2048,CY=1.24;/* наклон назад ~26°, экран 1,2×0,9 м (низ ≈0,84, верх ≈1,64 м), центр по высоте */
 const POKE_IN=.02,POKE_OUT=.05,LIFT=.05;/* глубина нажатия, отход для повтора, сдвиг точки наружу вдоль нормали */
 
 /* внешняя нормаль экрана (мир): совпадает с поворотом в E.rayPanel */
@@ -13,30 +13,12 @@ function normal(T){const s=Math.sin(T.yaw),c=Math.cos(T.yaw);return[s*Math.cos(T
 
 function draw(E,T,c,p){
   const PL=VR.einplay,G=T.G;if(!G||!G.g)return;
-  const g=G.g,lbl=(x,y,w,h,label,fn,t)=>{p.button(x,y,w,h,label,fn,t);const b=p.btns[p.btns.length-1];if(b)b.label=label;};
-  /* шапка 0…110 */
-  p.text('Эйнштейн',24,22,{size:58,bold:true,maxW:330});
-  p.text(PL.fmtT(G.t),380,22,{size:58,bold:true,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#fde68a',maxW:230});
-  const canPause=G.phase==='play'&&g.status==='play'&&!G.tid;
-  let kx=640,kw=1388;
-  if(canPause){lbl(640,10,300,90,G.paused?'▶ Дальше':'⏸ Пауза',()=>PL.setPause(G,!G.paused),{size:36,bg:G.paused?'#15803d':'#334155'});kx=960;kw=1068;}
-  lbl(kx,10,kw,90,'Курок: '+(G.mode==='pick'?'ВЫБРАТЬ фишку':'УБРАТЬ фишку'),()=>PL.toggleMode(E,G),{size:36,bg:G.mode==='pick'?'#166534':'#991b1b'});
-  /* поле и подсказки */
-  PL.drawField(E,G,c,p,{x:20,y:120,w:1160,h:1160});
-  PL.drawHints(E,G,c,p,{x:1200,y:120,w:828,h:1160},.6,.72);
-  /* низ 1300…1520 */
-  if(G.phase==='idle'){
-    lbl(20,1300,G.tid?2008:1000,100,'▶ Начать',()=>PL.begin(E,G),{size:42,bg:'#15803d',disabled:!!G.fetching});
-    if(!G.tid)lbl(1040,1300,988,100,'Новая',()=>PL.fresh(E,G,false),{size:38,bg:'#b45309',disabled:!!G.fetching});
-  }else if(!G.tid){
-    lbl(20,1300,480,100,'Сначала',()=>PL.start(E,G,0,true),{size:38,bg:'#475569'});
-    lbl(520,1300,480,100,'Новая',()=>PL.fresh(E,G),{size:38,bg:'#b45309',disabled:!!G.fetching});
-    lbl(1020,1300,1008,100,'Открыть клетку (без зачёта)',()=>PL.openOne(E,G),{size:34,bg:'#1e293b',disabled:g.status!=='play'||G.paused});
-  }
-  const st=g.status==='play'?(G.msg||('Фишки — лучом и курком, кнопки — тычком руки. Головоломка № '+g.pz.seed+(G.tid?' (турнир)':'')+PL.note(E,G))):G.msg;
-  p.text(st,24,1426,{size:30,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#cbd5e1',maxW:1040,maxY:1516});
-  lbl(1100,1420,440,100,G.showRules?'Подсказки':'Правила',()=>PL.toggleRules(G),{size:36,bg:'#334155'});
-  if(T.onToggle)lbl(1560,1420,468,100,T.toggleLabel,()=>T.onToggle(T),{size:34,bg:'#475569'});
+  const g=G.g,cfg=Object.assign({},PL.CFG.term,{toggle:T.onToggle?{label:T.toggleLabel,fn:()=>T.onToggle(T)}:null});
+  /* шапка 0…130 (название, время, «Начать» / «Пауза» / «Открыть клетку» / «Меню»), доска 134…1460, строка состояния */
+  PL.drawBar(E,G,c,p,{x:0,y:0,w:RES,h:130},cfg);
+  PL.drawBoard(E,G,c,p,{x:10,y:134,w:RES-20,h:1326},cfg);
+  const st=g.status==='play'?(G.msg||('Фишки — лучом и курком, убрать — курок с боковой кнопкой. Головоломка № '+g.pz.seed+(G.tid?' (турнир)':'')+PL.note(E,G))):G.msg;
+  p.text(st,24,1468,{size:28,lh:32,color:g.status==='lose'?'#fca5a5':g.status==='win'?'#86efac':'#cbd5e1',maxW:RES-48,maxY:1532});
 }
 
 /* opt: x, z, yaw, G (партия VR.einplay.create), toggleLabel, onToggle(term) */
@@ -45,8 +27,8 @@ function build(E,opt){
   const x=opt.x||0,z=opt.z||0,yaw=opt.yaw||0,G=opt.G;
   const T={x,z,yaw,G,onToggle:opt.onToggle||null,toggleLabel:opt.toggleLabel||'Стена ⇄ Терминал',shown:true,panel:null,statics:[],boxes:[]};
   const sw=Math.abs(Math.sin(yaw))>.7;
-  T.statics.push(E.addStatic(E.mesh.cube,TRS(x,.41,z,.5,.82,.3,yaw),[.2,.22,.32]));
-  T.boxes.push(E.addBox({x,z,hx:sw?.15:.25,hz:sw?.25:.15,top:.82}));
+  T.statics.push(E.addStatic(E.mesh.cube,TRS(x,.41,z,.8,.82,.3,yaw),[.2,.22,.32]));
+  T.boxes.push(E.addBox({x,z,hx:sw?.15:.4,hz:sw?.4:.15,top:.82}));
   T.panel=E.addPanel({w:SW,h:SH,res:RES,pos:[x,CY,z],yaw,tilt:TILT,accent:'#818cf8',draw:(c,p)=>draw(E,T,c,p)});
   /* перерисовка терминала при любом изменении партии (одна текстура, только по dirty) */
   if(G){const o=G.opt||(G.opt={}),prev=o.onDirty;o.onDirty=w=>{if(prev)prev(w);if(T.panel)T.panel.dirty=true;};}

@@ -64,9 +64,10 @@ function favToggle(game,seed){if(!/^[a-z]{2,12}$/.test(game)||!Number.isInteger(
   try{localStorage.setItem(FKEY,JSON.stringify(f));}catch(e){}return i<0;}
 
 /* ---------- настройки ученика в «Эйнштейне»: один ключ на устройстве, по id ученика (формат — PLAN-einstein.md 1.4) ---------- */
-const PKEY='vrl.einprefs',PDEF={hk:1,mode:'pick',view:'wall',tab:'school',order:'avg'},PREFMAX=200;
+const PKEY='vrl.einprefs',PDEF={hk:1,mode:'pick',view:'wall',tab:'school',order:'avg',tutorialDone:false},PREFMAX=200;
 function prefField(k,v){
   if(k==='hk')return Number.isInteger(v)&&v>=0&&v<=2?v:undefined;
+  if(k==='tutorialDone')return typeof v==='boolean'?v:undefined;
   if(k==='mode')return v==='pick'||v==='excl'?v:undefined;
   if(k==='view')return v==='wall'||v==='term'?v:undefined;
   if(k==='tab')return v==='school'||v==='district'||v==='region'?v:undefined;
